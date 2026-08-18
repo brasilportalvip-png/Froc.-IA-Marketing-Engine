@@ -117,10 +117,12 @@ async function deleteCompanyData(userId: string, companyId: string): Promise<voi
 }
 
 function planCompanyLimit(planId: string): number {
+  if (planId === 'plan_free' || !planId) return 1;
   if (planId === 'plan_start') return 2;
   if (planId === 'plan_pro') return 5;
   if (planId === 'plan_business') return 15;
-  return Number.POSITIVE_INFINITY;
+  if (planId === 'plan_agency') return 50;
+  return 1;
 }
 
 function contentBodyFromArticle(article: any): string {
@@ -162,13 +164,16 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
     });
   }
 
-  const termsVersion = safeString(req.body?.termsVersion, 50) || req.user?.termsVersion || CURRENT_TERMS_VERSION;
-  const privacyVersion = safeString(req.body?.privacyVersion, 50) || req.user?.privacyVersion || CURRENT_PRIVACY_VERSION;
+  // O servidor é a autoridade máxima sobre a versão legal vigente
+  const termsAcceptedAt = req.user?.termsAcceptedAt || now;
+  const privacyAcceptedAt = req.user?.privacyAcceptedAt || now;
+  const termsVersion = req.user?.termsVersion === CURRENT_TERMS_VERSION ? CURRENT_TERMS_VERSION : CURRENT_TERMS_VERSION;
+  const privacyVersion = req.user?.privacyVersion === CURRENT_PRIVACY_VERSION ? CURRENT_PRIVACY_VERSION : CURRENT_PRIVACY_VERSION;
 
   const profile = await ensureUserProfile(req.firebaseUser!, {
     name: name || req.user?.name,
-    termsAcceptedAt: req.user?.termsAcceptedAt || now,
-    privacyAcceptedAt: req.user?.privacyAcceptedAt || now,
+    termsAcceptedAt,
+    privacyAcceptedAt,
     termsVersion,
     privacyVersion,
     avatarUrl: safeString(req.body?.avatarUrl, 1000) || req.user?.avatarUrl
@@ -188,14 +193,19 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
 
   let wallet;
   if (outcome.eligibleForBonus && outcome.bonusAmount > 0) {
-    wallet = await addCredits({
-      userId: profile.id,
-      amount: outcome.bonusAmount,
-      type: 'bonus',
-      source: 'Bônus de Primeiro Cadastro Froc.IA',
-      idempotencyKey: `welcome:${profile.id}`,
-      metadata: { reason: outcome.reason, detail: outcome.detail, claimId: outcome.claimId }
-    }).catch(() => getWallet(profile.id));
+    try {
+      wallet = await addCredits({
+        userId: profile.id,
+        amount: outcome.bonusAmount,
+        type: 'bonus',
+        source: 'Bônus de Primeiro Cadastro Froc.IA',
+        idempotencyKey: `welcome:${profile.id}`,
+        metadata: { reason: outcome.reason, detail: outcome.detail, claimId: outcome.claimId }
+      });
+    } catch (err) {
+      console.error('[AuthSync] Erro ao conceder bônus de boas-vindas:', err);
+      wallet = await getWallet(profile.id);
+    }
   } else {
     // Conta criada sem bônus (0 créditos) por detecção de duplicidade/multiconta/e-mail temporário
     wallet = await getWallet(profile.id);
@@ -220,15 +230,14 @@ router.post('/auth/accept-terms', requireAuth, asyncRoute(async (req: Authentica
     return res.status(400).json({ error: 'Você precisa aceitar os Termos de Uso e a Política de Privacidade.' });
   }
 
-  const termsVersion = safeString(req.body?.termsVersion, 50) || CURRENT_TERMS_VERSION;
-  const privacyVersion = safeString(req.body?.privacyVersion, 50) || CURRENT_PRIVACY_VERSION;
+  // O backend é a fonte de verdade para as versões legais vigentes (não aceita versão inventada/falsificada pelo cliente)
   const now = nowIso();
 
   const profile = await ensureUserProfile(req.firebaseUser!, {
     termsAcceptedAt: now,
     privacyAcceptedAt: now,
-    termsVersion,
-    privacyVersion
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
   });
 
   res.json({

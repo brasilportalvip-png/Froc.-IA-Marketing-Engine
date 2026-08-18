@@ -3,8 +3,20 @@ import assert from 'node:assert/strict';
 import crypto from 'crypto';
 import { config } from '../server/config/index.js';
 import { addCredits, getWallet, reserveCredits, commitReservation, rollbackReservation } from '../server/production/credits.js';
-import { processMercadoPagoWebhook, verifyMercadoPagoSignature } from '../server/production/payments.js';
-import { resetMemoryDb } from '../server/production/store.js';
+import { applyPaymentCycle, processMercadoPagoWebhook, verifyMercadoPagoSignature } from '../server/production/payments.js';
+import { COLLECTIONS, firestore, resetMemoryDb } from '../server/production/store.js';
+
+test('Credits: Estado de plano de nova conta é estritamente "plan_free" e não concede plano pago sem compra', async () => {
+  resetMemoryDb();
+  const userId = 'usr_new_free_user_1';
+
+  const wallet = await getWallet(userId);
+  assert.equal(wallet.planId, 'plan_free');
+  assert.equal(wallet.balance, 0);
+  assert.equal(wallet.bonusBalance, 0);
+  assert.equal(wallet.totalReceived, 0);
+  assert.equal(wallet.reservedCredits, 0);
+});
 
 test('Credits: Inicialização de carteira e adição com chave de idempotência', async () => {
   resetMemoryDb();
@@ -132,4 +144,83 @@ test('Payments Webhook: Validação e rejeição de assinaturas HMAC SHA-256 do 
       return err.statusCode === 401 || err.message.includes('inválida');
     }
   );
+});
+
+test('Payments Webhook: Idempotência lógica de pagamento aprovado e transição de plano no Mercado Pago', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_customer_mp_1';
+  const orderId = 'ord_froc_plan_start_001';
+  const paymentId = 'mp_pay_real_987654321';
+
+  // 1. Cria pedido com plano START (R$ 49,00 -> 100 créditos)
+  await db.collection(COLLECTIONS.payments).doc(orderId).set({
+    id: orderId,
+    userId,
+    planId: 'plan_start',
+    planName: 'START',
+    amount: 49.0,
+    currency: 'BRL',
+    creditsGranted: 100,
+    bonusCreditsGranted: 0,
+    billingMode: 'subscription',
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  });
+
+  // Verifica que antes do pagamento o usuário possui plano gratuito (plan_free)
+  const initialWallet = await getWallet(userId);
+  assert.equal(initialWallet.planId, 'plan_free');
+  assert.equal(initialWallet.balance, 0);
+
+  // 2. Primeiro processamento do webhook (Pagamento Aprovado)
+  await applyPaymentCycle({
+    orderId,
+    paymentId,
+    cycleId: 'cycle_1',
+    status: 'approved',
+    amount: 49.0,
+    currency: 'BRL',
+    paymentMethod: 'credit_card',
+    subscriptionId: 'sub_mp_123'
+  });
+
+  // Verifica concessão: Saldo 100, Plano START
+  const walletAposPrimeiro = await getWallet(userId);
+  assert.equal(walletAposPrimeiro.balance, 100);
+  assert.equal(walletAposPrimeiro.planId, 'plan_start');
+  assert.equal(walletAposPrimeiro.totalReceived, 100);
+
+  // Verifica que foi gravada exatamente 1 transação de crédito
+  const txSnap1 = await db.collection(COLLECTIONS.creditTransactions).where('userId', '==', userId).get();
+  assert.equal(txSnap1.docs.length, 1);
+  assert.equal(txSnap1.docs[0].data()?.amount, 100);
+
+  // Verifica que o pedido foi atualizado para status 'active'
+  const orderSnap1 = await db.collection(COLLECTIONS.payments).doc(orderId).get();
+  assert.equal(orderSnap1.data()?.status, 'active');
+  assert.equal(orderSnap1.data()?.providerPaymentId, paymentId);
+
+  // 3. Segundo processamento idêntico (Webhook duplicado / Retentativa de rede)
+  await applyPaymentCycle({
+    orderId,
+    paymentId,
+    cycleId: 'cycle_1',
+    status: 'approved',
+    amount: 49.0,
+    currency: 'BRL',
+    paymentMethod: 'credit_card',
+    subscriptionId: 'sub_mp_123'
+  });
+
+  // O saldo e o plano DEVEM permanecer idênticos (não pode duplicar para 200 créditos)
+  const walletAposDuplicado = await getWallet(userId);
+  assert.equal(walletAposDuplicado.balance, 100);
+  assert.equal(walletAposDuplicado.planId, 'plan_start');
+  assert.equal(walletAposDuplicado.totalReceived, 100);
+
+  // A contagem de transações de crédito continua sendo exatamente 1
+  const txSnap2 = await db.collection(COLLECTIONS.creditTransactions).where('userId', '==', userId).get();
+  assert.equal(txSnap2.docs.length, 1);
 });

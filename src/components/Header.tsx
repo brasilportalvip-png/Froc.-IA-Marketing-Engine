@@ -40,13 +40,14 @@ export const Header: React.FC<HeaderProps> = ({
   const [showNotifications, setShowNotifications] = useState(false);
 
   const planLabels: Record<string, string> = {
+    plan_free: 'Conta Gratuita',
     plan_start: 'Plano START',
     plan_pro: 'Plano PRO ⭐',
     plan_business: 'Plano BUSINESS',
     plan_agency: 'Plano AGENCY 👑'
   };
 
-  const currentPlanName = planLabels[wallet?.planId || 'plan_start'] || 'Plano START';
+  const currentPlanName = planLabels[wallet?.planId || 'plan_free'] || 'Conta Gratuita';
 
   return (
     <header

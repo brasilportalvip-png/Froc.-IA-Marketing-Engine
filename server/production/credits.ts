@@ -21,7 +21,7 @@ function defaultWallet(userId: string): WalletRecord {
     totalUsed: 0,
     totalReceived: 0,
     reservedCredits: 0,
-    planId: 'plan_start',
+    planId: 'plan_free',
     updatedAt: nowIso()
   };
 }
@@ -32,9 +32,14 @@ export async function getWallet(userId: string): Promise<WalletRecord> {
   const snap = await ref.get();
   if (snap.exists) return { id: snap.id, ...(snap.data() as any) } as WalletRecord;
   const wallet = defaultWallet(userId);
-  await ref.create(wallet).catch(() => undefined);
-  const fresh = await ref.get();
-  return fresh.exists ? ({ id: fresh.id, ...(fresh.data() as any) } as WalletRecord) : wallet;
+  try {
+    await ref.set(wallet, { merge: true });
+    return wallet;
+  } catch (error) {
+    const fresh = await ref.get();
+    if (fresh.exists) return { id: fresh.id, ...(fresh.data() as any) } as WalletRecord;
+    throw new Error(`Falha crítica ao persistir carteira do usuário: ${(error as any)?.message || error}`);
+  }
 }
 
 export async function addCredits(data: {

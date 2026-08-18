@@ -157,7 +157,7 @@ function normalizePaymentStatus(status: string): string {
   return 'pending';
 }
 
-async function applyPaymentCycle(data: {
+export async function applyPaymentCycle(data: {
   orderId: string;
   paymentId: string;
   cycleId: string;
@@ -202,7 +202,7 @@ async function applyPaymentCycle(data: {
 
     const wallet = walletSnap.exists ? walletSnap.data() as any : {
       id: order.userId, userId: order.userId, balance: 0, bonusBalance: 0,
-      totalUsed: 0, totalReceived: 0, reservedCredits: 0, planId: 'plan_start'
+      totalUsed: 0, totalReceived: 0, reservedCredits: 0, planId: 'plan_free'
     };
     const credits = Number(order.creditsGranted || 0) + Number(order.bonusCreditsGranted || 0);
     const before = Number(wallet.balance || 0);

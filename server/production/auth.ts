@@ -34,8 +34,8 @@ export function hasAcceptedLatestTerms(user?: FrocUser | null): boolean {
   return Boolean(
     user.termsAcceptedAt &&
     user.privacyAcceptedAt &&
-    user.termsVersion &&
-    user.privacyVersion
+    user.termsVersion === CURRENT_TERMS_VERSION &&
+    user.privacyVersion === CURRENT_PRIVACY_VERSION
   );
 }
 

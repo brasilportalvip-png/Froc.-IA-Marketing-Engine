@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "cross-env NODE_ENV=test tsx --test test/*.test.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "check": "npm run typecheck && npm test && npm run build",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
-    "test": "NODE_ENV=test npx tsx --test test/*.test.ts",
     "cap:sync": "npx cap sync",
     "android:add": "npx cap add android",
     "android:open": "npx cap open android"

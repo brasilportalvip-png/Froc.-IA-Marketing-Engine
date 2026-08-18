@@ -224,7 +224,12 @@ export async function evaluateSignupBonusEligibility(ctx: AntiAbuseContext): Pro
   if (fingerprintHash) {
     batch.set(db.collection(COLLECTIONS.bonusClaims).doc(stableId(`fp:${fingerprintHash}`)), claimRecord);
   }
-  await batch.commit().catch(() => undefined);
+  try {
+    await batch.commit();
+  } catch (err) {
+    console.error('[AntiAbuse] Falha ao persistir registro de concessão de bônus:', err);
+    throw new Error(`Falha ao registrar concessão de bônus anti-abuso: ${(err as any)?.message || err}`);
+  }
 
   return {
     eligibleForBonus: true,

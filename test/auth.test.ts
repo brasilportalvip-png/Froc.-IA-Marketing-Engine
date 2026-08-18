@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ensureUserProfile, requireAdmin } from '../server/production/auth.js';
+import {
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_VERSION,
+  ensureUserProfile,
+  hasAcceptedLatestTerms,
+  requireAdmin,
+  requireAuth
+} from '../server/production/auth.js';
 import { resetMemoryDb, firestore, COLLECTIONS } from '../server/production/store.js';
+import * as firebaseAdminProvider from '../server/providers/firebaseAdmin.js';
 
 test('Auth: Criação de perfil com role "user" padrão e imutabilidade de privilégios pelo cliente', async () => {
   resetMemoryDb();
@@ -18,14 +26,14 @@ test('Auth: Criação de perfil com role "user" padrão e imutabilidade de privi
     name: 'Normal User Renomeado',
     termsAcceptedAt: new Date().toISOString(),
     privacyAcceptedAt: new Date().toISOString(),
-    termsVersion: '2026.1',
-    privacyVersion: '2026.1'
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
   });
 
   assert.equal(profile.id, 'usr_normal_123');
   assert.equal(profile.role, 'user');
-  assert.equal(profile.termsVersion, '2026.1');
-  assert.equal(profile.privacyVersion, '2026.1');
+  assert.equal(profile.termsVersion, CURRENT_TERMS_VERSION);
+  assert.equal(profile.privacyVersion, CURRENT_PRIVACY_VERSION);
 
   // Tentativa do usuário tentar se auto-elevar a admin via extras ou payload
   const profileReauth = await ensureUserProfile(mockToken, {
@@ -78,35 +86,210 @@ test('Auth: Middleware requireAdmin bloqueia usuários comuns e permite apenas a
   assert.equal(adminNextCalled, true);
 });
 
-test('Auth: Validação estrita de termos de uso e política de privacidade (versão 2026.1)', async () => {
+test('Auth: Validação rigorosa e determinística de versões de consentimento (hasAcceptedLatestTerms)', () => {
+  const now = new Date().toISOString();
+
+  // 1. Usuário sem consentimento (null / undefined / campos ausentes)
+  assert.equal(hasAcceptedLatestTerms(null), false);
+  assert.equal(hasAcceptedLatestTerms(undefined), false);
+  assert.equal(hasAcceptedLatestTerms({ id: 'u1', name: 'A', email: 'a@a.com', role: 'user', createdAt: now }), false);
+
+  // 2. Usuário com versão antiga (ex: 2025.1) => bloqueado
+  assert.equal(
+    hasAcceptedLatestTerms({
+      id: 'u2',
+      name: 'B',
+      email: 'b@b.com',
+      role: 'user',
+      createdAt: now,
+      termsAcceptedAt: now,
+      privacyAcceptedAt: now,
+      termsVersion: '2025.1',
+      privacyVersion: '2025.1'
+    }),
+    false
+  );
+
+  // 3. Usuário com somente termos atuais mas sem privacidade => bloqueado
+  assert.equal(
+    hasAcceptedLatestTerms({
+      id: 'u3',
+      name: 'C',
+      email: 'c@c.com',
+      role: 'user',
+      createdAt: now,
+      termsAcceptedAt: now,
+      privacyAcceptedAt: undefined,
+      termsVersion: CURRENT_TERMS_VERSION,
+      privacyVersion: undefined
+    }),
+    false
+  );
+
+  // 4. Usuário com somente privacidade atual mas sem termos => bloqueado
+  assert.equal(
+    hasAcceptedLatestTerms({
+      id: 'u4',
+      name: 'D',
+      email: 'd@d.com',
+      role: 'user',
+      createdAt: now,
+      termsAcceptedAt: undefined,
+      privacyAcceptedAt: now,
+      termsVersion: undefined,
+      privacyVersion: CURRENT_PRIVACY_VERSION
+    }),
+    false
+  );
+
+  // 5. Usuário com ambas as versões atuais (2026.1) => autorizado
+  assert.equal(
+    hasAcceptedLatestTerms({
+      id: 'u5',
+      name: 'E',
+      email: 'e@e.com',
+      role: 'user',
+      createdAt: now,
+      termsAcceptedAt: now,
+      privacyAcceptedAt: now,
+      termsVersion: CURRENT_TERMS_VERSION,
+      privacyVersion: CURRENT_PRIVACY_VERSION
+    }),
+    true
+  );
+});
+
+test('Auth: Middleware requireAuth - Token válido, token adulterado, expirado, JWT inventado e Firebase indisponível', async () => {
   resetMemoryDb();
+  const now = new Date().toISOString();
 
-  const mockToken = {
-    uid: 'usr_terms_test',
-    email: 'consent@empresa.com',
-    email_verified: true
-  } as any;
-
-  // Tentativa com versão vazia de termos -> não deve registrar versão
-  const profileEmpty = await ensureUserProfile(mockToken, {
-    termsVersion: '   ',
-    privacyVersion: ''
+  // Prepara perfil no banco de memória
+  await firestore().collection(COLLECTIONS.users).doc('usr_real_jwt_1').set({
+    id: 'usr_real_jwt_1',
+    email: 'valid@empresa.com',
+    role: 'user',
+    createdAt: now,
+    termsAcceptedAt: now,
+    privacyAcceptedAt: now,
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
   });
 
-  assert.equal(profileEmpty.termsVersion, undefined);
-  assert.equal(profileEmpty.privacyVersion, undefined);
+  // Salva referência original
+  const originalGetAdminAuth = firebaseAdminProvider.getAdminAuth;
 
-  // Registro válido com versão 2026.1
-  const profileValid = await ensureUserProfile(mockToken, {
-    termsAcceptedAt: new Date().toISOString(),
-    privacyAcceptedAt: new Date().toISOString(),
-    termsVersion: '2026.1',
-    privacyVersion: '2026.1'
-  });
+  try {
+    // 1. Cenário: Token válido
+    let mockAuthInstance: any = {
+      verifyIdToken: async (token: string) => {
+        if (token === 'valid_firebase_id_token_xyz') {
+          return {
+            uid: 'usr_real_jwt_1',
+            email: 'valid@empresa.com',
+            email_verified: true
+          };
+        }
+        if (token === 'expired_token') {
+          const err: any = new Error('Firebase ID token has expired');
+          err.code = 'auth/id-token-expired';
+          throw err;
+        }
+        const err: any = new Error('Decoding Firebase ID token failed');
+        err.code = 'auth/argument-error';
+        throw err;
+      }
+    };
 
-  assert.equal(profileValid.termsVersion, '2026.1');
-  assert.equal(profileValid.privacyVersion, '2026.1');
-  assert.ok(profileValid.termsAcceptedAt);
-  assert.ok(profileValid.privacyAcceptedAt);
+    firebaseAdminProvider.setAdminAuthForTesting(mockAuthInstance);
+
+    let nextCalled = false;
+    let resStatus = 0;
+    let resJson: any = null;
+    const makeRes = () => ({
+      status: (code: number) => {
+        resStatus = code;
+        return {
+          json: (data: any) => {
+            resJson = data;
+          }
+        };
+      }
+    });
+
+    const reqValid: any = {
+      headers: { authorization: 'Bearer valid_firebase_id_token_xyz' },
+      path: '/content',
+      originalUrl: '/api/content'
+    };
+
+    await requireAuth(reqValid, makeRes() as any, () => {
+      nextCalled = true;
+    });
+
+    assert.equal(nextCalled, true);
+    assert.equal(reqValid.user?.id, 'usr_real_jwt_1');
+    assert.equal(reqValid.firebaseUser?.uid, 'usr_real_jwt_1');
+
+    // 2. Cenário: Token adulterado
+    nextCalled = false;
+    resStatus = 0;
+    const reqTampered: any = {
+      headers: { authorization: 'Bearer tampered_signature_token' },
+      path: '/content'
+    };
+    await requireAuth(reqTampered, makeRes() as any, () => {
+      nextCalled = true;
+    });
+    assert.equal(nextCalled, false);
+    assert.equal(resStatus, 401);
+    assert.ok(resJson?.error?.includes('inválida ou expirada'));
+
+    // 3. Cenário: Token expirado
+    nextCalled = false;
+    resStatus = 0;
+    const reqExpired: any = {
+      headers: { authorization: 'Bearer expired_token' },
+      path: '/content'
+    };
+    await requireAuth(reqExpired, makeRes() as any, () => {
+      nextCalled = true;
+    });
+    assert.equal(nextCalled, false);
+    assert.equal(resStatus, 401);
+    assert.ok(resJson?.error?.includes('inválida ou expirada'));
+
+    // 4. Cenário: JWT inventado com role admin forjado no cabeçalho (sem validação pelo Firebase Admin)
+    nextCalled = false;
+    resStatus = 0;
+    const fakeAdminJwt = 'eyJhbGciOiJub25lIn0.eyJ1aWQiOiJhdHRhY2tlciIsInJvbGUiOiJhZG1pbiJ9.';
+    const reqFakeJwt: any = {
+      headers: { authorization: `Bearer ${fakeAdminJwt}` },
+      path: '/admin/stats'
+    };
+    await requireAuth(reqFakeJwt, makeRes() as any, () => {
+      nextCalled = true;
+    });
+    assert.equal(nextCalled, false);
+    assert.equal(resStatus, 401);
+
+    // 5. Cenário: Firebase Admin indisponível (getAdminAuth() retorna null)
+    firebaseAdminProvider.setAdminAuthForTesting(null);
+
+    nextCalled = false;
+    resStatus = 0;
+    const reqAdminUnavailable: any = {
+      headers: { authorization: 'Bearer any_token' },
+      path: '/content'
+    };
+    await requireAuth(reqAdminUnavailable, makeRes() as any, () => {
+      nextCalled = true;
+    });
+    assert.equal(nextCalled, false);
+    assert.equal(resStatus, 503);
+    assert.ok(resJson?.error?.includes('indisponível'));
+  } finally {
+    // Restaura
+    firebaseAdminProvider.setAdminAuthForTesting(undefined);
+  }
 });
 

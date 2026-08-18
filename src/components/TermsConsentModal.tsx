@@ -27,12 +27,12 @@ export function TermsConsentModal({ isOpen, onConsentSuccess, onLogout }: TermsC
     try {
       const response = await apiRequest<{ user: User; wallet: Wallet }>('/api/auth/accept-terms', {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           termsAccepted: true,
           privacyAccepted: true,
           termsVersion: '2026.1',
           privacyVersion: '2026.1'
-        })
+        }
       });
       onConsentSuccess(response.user, response.wallet);
     } catch (err: any) {

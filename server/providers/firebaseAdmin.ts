@@ -59,7 +59,14 @@ export function getAdminFirestore(): Firestore | null {
   }
 }
 
+let overrideAdminAuth: Auth | null | undefined = undefined;
+
+export function setAdminAuthForTesting(mockAuth: Auth | null | undefined): void {
+  overrideAdminAuth = mockAuth;
+}
+
 export function getAdminAuth(): Auth | null {
+  if (overrideAdminAuth !== undefined) return overrideAdminAuth;
   const app = getFirebaseAdmin();
   if (!app) return null;
   try {
