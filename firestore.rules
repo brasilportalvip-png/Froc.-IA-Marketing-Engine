@@ -4,23 +4,43 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function own(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // Perfis: leitura do próprio perfil. Escritas de negócio passam pelo backend Admin SDK.
+    // Perfis: usuário autenticado pode ler e criar/atualizar seu próprio documento de usuário
     match /users/{uid} {
-      allow read: if own(uid);
-      allow write: if false;
+      allow read, write: if own(uid);
     }
 
-    // Conteúdo público indexável.
-    match /companies/{id} {
-      allow read: if resource.data.isPublicInVitrine == true;
-      allow write: if false;
+    // Carteiras: leitura pelo próprio usuário; escrita de saldo protegida
+    match /wallets/{uid} {
+      allow read: if own(uid);
+      allow create: if own(uid);
+      allow update, delete: if false;
     }
+
+    // Empresas: proprietário autenticado pode ler e gerenciar
+    match /companies/{id} {
+      allow read: if resource.data.isPublicInVitrine == true || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Artigos de blog públicos
     match /blogPosts/{id} {
       allow read: if resource.data.status == 'published';
       allow write: if false;
     }
 
-    // Todas as coleções financeiras, OAuth, admin e dados privados são backend-only.
+    // Conteúdos, campanhas e agendamentos do usuário
+    match /contentItems/{id} {
+      allow read, write: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+    }
+    match /campaigns/{id} {
+      allow read, write: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+    }
+    match /scheduledPosts/{id} {
+      allow read, write: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    // Transações financeiras, claims de segurança e logs permanecem backend-only
     match /{document=**} {
       allow read, write: if false;
     }

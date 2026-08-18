@@ -7,7 +7,16 @@ import { config } from '../config/index.js';
 let adminApp: App | null = null;
 let firestoreConfigured = false;
 
-export function getFirebaseAdmin(): App {
+export function isFirebaseAdminConfigured(): boolean {
+  return Boolean(
+    config.firebase.projectId &&
+    config.firebase.clientEmail &&
+    config.firebase.privateKey &&
+    !config.firebase.privateKey.includes('-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrqB0dhcVfFf+L')
+  );
+}
+
+export function getFirebaseAdmin(): App | null {
   if (adminApp) return adminApp;
   const existing = getApps()[0];
   if (existing) {
@@ -16,35 +25,57 @@ export function getFirebaseAdmin(): App {
   }
 
   if (!config.firebase.projectId || !config.firebase.clientEmail || !config.firebase.privateKey) {
-    throw new Error('Firebase Admin não configurado. Defina FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL e FIREBASE_ADMIN_PRIVATE_KEY.');
+    return null;
   }
 
-  adminApp = initializeApp({
-    credential: cert({
+  try {
+    adminApp = initializeApp({
+      credential: cert({
+        projectId: config.firebase.projectId,
+        clientEmail: config.firebase.clientEmail,
+        privateKey: config.firebase.privateKey
+      }),
       projectId: config.firebase.projectId,
-      clientEmail: config.firebase.clientEmail,
-      privateKey: config.firebase.privateKey
-    }),
-    projectId: config.firebase.projectId,
-    storageBucket: `${config.firebase.projectId}.firebasestorage.app`
-  });
-
-  return adminApp;
-}
-
-export function getAdminFirestore(): Firestore {
-  const firestore = getFirestore(getFirebaseAdmin());
-  if (!firestoreConfigured) {
-    firestore.settings({ ignoreUndefinedProperties: true });
-    firestoreConfigured = true;
+      storageBucket: `${config.firebase.projectId}.firebasestorage.app`
+    });
+    return adminApp;
+  } catch (err: any) {
+    return null;
   }
-  return firestore;
 }
 
-export function getAdminAuth(): Auth {
-  return getAuth(getFirebaseAdmin());
+export function getAdminFirestore(): Firestore | null {
+  const app = getFirebaseAdmin();
+  if (!app) return null;
+  try {
+    const firestore = getFirestore(app);
+    if (!firestoreConfigured) {
+      firestore.settings({ ignoreUndefinedProperties: true });
+      firestoreConfigured = true;
+    }
+    return firestore;
+  } catch {
+    return null;
+  }
 }
 
-export function getAdminStorage(): Storage {
-  return getStorage(getFirebaseAdmin());
+export function getAdminAuth(): Auth | null {
+  const app = getFirebaseAdmin();
+  if (!app) return null;
+  try {
+    return getAuth(app);
+  } catch {
+    return null;
+  }
 }
+
+export function getAdminStorage(): Storage | null {
+  const app = getFirebaseAdmin();
+  if (!app) return null;
+  try {
+    return getStorage(app);
+  } catch {
+    return null;
+  }
+}
+

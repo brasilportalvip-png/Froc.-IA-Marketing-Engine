@@ -110,6 +110,21 @@ export const DashboardPage: React.FC<Props> = ({
             <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-bold text-cyan-300">
               <Zap size={13} className="text-cyan-400" /> Froc AI Engine Ativo
             </span>
+            {selectedCompany && (
+              <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold ${
+                selectedCompany.businessType === 'physical'
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                  : selectedCompany.businessType === 'hybrid'
+                  ? 'border-purple-500/30 bg-purple-500/10 text-purple-300'
+                  : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+              }`}>
+                {selectedCompany.businessType === 'physical'
+                  ? '🏬 Empresa Física'
+                  : selectedCompany.businessType === 'hybrid'
+                  ? '🔄 Modelo Híbrido'
+                  : '🌐 100% Online'}
+              </span>
+            )}
           </div>
           <h2 className="mt-2 text-2xl font-black text-white md:text-3xl">
             Olá, {user.name?.split(' ')[0] || 'Empreendedor'} 👋

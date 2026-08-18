@@ -54,10 +54,12 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
         description: description(company.description, `${company.name} na Vitrine Froc.IA.`),
         canonical, image: absolute(company.logoUrl), type: 'website', status: 200,
         schema: {
-          '@context': 'https://schema.org', '@type': 'Organization', name: company.name, url: company.website || canonical,
+          '@context': 'https://schema.org',
+          '@type': company.businessType === 'online' ? 'OnlineBusiness' : company.businessType === 'physical' ? 'LocalBusiness' : 'Organization',
+          name: company.name, url: company.website || canonical,
           description: company.description || undefined, logo: company.logoUrl || undefined,
           email: company.email || undefined, telephone: company.phone || company.whatsapp || undefined,
-          address: company.address || company.city ? { '@type': 'PostalAddress', streetAddress: company.address || undefined, addressLocality: company.city || undefined, addressRegion: company.state || undefined, addressCountry: company.country || 'BR' } : undefined,
+          address: company.businessType !== 'online' && (company.address || company.city) ? { '@type': 'PostalAddress', streetAddress: company.address || undefined, addressLocality: company.city || undefined, addressRegion: company.state || undefined, addressCountry: company.country || 'BR' } : undefined,
           sameAs: Object.values(company.socialLinks || {}).filter(Boolean)
         }
       };

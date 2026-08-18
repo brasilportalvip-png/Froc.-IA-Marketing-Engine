@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Sparkles, User as UserIcon, X } from 'lucide-react';
-import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, updateProfile } from 'firebase/auth';
-import { auth, googleAuthProvider } from '../lib/firebase';
+import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldAlert, ShieldCheck, Sparkles, User as UserIcon, X } from 'lucide-react';
+import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, updateProfile, type User as FirebaseUser } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db, googleAuthProvider } from '../lib/firebase';
 import { apiRequest } from '../lib/api';
+import { getClientSecurityFingerprint, markBonusClaimedOnThisDevice } from '../lib/security';
 import type { User, Wallet } from '../types';
 import { BRAND } from '../lib/brand';
 import { BrandLogo } from './BrandLogo';
@@ -22,11 +24,60 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const sync = async (extras: Record<string, any> = {}) => {
-    const data = await apiRequest<{ user: User; wallet: Wallet }>('/api/auth/sync-profile', { method: 'POST', body: extras });
+  const persistToClientFirestore = async (fbUser: FirebaseUser, displayName: string) => {
+    try {
+      const now = new Date().toISOString();
+      await setDoc(doc(db, 'users', fbUser.uid), {
+        id: fbUser.uid,
+        name: displayName || fbUser.displayName || 'Usuário Froc',
+        email: fbUser.email || '',
+        role: 'user',
+        emailVerified: fbUser.emailVerified || false,
+        avatarUrl: fbUser.photoURL || '',
+        createdAt: now,
+        updatedAt: now,
+        termsAcceptedAt: now,
+        privacyAcceptedAt: now
+      }, { merge: true });
+
+      await setDoc(doc(db, 'wallets', fbUser.uid), {
+        id: fbUser.uid,
+        userId: fbUser.uid,
+        balance: 0,
+        bonusBalance: 0,
+        totalPurchased: 0,
+        planId: 'plan_start',
+        updatedAt: now
+      }, { merge: true });
+    } catch (err: any) {
+      console.warn('[Froc Auth] Escrita local do Firestore:', err?.message);
+    }
+  };
+
+  const sync = async (fbUser: FirebaseUser, extras: Record<string, any> = {}) => {
+    const securityPayload = await getClientSecurityFingerprint();
+    const data = await apiRequest<{
+      user: User;
+      wallet: Wallet;
+      security?: { bonusEligible: boolean; bonusAmount: number; reason: string; message: string };
+    }>('/api/auth/sync-profile', {
+      method: 'POST',
+      body: {
+        ...extras,
+        securityPayload
+      }
+    });
+
+    if (data.security?.bonusEligible) {
+      markBonusClaimedOnThisDevice(fbUser.uid);
+    } else if (data.security && !data.security.bonusEligible && mode === 'register') {
+      setSecurityNotice(data.security.message || 'Bônus de boas-vindas não elegível para contas adicionais.');
+    }
+
     onSuccess(data.user, data.wallet);
     onClose();
   };
@@ -42,7 +93,7 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
   };
 
   const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setSuccess(''); setLoading(true);
+    e.preventDefault(); setError(''); setSuccess(''); setSecurityNotice(null); setLoading(true);
     try {
       if (mode === 'forgot') {
         if (!email.trim()) throw new Error('Informe seu e-mail cadastrado.');
@@ -56,23 +107,26 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
         if (!terms || !privacy) throw new Error('Aceite os Termos de Uso e a Política de Privacidade.');
         const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
         await updateProfile(credential.user, { displayName: name.trim() });
-        await sync({ name: name.trim(), termsAccepted: true, privacyAccepted: true });
+        await persistToClientFirestore(credential.user, name.trim());
+        await sync(credential.user, { name: name.trim(), termsAccepted: true, privacyAccepted: true });
       } else {
-        await signInWithEmailAndPassword(auth, email.trim(), password);
-        await sync({ termsAccepted: true, privacyAccepted: true });
+        const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+        await persistToClientFirestore(credential.user, credential.user.displayName || '');
+        await sync(credential.user, { termsAccepted: true, privacyAccepted: true });
       }
     } catch (err: any) { setError(friendlyError(err)); }
     finally { setLoading(false); }
   };
 
   const google = async () => {
-    setError(''); setSuccess(''); setLoading(true);
+    setError(''); setSuccess(''); setSecurityNotice(null); setLoading(true);
     try {
       if (mode === 'register' && (!terms || !privacy)) {
         throw new Error('Para criar ou ativar a conta com Google, marque os Termos de Uso e a Política de Privacidade.');
       }
       const credential = await signInWithPopup(auth, googleAuthProvider);
-      await sync({
+      await persistToClientFirestore(credential.user, credential.user.displayName || '');
+      await sync(credential.user, {
         name: credential.user.displayName || '',
         termsAccepted: true,
         privacyAccepted: true,
@@ -91,9 +145,20 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
             <BrandLogo size="lg" showText={false} />
           </div>
           <h2 className="text-xl font-extrabold text-white">{mode === 'register' ? 'Criar conta Froc.IA' : mode === 'forgot' ? 'Recuperar acesso' : 'Entrar no Froc.IA'}</h2>
-          <p className="mt-1 text-xs text-slate-400">{mode === 'forgot' ? 'O Firebase enviará um link seguro. Sua senha nunca é redefinida sem verificação.' : 'Sua conta funciona na web, PWA e futuro app Android/iOS.'}</p>
+          <p className="mt-1 text-xs text-slate-400">{mode === 'forgot' ? 'O Firebase enviará um link seguro. Sua senha nunca é redefinida sem verificação.' : 'Sua conta funciona na web, PWA e aplicativo.'}</p>
         </div>
-        {mode === 'register' && <div className="mb-4 flex gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-3 text-xs text-amber-100"><Sparkles size={18}/><span>Cadastro novo recebe o bônus configurado na plataforma uma única vez.</span></div>}
+        {mode === 'register' && (
+          <div className="mb-4 flex gap-3 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 p-3 text-xs text-cyan-200">
+            <Sparkles size={18} className="shrink-0 text-cyan-400"/>
+            <span>O bônus de 25 créditos é concedido uma única vez por titular/dispositivo na primeira conta criada.</span>
+          </div>
+        )}
+        {securityNotice && (
+          <div className="mb-4 flex gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <ShieldAlert size={16} className="shrink-0 text-amber-400"/>
+            <span>{securityNotice}</span>
+          </div>
+        )}
         {success && <div className="mb-4 flex gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300"><CheckCircle2 size={16}/>{success}</div>}
         {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">⚠️ {error}</div>}
         <form onSubmit={submit} className="space-y-4">
@@ -106,9 +171,10 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
           {mode === 'login' && <p className="text-center text-[10px] leading-relaxed text-slate-500">Ao entrar, você confirma que leu e aceita os <a href="/termos" target="_blank" className="text-cyan-300 underline">Termos de Uso</a> e a <a href="/privacidade" target="_blank" className="text-cyan-300 underline">Política de Privacidade</a>.</p>}
         </form>
         {mode !== 'forgot' && <><div className="my-4 flex items-center gap-3 text-[10px] text-slate-500"><span className="h-px flex-1 bg-slate-800"/>OU<span className="h-px flex-1 bg-slate-800"/></div><button onClick={google} disabled={loading} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-xs font-bold text-white hover:border-cyan-500/50">Continuar com Google</button></>}
-        <div className="mt-5 flex items-center justify-between text-xs"><button onClick={()=>{setMode(mode==='login'?'register':'login');setError('');setSuccess('')}} className="text-cyan-400 hover:underline">{mode==='login'?'Criar conta':mode==='register'?'Já tenho conta':'Voltar ao login'}</button>{mode==='login'&&<button onClick={()=>{setMode('forgot');setError('');setSuccess('')}} className="text-slate-400 hover:text-white">Esqueci minha senha</button>}{mode==='forgot'&&<button onClick={()=>setMode('login')} className="flex items-center gap-1 text-slate-400"><ArrowLeft size={13}/>Login</button>}</div>
-        <div className="mt-5 flex items-center justify-center gap-1 text-[10px] text-slate-500"><ShieldCheck size={12}/>Firebase Authentication + sessão validada no backend</div>
+        <div className="mt-5 flex items-center justify-between text-xs"><button onClick={()=>{setMode(mode==='login'?'register':'login');setError('');setSuccess('');setSecurityNotice(null)}} className="text-cyan-400 hover:underline">{mode==='login'?'Criar conta':mode==='register'?'Já tenho conta':'Voltar ao login'}</button>{mode==='login'&&<button onClick={()=>{setMode('forgot');setError('');setSuccess('');setSecurityNotice(null)}} className="text-slate-400 hover:text-white">Esqueci minha senha</button>}{mode==='forgot'&&<button onClick={()=>{setMode('login');setSecurityNotice(null)}} className="flex items-center gap-1 text-slate-400"><ArrowLeft size={13}/>Login</button>}</div>
+        <div className="mt-5 flex items-center justify-center gap-1 text-[10px] text-slate-500"><ShieldCheck size={12}/>Firebase Authentication + Firestore Sync + Proteção Anti-Abuso</div>
       </div>
     </div>
   );
 };
+

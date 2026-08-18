@@ -3,6 +3,7 @@ import { getAdminAuth, getAdminStorage } from '../providers/firebaseAdmin.js';
 import { config } from '../config/index.js';
 import { AuthenticatedRequest, ensureUserProfile, requireAdmin, requireAuth } from './auth.js';
 import { addCredits, getWallet, listCreditTransactions } from './credits.js';
+import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
@@ -63,6 +64,11 @@ function sanitizedSocialLinks(value: any): Record<string, string> {
 function normalizeCompanyField(key: string, value: any): any {
   if (['website','androidApp','iosApp','logoUrl'].includes(key)) return safeHttpUrl(value);
   if (key === 'email') return safeEmail(value);
+  if (key === 'businessType') {
+    const raw = safeString(value, 30).toLowerCase();
+    return ['online', 'physical', 'hybrid'].includes(raw) ? raw : 'online';
+  }
+  if (key === 'onlineChannels') return stringArray(value);
   if (key === 'socialLinks') return sanitizedSocialLinks(value);
   if (['products','services','competitors','keywords'].includes(key)) return stringArray(value);
   if (key === 'isPublicInVitrine') return Boolean(value);
@@ -159,15 +165,44 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
     privacyAcceptedAt: req.user?.privacyAcceptedAt || now,
     avatarUrl: safeString(req.body?.avatarUrl, 1000) || req.user?.avatarUrl
   });
-  const wallet = await addCredits({
+
+  const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const userAgent = safeString(req.headers['user-agent'], 300);
+
+  // Avaliação rigorosa anti-abuso e anti-multicontas para concessão de bônus
+  const outcome = await evaluateSignupBonusEligibility({
     userId: profile.id,
-    amount: Math.max(0, config.freeSignupBonusCredits),
-    type: 'bonus',
-    source: 'Bônus de Cadastro Froc.IA',
-    idempotencyKey: `welcome:${profile.id}`,
-    metadata: { reason: 'first_signup' }
-  }).catch(() => getWallet(profile.id));
-  res.json({ user: profile, wallet });
+    email: profile.email,
+    ip: clientIp,
+    userAgent,
+    securityPayload: req.body?.securityPayload
+  });
+
+  let wallet;
+  if (outcome.eligibleForBonus && outcome.bonusAmount > 0) {
+    wallet = await addCredits({
+      userId: profile.id,
+      amount: outcome.bonusAmount,
+      type: 'bonus',
+      source: 'Bônus de Primeiro Cadastro Froc.IA',
+      idempotencyKey: `welcome:${profile.id}`,
+      metadata: { reason: outcome.reason, detail: outcome.detail, claimId: outcome.claimId }
+    }).catch(() => getWallet(profile.id));
+  } else {
+    // Conta criada sem bônus (0 créditos) por detecção de duplicidade/multiconta/e-mail temporário
+    wallet = await getWallet(profile.id);
+  }
+
+  res.json({
+    user: profile,
+    wallet,
+    security: {
+      bonusEligible: outcome.eligibleForBonus,
+      bonusAmount: outcome.bonusAmount,
+      reason: outcome.reason,
+      message: outcome.detail
+    }
+  });
 }));
 
 router.get('/auth/me', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -224,6 +259,8 @@ router.post('/companies', requireAuth, asyncRoute(async (req: AuthenticatedReque
     userId: req.user!.id,
     name,
     slug,
+    businessType: normalizeCompanyField('businessType', req.body?.businessType || 'online'),
+    onlineChannels: stringArray(req.body?.onlineChannels),
     logoUrl: safeHttpUrl(req.body?.logoUrl, 1500),
     description: safeString(req.body?.description, 5000),
     website: safeHttpUrl(req.body?.website, 1000),
@@ -263,7 +300,7 @@ router.get('/companies/:id', requireAuth, asyncRoute(async (req: AuthenticatedRe
 
 router.patch('/companies/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const current = await requireOwnedCompany(req.user!.id, req.params.id);
-  const allowed = ['name','logoUrl','description','website','androidApp','iosApp','phone','whatsapp','email','address','city','state','country','category','segment','products','services','targetAudience','coverageRegion','differentials','brandTone','goals','competitors','keywords','socialLinks','isPublicInVitrine','marketingProfile'];
+  const allowed = ['name','businessType','onlineChannels','logoUrl','description','website','androidApp','iosApp','phone','whatsapp','email','address','city','state','country','category','segment','products','services','targetAudience','coverageRegion','differentials','brandTone','goals','competitors','keywords','socialLinks','isPublicInVitrine','marketingProfile'];
   const patch: Record<string, any> = {};
   for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
   if (patch.name && patch.name !== current.name) patch.slug = `${slugify(safeString(patch.name, 120))}-${req.params.id.slice(-6)}`;

@@ -53,11 +53,27 @@ export function companyContext(company?: any): string {
     return 'Você é o Froc.IA, especialista sênior em marketing digital, vendas, conteúdo e SEO. Responda em português do Brasil, com clareza, ética, precisão e foco em resultado.';
   }
   const profile = company.marketingProfile || {};
+  const isOnline = company.businessType === 'online';
+  const isPhysical = company.businessType === 'physical';
+  const isHybrid = company.businessType === 'hybrid';
+
+  const typeDescription = isOnline
+    ? 'EMPRESA 100% ONLINE / DIGITAL (Atendimento remoto, e-commerce, infoprodutos, serviços digitais, SaaS ou vendas pela internet. Todo o foco de conversão deve ser direcionado para canais digitais: website, checkout, landing page, link na bio, WhatsApp ou redes sociais. NÃO sugira visitas a estabelecimentos físicos ou pontos presenciais).'
+    : isPhysical
+    ? 'EMPRESA COM PONTO FÍSICO / LOCAL (Atendimento presencial, loja, consultório, restaurante ou escritório. Enfatize presença local, localização, facilidade de acesso, atendimento presencial e raio geográfico).'
+    : 'EMPRESA HÍBRIDA (Combina ponto de atendimento presencial com forte atuação e vendas online. Equilibre a conveniência digital com a experiência presencial).';
+
+  const channels = (company.onlineChannels || []).filter(Boolean).join(', ');
+
   return `Você é o Froc.IA, estrategista de marketing da marca ${company.name}.
+Modelo de Operação: ${typeDescription}
+${channels ? `Canais Digitais & Plataformas: ${channels}` : ''}
 Segmento: ${company.category || company.segment || 'não informado'}.
 Descrição: ${company.description || 'não informada'}.
 Produtos: ${(company.products || []).join(', ') || 'não informados'}.
 Serviços: ${(company.services || []).join(', ') || 'não informados'}.
+Região de Atendimento: ${company.coverageRegion || (isOnline ? 'Nacional / Todo o Brasil (Online)' : 'Local')}.
+${!isOnline && (company.city || company.address) ? `Localização Física: ${[company.address, company.city, company.state, company.country].filter(Boolean).join(', ')}` : ''}
 Público: ${company.targetAudience || profile.targetAudience || 'não informado'}.
 Persona: ${profile.persona || 'não informada'}.
 Tom de voz: ${company.brandTone || profile.toneOfVoice || 'profissional e persuasivo'}.

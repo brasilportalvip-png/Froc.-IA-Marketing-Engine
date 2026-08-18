@@ -144,16 +144,37 @@ class MemoryCollectionRef extends MemoryQuery {
 
 class ResilientFirestoreWrapper {
   private rawFirestore: any = null;
+  private isRemoteDisabled = false;
 
   private getRaw() {
+    if (this.isRemoteDisabled) return null;
     if (!this.rawFirestore) {
       try {
         this.rawFirestore = getAdminFirestore();
+        if (!this.rawFirestore) {
+          this.isRemoteDisabled = true;
+        }
       } catch {
         this.rawFirestore = null;
+        this.isRemoteDisabled = true;
       }
     }
     return this.rawFirestore;
+  }
+
+  private handleRemoteError(err: any, op: string) {
+    const msg = String(err?.message || '');
+    if (
+      msg.includes('UNAUTHENTICATED') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('invalid authentication credentials') ||
+      msg.includes('Could not load the default credentials')
+    ) {
+      this.isRemoteDisabled = true;
+      this.rawFirestore = null;
+    } else {
+      console.warn(`[Froc Store] Firestore fallback ${op}:`, msg);
+    }
   }
 
   collection(name: string): any {
@@ -171,65 +192,79 @@ class ResilientFirestoreWrapper {
 
         return {
           id: targetId,
+          _rawDoc: rawDoc,
+          _memDoc: memDoc,
           get: async () => {
-            try {
-              return await rawDoc.get();
-            } catch (err: any) {
-              console.warn(`[Froc Store] Firestore fallback get for ${name}/${targetId}`);
-              return await memDoc.get();
+            if (!this.isRemoteDisabled && this.rawFirestore) {
+              try {
+                return await rawDoc.get();
+              } catch (err: any) {
+                this.handleRemoteError(err, `get ${name}/${targetId}`);
+              }
             }
+            return await memDoc.get();
           },
           set: async (data: any, options?: any) => {
             await memDoc.set(data, options);
-            try {
-              await rawDoc.set(data, options);
-            } catch (err: any) {
-              console.warn(`[Froc Store] Firestore fallback set for ${name}/${targetId}`);
+            if (!this.isRemoteDisabled && this.rawFirestore) {
+              try {
+                await rawDoc.set(data, options);
+              } catch (err: any) {
+                this.handleRemoteError(err, `set ${name}/${targetId}`);
+              }
             }
           },
           create: async (data: any) => {
             await memDoc.create(data);
-            try {
-              await rawDoc.create(data);
-            } catch (err: any) {
-              console.warn(`[Froc Store] Firestore fallback create for ${name}/${targetId}`);
+            if (!this.isRemoteDisabled && this.rawFirestore) {
+              try {
+                await rawDoc.create(data);
+              } catch (err: any) {
+                this.handleRemoteError(err, `create ${name}/${targetId}`);
+              }
             }
           },
           update: async (data: any) => {
             await memDoc.update(data);
-            try {
-              await rawDoc.update(data);
-            } catch (err: any) {
-              console.warn(`[Froc Store] Firestore fallback update for ${name}/${targetId}`);
+            if (!this.isRemoteDisabled && this.rawFirestore) {
+              try {
+                await rawDoc.update(data);
+              } catch (err: any) {
+                this.handleRemoteError(err, `update ${name}/${targetId}`);
+              }
             }
           },
           delete: async () => {
             await memDoc.delete();
-            try {
-              await rawDoc.delete();
-            } catch (err: any) {
-              console.warn(`[Froc Store] Firestore fallback delete for ${name}/${targetId}`);
+            if (!this.isRemoteDisabled && this.rawFirestore) {
+              try {
+                await rawDoc.delete();
+              } catch (err: any) {
+                this.handleRemoteError(err, `delete ${name}/${targetId}`);
+              }
             }
           }
         };
       },
       where: (field: string, op: string, val: any) => {
         const memQuery = memoryCol.where(field, op, val);
-        const rawQuery = raw.collection(name).where(field, op, val);
+        const rawQuery = this.getRaw()?.collection(name).where(field, op, val);
         return createQueryProxy(rawQuery, memQuery);
       },
       limit: (n: number) => {
         const memQuery = memoryCol.limit(n);
-        const rawQuery = raw.collection(name).limit(n);
+        const rawQuery = this.getRaw()?.collection(name).limit(n);
         return createQueryProxy(rawQuery, memQuery);
       },
       get: async () => {
-        try {
-          return await raw.collection(name).get();
-        } catch (err: any) {
-          console.warn(`[Froc Store] Firestore fallback query for ${name}`);
-          return await memoryCol.get();
+        if (!this.isRemoteDisabled && this.rawFirestore) {
+          try {
+            return await raw.collection(name).get();
+          } catch (err: any) {
+            this.handleRemoteError(err, `query ${name}`);
+          }
         }
+        return await memoryCol.get();
       }
     };
   }
@@ -237,34 +272,49 @@ class ResilientFirestoreWrapper {
   batch(): any {
     const raw = this.getRaw();
     const ops: Array<() => Promise<void>> = [];
+    const rawOps: Array<(batch: any) => void> = [];
 
     return {
       set: (docRef: any, data: any, options?: any) => {
         ops.push(async () => {
           if (docRef?.set) await docRef.set(data, options);
         });
+        rawOps.push((batch) => {
+          const actual = docRef?._rawDoc || docRef;
+          if (actual) batch.set(actual, data, options);
+        });
       },
       delete: (docRef: any) => {
         ops.push(async () => {
           if (docRef?.delete) await docRef.delete();
+        });
+        rawOps.push((batch) => {
+          const actual = docRef?._rawDoc || docRef;
+          if (actual) batch.delete(actual);
         });
       },
       update: (docRef: any, data: any) => {
         ops.push(async () => {
           if (docRef?.update) await docRef.update(data);
         });
+        rawOps.push((batch) => {
+          const actual = docRef?._rawDoc || docRef;
+          if (actual) batch.update(actual, data);
+        });
       },
       commit: async () => {
         for (const op of ops) {
           await op().catch(() => undefined);
         }
-        if (raw) {
+        if (!this.isRemoteDisabled && this.getRaw()) {
           try {
-            const rawBatch = raw.batch();
-            // best-effort sync
+            const rawBatch = this.getRaw().batch();
+            for (const rop of rawOps) {
+              rop(rawBatch);
+            }
             await rawBatch.commit().catch(() => undefined);
-          } catch {
-            // ignore
+          } catch (err: any) {
+            this.handleRemoteError(err, 'batch commit');
           }
         }
       }
@@ -273,11 +323,40 @@ class ResilientFirestoreWrapper {
 
   async runTransaction<T>(updateFunction: (transaction: any) => Promise<T>): Promise<T> {
     const raw = this.getRaw();
-    if (raw) {
+    if (raw && !this.isRemoteDisabled) {
       try {
-        return await raw.runTransaction(updateFunction);
+        return await raw.runTransaction(async (rawTx: any) => {
+          const txProxy = {
+            get: async (docRefOrQuery: any) => {
+              const actual = docRefOrQuery?._rawDoc || docRefOrQuery;
+              return await rawTx.get(actual);
+            },
+            set: (docRef: any, data: any, options?: any) => {
+              const actual = docRef?._rawDoc || docRef;
+              if (docRef?._memDoc?.set) {
+                docRef._memDoc.set(data, options).catch?.(() => undefined);
+              }
+              return rawTx.set(actual, data, options);
+            },
+            update: (docRef: any, data: any) => {
+              const actual = docRef?._rawDoc || docRef;
+              if (docRef?._memDoc?.update) {
+                docRef._memDoc.update(data).catch?.(() => undefined);
+              }
+              return rawTx.update(actual, data);
+            },
+            delete: (docRef: any) => {
+              const actual = docRef?._rawDoc || docRef;
+              if (docRef?._memDoc?.delete) {
+                docRef._memDoc.delete().catch?.(() => undefined);
+              }
+              return rawTx.delete(actual);
+            }
+          };
+          return await updateFunction(txProxy);
+        });
       } catch (err: any) {
-        console.warn('[Froc Store] Firestore transaction failed, falling back to local runner:', err?.message);
+        this.handleRemoteError(err, 'transaction');
       }
     }
 
@@ -343,7 +422,10 @@ export const COLLECTIONS = {
   notifications: 'notifications',
   supportTickets: 'supportTickets',
   schedulerLocks: 'schedulerLocks',
-  systemSettings: 'systemSettings'
+  systemSettings: 'systemSettings',
+  bonusClaims: 'bonusClaims',
+  securityEvents: 'securityEvents',
+  deviceRegistrations: 'deviceRegistrations'
 } as const;
 
 export function nowIso(): string {
