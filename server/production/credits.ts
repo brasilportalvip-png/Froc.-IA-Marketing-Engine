@@ -1,4 +1,5 @@
 import { COLLECTIONS, firestore, newId, nowIso, stableId } from './store.js';
+import { recalculateUserPlan } from './plans.js';
 
 export interface WalletRecord {
   id: string;
@@ -9,6 +10,8 @@ export interface WalletRecord {
   totalReceived: number;
   reservedCredits: number;
   planId: string;
+  planStatus?: 'free' | 'active' | 'cancel_at_period_end' | 'cancelled' | 'past_due';
+  currentPeriodEnd?: string | null;
   updatedAt: string;
 }
 
@@ -22,24 +25,67 @@ function defaultWallet(userId: string): WalletRecord {
     totalReceived: 0,
     reservedCredits: 0,
     planId: 'plan_free',
+    planStatus: 'free',
+    currentPeriodEnd: null,
     updatedAt: nowIso()
   };
 }
 
 export async function getWallet(userId: string): Promise<WalletRecord> {
+  return getEffectiveWallet(userId);
+}
+
+export async function getEffectiveWallet(userId: string): Promise<WalletRecord> {
   const db = firestore();
   const ref = db.collection(COLLECTIONS.wallets).doc(userId);
   const snap = await ref.get();
-  if (snap.exists) return { id: snap.id, ...(snap.data() as any) } as WalletRecord;
-  const wallet = defaultWallet(userId);
-  try {
-    await ref.set(wallet, { merge: true });
-    return wallet;
-  } catch (error) {
-    const fresh = await ref.get();
-    if (fresh.exists) return { id: fresh.id, ...(fresh.data() as any) } as WalletRecord;
-    throw new Error(`Falha crítica ao persistir carteira do usuário: ${(error as any)?.message || error}`);
+  let wallet: WalletRecord;
+  if (snap.exists) {
+    wallet = { id: snap.id, ...(snap.data() as any) } as WalletRecord;
+  } else {
+    wallet = defaultWallet(userId);
+    try {
+      await ref.set(wallet, { merge: true });
+    } catch (error) {
+      const fresh = await ref.get();
+      if (fresh.exists) {
+        wallet = { id: fresh.id, ...(fresh.data() as any) } as WalletRecord;
+      }
+    }
   }
+
+  // Sincronização centralizada e determinística de validade temporal do plano
+  try {
+    const effectivePlan = await recalculateUserPlan(userId);
+    const hasPlanChanged = (
+      wallet.planId !== effectivePlan.planId ||
+      wallet.planStatus !== effectivePlan.planStatus ||
+      wallet.currentPeriodEnd !== effectivePlan.currentPeriodEnd
+    );
+
+    if (hasPlanChanged) {
+      wallet.planId = effectivePlan.planId;
+      wallet.planStatus = effectivePlan.planStatus;
+      wallet.currentPeriodEnd = effectivePlan.currentPeriodEnd;
+      wallet.updatedAt = nowIso();
+
+      await ref.set({
+        planId: wallet.planId,
+        planStatus: wallet.planStatus,
+        currentPeriodEnd: wallet.currentPeriodEnd,
+        updatedAt: wallet.updatedAt
+      }, { merge: true });
+    }
+  } catch (err) {
+    console.warn('[Wallet] Falha não impeditiva ao recalcular plano efetivo:', err);
+  }
+
+  return wallet;
+}
+
+export async function getEffectiveUserPlan(userId: string): Promise<string> {
+  const wallet = await getEffectiveWallet(userId);
+  return wallet.planId || 'plan_free';
 }
 
 export async function addCredits(data: {

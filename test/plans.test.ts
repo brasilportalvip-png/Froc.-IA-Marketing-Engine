@@ -144,6 +144,16 @@ test('Plans: Autopilot bloqueia usuários do plano free e permite plano pro', as
     category: 'Varejo',
     description: 'Moda feminina'
   });
+  await db.collection(COLLECTIONS.payments).doc('order_pro_autopilot').set({
+    id: 'order_pro_autopilot',
+    userId: userPro,
+    planId: 'plan_pro',
+    status: 'active',
+    lastPaymentStatus: 'approved',
+    currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: new Date().toISOString(),
+    lastCreditedAt: new Date().toISOString()
+  });
   await db.collection(COLLECTIONS.wallets).doc(userPro).set({
     id: userPro,
     userId: userPro,
@@ -151,6 +161,7 @@ test('Plans: Autopilot bloqueia usuários do plano free e permite plano pro', as
     bonusBalance: 0,
     reservedCredits: 0,
     planId: 'plan_pro',
+    planStatus: 'active',
     updatedAt: new Date().toISOString()
   });
 
@@ -174,4 +185,201 @@ test('Plans: Autopilot bloqueia usuários do plano free e permite plano pro', as
 
   const walletPro = await getWallet(userPro);
   assert.equal(walletPro.balance, 45); // 50 - 5 = 45
+});
+
+test('Plans: getWallet persiste downgrade para plan_free quando a assinatura expira', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_downgrade_sync_test';
+
+  // 1. Cria carteira inicial Pro
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({
+    id: userId,
+    userId,
+    balance: 100,
+    bonusBalance: 0,
+    totalUsed: 0,
+    totalReceived: 100,
+    reservedCredits: 0,
+    planId: 'plan_pro',
+    planStatus: 'active',
+    updatedAt: new Date().toISOString()
+  });
+
+  // 2. Pedido expirado no passado
+  const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  await db.collection(COLLECTIONS.payments).doc('order_expired_1').set({
+    id: 'order_expired_1',
+    userId,
+    planId: 'plan_pro',
+    status: 'cancel_at_period_end',
+    subscriptionStatus: 'cancelled',
+    currentPeriodEnd: pastDate,
+    createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(),
+    lastCreditedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString()
+  });
+
+  // Ao chamar getWallet, deve sincronizar e persistir plan_free
+  const wallet = await getWallet(userId);
+  assert.equal(wallet.planId, 'plan_free');
+  assert.equal(wallet.planStatus, 'free');
+
+  // Verifica persistência no Firestore
+  const savedDoc = await db.collection(COLLECTIONS.wallets).doc(userId).get();
+  assert.equal(savedDoc.data()?.planId, 'plan_free');
+  assert.equal(savedDoc.data()?.planStatus, 'free');
+});
+
+test('Plans: cancelSubscription é estritamente fail-closed e propaga erros do Mercado Pago sem corromper estado local', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_cancel_test_failclosed';
+  const orderId = 'order_sub_cancel_1';
+  const subId = 'mp_sub_998877';
+
+  // Salva fetch original
+  const originalFetch = globalThis.fetch;
+
+  try {
+    // 1. Cria assinatura ativa
+    await db.collection(COLLECTIONS.payments).doc(orderId).set({
+      id: orderId,
+      userId,
+      planId: 'plan_business',
+      billingMode: 'subscription',
+      providerSubscriptionId: subId,
+      status: 'active',
+      subscriptionStatus: 'authorized',
+      currentPeriodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString()
+    });
+
+    await db.collection(COLLECTIONS.wallets).doc(userId).set({
+      id: userId,
+      userId,
+      balance: 200,
+      planId: 'plan_business',
+      planStatus: 'active',
+      updatedAt: new Date().toISOString()
+    });
+
+    const { cancelSubscription } = await import('../server/production/payments.js');
+
+    // Simula erro de comunicação / 500 do Mercado Pago
+    globalThis.fetch = async () => {
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({ message: 'Mercado Pago Internal Gateway Error' })
+      } as any;
+    };
+
+    // Deve lançar erro e NÃO alterar estado local para cancelado
+    await assert.rejects(
+      async () => {
+        await cancelSubscription(userId, orderId);
+      },
+      (err: any) => {
+        return err.statusCode === 502 || err.message.includes('Mercado Pago');
+      }
+    );
+
+    // O status no banco permanece active
+    const orderAfterFailure = await db.collection(COLLECTIONS.payments).doc(orderId).get();
+    assert.equal(orderAfterFailure.data()?.status, 'active');
+
+    // Agora simula resposta bem-sucedida do Mercado Pago
+    globalThis.fetch = async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'cancelled' })
+      } as any;
+    };
+
+    const res = await cancelSubscription(userId, orderId);
+    assert.equal(res.status, 'cancel_at_period_end');
+
+    // Verifica que agora foi marcado como cancel_at_period_end no banco
+    const orderAfterSuccess = await db.collection(COLLECTIONS.payments).doc(orderId).get();
+    assert.equal(orderAfterSuccess.data()?.status, 'cancel_at_period_end');
+    assert.equal(orderAfterSuccess.data()?.subscriptionStatus, 'cancelled');
+
+    const walletAfterSuccess = await db.collection(COLLECTIONS.wallets).doc(userId).get();
+    assert.equal(walletAfterSuccess.data()?.planStatus, 'cancel_at_period_end');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Plans: Múltiplos pedidos resolvem para o pedido ativo mais recente e de maior precedência', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_multi_orders_test';
+
+  const now = Date.now();
+  // Pedido 1: Antigo expirado Start
+  await db.collection(COLLECTIONS.payments).doc('order_old_start').set({
+    id: 'order_old_start',
+    userId,
+    planId: 'plan_start',
+    status: 'cancel_at_period_end',
+    subscriptionStatus: 'cancelled',
+    currentPeriodEnd: new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    lastCreditedAt: new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString()
+  });
+
+  // Pedido 2: Pedido falhado / estornado
+  await db.collection(COLLECTIONS.payments).doc('order_failed_business').set({
+    id: 'order_failed_business',
+    userId,
+    planId: 'plan_business',
+    status: 'refunded',
+    lastPaymentStatus: 'refunded',
+    createdAt: new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString()
+  });
+
+  // Pedido 3: Pedido ativo Pro
+  await db.collection(COLLECTIONS.payments).doc('order_active_pro').set({
+    id: 'order_active_pro',
+    userId,
+    planId: 'plan_pro',
+    status: 'active',
+    lastPaymentStatus: 'approved',
+    currentPeriodEnd: new Date(now + 25 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString(),
+    lastCreditedAt: new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString()
+  });
+
+  const result = await recalculateUserPlan(userId);
+  assert.equal(result.planId, 'plan_pro');
+  assert.equal(result.planStatus, 'active');
+});
+
+test('Plans: Entitlements de Campanhas e Social Connections seguem a matriz oficial de planos', () => {
+  // Free: sem campanhas, sem redes
+  const free = getPlanEntitlements('plan_free');
+  assert.equal(free.campaigns, false);
+  assert.equal(free.socialConnections, false);
+
+  // Start: sem campanhas, sem redes
+  const start = getPlanEntitlements('plan_start');
+  assert.equal(start.campaigns, false);
+  assert.equal(start.socialConnections, false);
+
+  // Pro: sem campanhas, com redes
+  const pro = getPlanEntitlements('plan_pro');
+  assert.equal(pro.campaigns, false);
+  assert.equal(pro.socialConnections, true);
+
+  // Business: com campanhas, com redes
+  const business = getPlanEntitlements('plan_business');
+  assert.equal(business.campaigns, true);
+  assert.equal(business.socialConnections, true);
+
+  // Agency: com campanhas, com redes
+  const agency = getPlanEntitlements('plan_agency');
+  assert.equal(agency.campaigns, true);
+  assert.equal(agency.socialConnections, true);
 });

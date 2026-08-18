@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import { config } from '../config/index.js';
 import { COLLECTIONS, firestore, newId, nowIso, stableId } from './store.js';
+import { recalculateUserPlan } from './plans.js';
+
+export { recalculateUserPlan };
 
 export type BillingMode = 'subscription' | 'one_time';
 
@@ -155,46 +158,6 @@ function normalizePaymentStatus(status: string): string {
   if (status === 'cancelled') return 'cancelled';
   if (status === 'rejected') return 'rejected';
   return 'pending';
-}
-
-export async function recalculateUserPlan(userId: string): Promise<{
-  planId: string;
-  planStatus: 'free' | 'active' | 'cancel_at_period_end' | 'cancelled' | 'past_due';
-  currentPeriodEnd: string | null;
-}> {
-  const db = firestore();
-  const snap = await db.collection(COLLECTIONS.payments).where('userId', '==', userId).get();
-  const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-  const now = new Date().toISOString();
-
-  // Filtra pedidos válidos e ativos
-  const activeOrders = orders.filter((o) => {
-    if (['refunded', 'charged_back', 'failed'].includes(o.status) || ['refunded', 'charged_back'].includes(o.lastPaymentStatus)) {
-      return false;
-    }
-    if (o.status === 'cancel_at_period_end' || o.subscriptionStatus === 'cancelled') {
-      return Boolean(o.currentPeriodEnd && o.currentPeriodEnd > now);
-    }
-    if (o.status === 'active' || o.status === 'approved' || o.lastPaymentStatus === 'approved') {
-      return true;
-    }
-    return false;
-  }).sort((a, b) => String(b.lastCreditedAt || b.createdAt || '').localeCompare(String(a.lastCreditedAt || a.createdAt || '')));
-
-  if (activeOrders.length === 0) {
-    return { planId: 'plan_free', planStatus: 'free', currentPeriodEnd: null };
-  }
-
-  const bestOrder = activeOrders[0];
-  const isCancelledPending = bestOrder.status === 'cancel_at_period_end' || bestOrder.subscriptionStatus === 'cancelled';
-  const planStatus = isCancelledPending ? 'cancel_at_period_end' : 'active';
-  const currentPeriodEnd = bestOrder.currentPeriodEnd || (bestOrder.lastCreditedAt ? new Date(new Date(bestOrder.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : null);
-
-  return {
-    planId: bestOrder.planId || 'plan_free',
-    planStatus,
-    currentPeriodEnd
-  };
 }
 
 export async function applyPaymentCycle(data: {
@@ -427,14 +390,26 @@ export async function cancelSubscription(userId: string, orderId?: string): Prom
   const subscriptionId = String(target.providerSubscriptionId || target.providerPreapprovalId || '');
   if (!subscriptionId) throw new Error('Assinatura sem identificador do Mercado Pago.');
 
-  const updated = await mpJson(`https://api.mercadopago.com/preapproval/${encodeURIComponent(subscriptionId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'cancelled' })
-  }).catch((err) => {
-    console.warn('[MercadoPago] Aviso ao cancelar no MP:', err.message);
-    return { status: 'cancelled' };
-  });
+  // Fail-closed: se o Mercado Pago falhar ou não confirmar, propaga erro sem alterar o estado local
+  let updated: any;
+  try {
+    updated = await mpJson(`https://api.mercadopago.com/preapproval/${encodeURIComponent(subscriptionId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' })
+    });
+  } catch (err: any) {
+    console.error('[MercadoPago] Falha na comunicação ao cancelar assinatura:', err?.message || err);
+    const error: any = new Error(`Falha ao comunicar com o Mercado Pago para cancelar a renovação: ${err?.message || 'Erro desconhecido'}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  if (!updated || updated.status !== 'cancelled') {
+    const error: any = new Error('O Mercado Pago não confirmou o cancelamento da assinatura.');
+    error.statusCode = 502;
+    throw error;
+  }
 
   const currentPeriodEnd = target.nextPaymentDate || target.currentPeriodEnd || (target.lastCreditedAt ? new Date(new Date(target.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
 

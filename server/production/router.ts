@@ -607,6 +607,14 @@ router.get('/campaigns', requireAuth, asyncRoute(async (req: AuthenticatedReques
 }));
 
 router.post('/campaigns', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  if (!entitlements.campaigns) {
+    return res.status(403).json({
+      error: 'O recurso de Campanhas é exclusivo dos planos BUSINESS e AGENCY. Faça upgrade para criar campanhas.'
+    });
+  }
+
   const name = safeString(req.body?.name, 300);
   const companyId = safeString(req.body?.companyId, 200);
   if (!name || !companyId) return res.status(400).json({ error: 'Nome e empresa são obrigatórios.' });
@@ -618,6 +626,14 @@ router.post('/campaigns', requireAuth, asyncRoute(async (req: AuthenticatedReque
 }));
 
 router.patch('/campaigns/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  if (!entitlements.campaigns) {
+    return res.status(403).json({
+      error: 'O recurso de Campanhas é exclusivo dos planos BUSINESS e AGENCY. Faça upgrade para editar campanhas.'
+    });
+  }
+
   const ref = firestore().collection(COLLECTIONS.campaigns).doc(req.params.id);
   const snap = await ref.get();
   if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Campanha não encontrada.' });
@@ -770,6 +786,14 @@ router.get('/social/connections', requireAuth, asyncRoute(async (req: Authentica
   res.json({ connections: await listConnections(req.user!.id, companyId) });
 }));
 router.get('/social/:provider/connect', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  if (!entitlements.socialConnections) {
+    return res.status(403).json({
+      error: 'A conexão com redes sociais está disponível a partir do plano PRO. Faça upgrade para conectar suas contas.'
+    });
+  }
+
   const provider = req.params.provider as SocialProvider;
   if (!['instagram','facebook','tiktok','youtube','linkedin','pinterest','x'].includes(provider)) return res.status(400).json({ error: 'Provedor social inválido.' });
   const companyId = safeString(req.query.companyId, 200);
@@ -801,6 +825,14 @@ router.get('/social/connections/:companyId', requireAuth, asyncRoute(async (req:
   res.json({ connections: await listConnections(req.user!.id, req.params.companyId) });
 }));
 router.get('/social/oauth/:provider/start', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  if (!entitlements.socialConnections) {
+    return res.status(403).json({
+      error: 'A conexão com redes sociais está disponível a partir do plano PRO. Faça upgrade para conectar suas contas.'
+    });
+  }
+
   const provider = req.params.provider as SocialProvider;
   const companyId = safeString(req.query.companyId, 200);
   if (!['instagram','facebook','tiktok','youtube','linkedin','pinterest','x'].includes(provider)) return res.status(400).json({ error: 'Provedor social inválido.' });

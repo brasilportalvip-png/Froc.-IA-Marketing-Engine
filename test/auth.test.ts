@@ -293,3 +293,52 @@ test('Auth: Middleware requireAuth - Token válido, token adulterado, expirado, 
   }
 });
 
+test('Auth: Login não promove consentimento legado; exigência de consentimento explícito para 2026.1', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_legacy_consent_user';
+  const now = new Date().toISOString();
+
+  // 1. Usuário existente no banco com versão de termos antiga (2025.1)
+  await db.collection(COLLECTIONS.users).doc(userId).set({
+    id: userId,
+    email: 'legacy@empresa.com',
+    name: 'Usuário Legado',
+    role: 'user',
+    createdAt: now,
+    termsAcceptedAt: now,
+    privacyAcceptedAt: now,
+    termsVersion: '2025.1',
+    privacyVersion: '2025.1'
+  });
+
+  const mockToken = {
+    uid: userId,
+    email: 'legacy@empresa.com',
+    email_verified: true,
+    name: 'Usuário Legado'
+  } as any;
+
+  // 2. Usuário faz login comum (sync-profile sem flag de consentimento explícito)
+  const profileAfterLogin = await ensureUserProfile(mockToken, {
+    name: 'Usuário Legado Atualizado'
+  });
+
+  // As versões de consentimento continuam sendo as versões legadas antigas
+  assert.equal(profileAfterLogin.termsVersion, '2025.1');
+  assert.equal(profileAfterLogin.privacyVersion, '2025.1');
+  assert.equal(hasAcceptedLatestTerms(profileAfterLogin), false);
+
+  // 3. Usuário aceita explicitamente os novos Termos e Política (versão 2026.1)
+  const profileAfterConsent = await ensureUserProfile(mockToken, {
+    termsAcceptedAt: new Date().toISOString(),
+    privacyAcceptedAt: new Date().toISOString(),
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
+  });
+
+  assert.equal(profileAfterConsent.termsVersion, '2026.1');
+  assert.equal(profileAfterConsent.privacyVersion, '2026.1');
+  assert.equal(hasAcceptedLatestTerms(profileAfterConsent), true);
+});
+
