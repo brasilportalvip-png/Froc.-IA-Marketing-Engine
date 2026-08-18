@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Uploads are performed only by the trusted backend through Firebase Admin.
+    // Public delivery uses generated download tokens, never direct client writes.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

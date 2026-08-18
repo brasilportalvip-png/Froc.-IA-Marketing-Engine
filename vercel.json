@@ -1,0 +1,99 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    },
+    {
+      "src": "api/index.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "^/$",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/sitemap.xml",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/robots.txt",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/vitrine(?:/(.*))?",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/blog(?:/(.*))?",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/planos",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/termos",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/privacidade",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/((dashboard|empresa|froc-ia|autopilot|criar-conteudo|criar-imagem|criar-video|criar-artigo|seo|campanhas|calendario|redes-sociais|conteudos|analytics|creditos|perfil|configuracoes|suporte|admin))",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.ts"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/process",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+import React, { useState } from 'react';
+import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck, Sparkles, User as UserIcon, X } from 'lucide-react';
+import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, updateProfile } from 'firebase/auth';
+import { auth, googleAuthProvider } from '../lib/firebase';
+import { apiRequest } from '../lib/api';
+import type { User, Wallet } from '../types';
+import { BRAND } from '../lib/brand';
+import { BrandLogo } from './BrandLogo';
+
+interface Props { isOpen: boolean; onClose: () => void; onSuccess: (user: User, wallet: Wallet) => void; }
+type Mode = 'login' | 'register' | 'forgot';
+
+export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
+  const [mode, setMode] = useState<Mode>('login');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [terms, setTerms] = useState(false);
+  const [privacy, setPrivacy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  if (!isOpen) return null;
+
+  const sync = async (extras: Record<string, any> = {}) => {
+    const data = await apiRequest<{ user: User; wallet: Wallet }>('/api/auth/sync-profile', { method: 'POST', body: extras });
+    onSuccess(data.user, data.wallet);
+    onClose();
+  };
+
+  const friendlyError = (err: any) => {
+    const code = String(err?.code || '');
+    if (code.includes('email-already-in-use')) return 'Este e-mail já possui uma conta.';
+    if (code.includes('invalid-credential')) return 'E-mail ou senha inválidos.';
+    if (code.includes('weak-password')) return 'Use uma senha com pelo menos 6 caracteres.';
+    if (code.includes('too-many-requests')) return 'Muitas tentativas. Aguarde e tente novamente.';
+    if (code.includes('popup-closed')) return 'Login com Google cancelado.';
+    return err?.message || 'Não foi possível concluir a autenticação.';
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(''); setSuccess(''); setLoading(true);
+    try {
+      if (mode === 'forgot') {
+        if (!email.trim()) throw new Error('Informe seu e-mail cadastrado.');
+        await sendPasswordResetEmail(auth, email.trim(), { url: `${window.location.origin}/` });
+        setSuccess('Enviamos um link seguro de redefinição de senha para seu e-mail.');
+        return;
+      }
+      if (mode === 'register') {
+        if (!name.trim()) throw new Error('Informe seu nome completo.');
+        if (password !== confirm) throw new Error('As senhas não coincidem.');
+        if (!terms || !privacy) throw new Error('Aceite os Termos de Uso e a Política de Privacidade.');
+        const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        await updateProfile(credential.user, { displayName: name.trim() });
+        await sync({ name: name.trim(), termsAccepted: true, privacyAccepted: true });
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+        await sync({ termsAccepted: true, privacyAccepted: true });
+      }
+    } catch (err: any) { setError(friendlyError(err)); }
+    finally { setLoading(false); }
+  };
+
+  const google = async () => {
+    setError(''); setSuccess(''); setLoading(true);
+    try {
+      if (mode === 'register' && (!terms || !privacy)) {
+        throw new Error('Para criar ou ativar a conta com Google, marque os Termos de Uso e a Política de Privacidade.');
+      }
+      const credential = await signInWithPopup(auth, googleAuthProvider);
+      await sync({
+        name: credential.user.displayName || '',
+        termsAccepted: true,
+        privacyAccepted: true,
+        avatarUrl: credential.user.photoURL || ''
+      });
+    } catch (err: any) { setError(friendlyError(err)); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 p-3 backdrop-blur-xl" role="dialog" aria-modal="true">
+      <div className="relative max-h-[calc(100dvh-24px)] w-full max-w-md overflow-y-auto rounded-[28px] border border-slate-700/80 bg-[#0F172A] p-6 shadow-2xl md:p-8">
+        <button onClick={onClose} aria-label="Fechar" className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18}/></button>
+        <div className="mb-6 text-center">
+          <div className="flex justify-center mb-3">
+            <BrandLogo size="lg" showText={false} />
+          </div>
+          <h2 className="text-xl font-extrabold text-white">{mode === 'register' ? 'Criar conta Froc.IA' : mode === 'forgot' ? 'Recuperar acesso' : 'Entrar no Froc.IA'}</h2>
+          <p className="mt-1 text-xs text-slate-400">{mode === 'forgot' ? 'O Firebase enviará um link seguro. Sua senha nunca é redefinida sem verificação.' : 'Sua conta funciona na web, PWA e futuro app Android/iOS.'}</p>
+        </div>
+        {mode === 'register' && <div className="mb-4 flex gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-3 text-xs text-amber-100"><Sparkles size={18}/><span>Cadastro novo recebe o bônus configurado na plataforma uma única vez.</span></div>}
+        {success && <div className="mb-4 flex gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300"><CheckCircle2 size={16}/>{success}</div>}
+        {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">⚠️ {error}</div>}
+        <form onSubmit={submit} className="space-y-4">
+          {mode === 'register' && <label className="block text-xs font-semibold text-slate-300">Nome completo<div className="relative mt-1.5"><UserIcon className="absolute left-3.5 top-3 text-slate-500" size={16}/><input value={name} onChange={(e)=>setName(e.target.value)} autoComplete="name" className="froc-input pl-10" required /></div></label>}
+          <label className="block text-xs font-semibold text-slate-300">E-mail<div className="relative mt-1.5"><Mail className="absolute left-3.5 top-3 text-slate-500" size={16}/><input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} autoComplete="email" className="froc-input pl-10" required /></div></label>
+          {mode !== 'forgot' && <label className="block text-xs font-semibold text-slate-300">Senha<div className="relative mt-1.5"><Lock className="absolute left-3.5 top-3 text-slate-500" size={16}/><input type={showPassword?'text':'password'} value={password} onChange={(e)=>setPassword(e.target.value)} autoComplete={mode==='login'?'current-password':'new-password'} minLength={6} className="froc-input pl-10 pr-11" required/><button type="button" onClick={()=>setShowPassword(!showPassword)} aria-label="Mostrar ou ocultar senha" className="absolute right-3 top-2.5 p-1 text-slate-400">{showPassword?<EyeOff size={16}/>:<Eye size={16}/>}</button></div></label>}
+          {mode === 'register' && <label className="block text-xs font-semibold text-slate-300">Confirmar senha<input type="password" value={confirm} onChange={(e)=>setConfirm(e.target.value)} autoComplete="new-password" minLength={6} className="froc-input mt-1.5" required/></label>}
+          {mode === 'register' && <div className="space-y-2 text-[11px] text-slate-300"><label className="flex items-start gap-2"><input type="checkbox" checked={terms} onChange={(e)=>setTerms(e.target.checked)} className="mt-0.5"/><span>Aceito os <a href="/termos" target="_blank" className="text-cyan-300 underline">Termos de Uso</a>.</span></label><label className="flex items-start gap-2"><input type="checkbox" checked={privacy} onChange={(e)=>setPrivacy(e.target.checked)} className="mt-0.5"/><span>Aceito a <a href="/privacidade" target="_blank" className="text-cyan-300 underline">Política de Privacidade</a> e tratamento de dados.</span></label></div>}
+          <button disabled={loading} className="froc-primary w-full">{loading ? 'Processando…' : mode === 'register' ? 'Criar minha conta' : mode === 'forgot' ? 'Enviar link seguro' : 'Entrar'}</button>
+          {mode === 'login' && <p className="text-center text-[10px] leading-relaxed text-slate-500">Ao entrar, você confirma que leu e aceita os <a href="/termos" target="_blank" className="text-cyan-300 underline">Termos de Uso</a> e a <a href="/privacidade" target="_blank" className="text-cyan-300 underline">Política de Privacidade</a>.</p>}
+        </form>
+        {mode !== 'forgot' && <><div className="my-4 flex items-center gap-3 text-[10px] text-slate-500"><span className="h-px flex-1 bg-slate-800"/>OU<span className="h-px flex-1 bg-slate-800"/></div><button onClick={google} disabled={loading} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-xs font-bold text-white hover:border-cyan-500/50">Continuar com Google</button></>}
+        <div className="mt-5 flex items-center justify-between text-xs"><button onClick={()=>{setMode(mode==='login'?'register':'login');setError('');setSuccess('')}} className="text-cyan-400 hover:underline">{mode==='login'?'Criar conta':mode==='register'?'Já tenho conta':'Voltar ao login'}</button>{mode==='login'&&<button onClick={()=>{setMode('forgot');setError('');setSuccess('')}} className="text-slate-400 hover:text-white">Esqueci minha senha</button>}{mode==='forgot'&&<button onClick={()=>setMode('login')} className="flex items-center gap-1 text-slate-400"><ArrowLeft size={13}/>Login</button>}</div>
+        <div className="mt-5 flex items-center justify-center gap-1 text-[10px] text-slate-500"><ShieldCheck size={12}/>Firebase Authentication + sessão validada no backend</div>
+      </div>
+    </div>
+  );
+};

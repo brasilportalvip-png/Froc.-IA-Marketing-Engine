@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function own(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // Perfis: leitura do próprio perfil. Escritas de negócio passam pelo backend Admin SDK.
+    match /users/{uid} {
+      allow read: if own(uid);
+      allow write: if false;
+    }
+
+    // Conteúdo público indexável.
+    match /companies/{id} {
+      allow read: if resource.data.isPublicInVitrine == true;
+      allow write: if false;
+    }
+    match /blogPosts/{id} {
+      allow read: if resource.data.status == 'published';
+      allow write: if false;
+    }
+
+    // Todas as coleções financeiras, OAuth, admin e dados privados são backend-only.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

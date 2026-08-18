@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "Froc.IA — Marketing Intelligence",
+  "short_name": "Froc.IA",
+  "description": "Automação de marketing, conteúdo, SEO e campanhas com inteligência artificial.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0B0F19",
+  "theme_color": "#0B0F19",
+  "orientation": "any",
+  "categories": ["business", "productivity", "marketing"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Criar conteúdo", "url": "/criar-conteudo", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Froc IA", "url": "/froc-ia", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Calendário", "url": "/calendario", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

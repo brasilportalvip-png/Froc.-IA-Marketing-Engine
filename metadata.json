@@ -1,0 +1,6 @@
+{
+  "name": "Froc.IA",
+  "description": "Plataforma de automação de marketing com inteligência artificial, geração de conteúdo, campanhas, SEO e gestão multicanal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
