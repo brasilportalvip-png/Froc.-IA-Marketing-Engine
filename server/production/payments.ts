@@ -157,6 +157,46 @@ function normalizePaymentStatus(status: string): string {
   return 'pending';
 }
 
+export async function recalculateUserPlan(userId: string): Promise<{
+  planId: string;
+  planStatus: 'free' | 'active' | 'cancel_at_period_end' | 'cancelled' | 'past_due';
+  currentPeriodEnd: string | null;
+}> {
+  const db = firestore();
+  const snap = await db.collection(COLLECTIONS.payments).where('userId', '==', userId).get();
+  const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+  const now = new Date().toISOString();
+
+  // Filtra pedidos válidos e ativos
+  const activeOrders = orders.filter((o) => {
+    if (['refunded', 'charged_back', 'failed'].includes(o.status) || ['refunded', 'charged_back'].includes(o.lastPaymentStatus)) {
+      return false;
+    }
+    if (o.status === 'cancel_at_period_end' || o.subscriptionStatus === 'cancelled') {
+      return Boolean(o.currentPeriodEnd && o.currentPeriodEnd > now);
+    }
+    if (o.status === 'active' || o.status === 'approved' || o.lastPaymentStatus === 'approved') {
+      return true;
+    }
+    return false;
+  }).sort((a, b) => String(b.lastCreditedAt || b.createdAt || '').localeCompare(String(a.lastCreditedAt || a.createdAt || '')));
+
+  if (activeOrders.length === 0) {
+    return { planId: 'plan_free', planStatus: 'free', currentPeriodEnd: null };
+  }
+
+  const bestOrder = activeOrders[0];
+  const isCancelledPending = bestOrder.status === 'cancel_at_period_end' || bestOrder.subscriptionStatus === 'cancelled';
+  const planStatus = isCancelledPending ? 'cancel_at_period_end' : 'active';
+  const currentPeriodEnd = bestOrder.currentPeriodEnd || (bestOrder.lastCreditedAt ? new Date(new Date(bestOrder.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : null);
+
+  return {
+    planId: bestOrder.planId || 'plan_free',
+    planStatus,
+    currentPeriodEnd
+  };
+}
+
 export async function applyPaymentCycle(data: {
   orderId: string;
   paymentId: string;
@@ -169,6 +209,8 @@ export async function applyPaymentCycle(data: {
 }): Promise<void> {
   const db = firestore();
   const orderRef = db.collection(COLLECTIONS.payments).doc(data.orderId);
+
+  let userIdToRecalculate: string | null = null;
 
   await db.runTransaction(async (tx) => {
     const orderSnap = await tx.get(orderRef);
@@ -202,10 +244,11 @@ export async function applyPaymentCycle(data: {
 
     const wallet = walletSnap.exists ? walletSnap.data() as any : {
       id: order.userId, userId: order.userId, balance: 0, bonusBalance: 0,
-      totalUsed: 0, totalReceived: 0, reservedCredits: 0, planId: 'plan_free'
+      totalUsed: 0, totalReceived: 0, reservedCredits: 0, planId: 'plan_free', planStatus: 'free'
     };
     const credits = Number(order.creditsGranted || 0) + Number(order.bonusCreditsGranted || 0);
     const before = Number(wallet.balance || 0);
+    const currentPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     if (status === 'approved' && !creditIdemSnap.exists) {
       tx.set(walletRef, {
@@ -216,6 +259,9 @@ export async function applyPaymentCycle(data: {
         bonusBalance: Number(wallet.bonusBalance || 0) + Number(order.bonusCreditsGranted || 0),
         totalReceived: Number(wallet.totalReceived || 0) + credits,
         planId: order.planId,
+        planStatus: 'active',
+        planStartedAt: wallet.planStartedAt || nowIso(),
+        currentPeriodEnd,
         updatedAt: nowIso()
       }, { merge: true });
       const creditTxRef = db.collection(COLLECTIONS.creditTransactions).doc(newId('tx'));
@@ -233,6 +279,7 @@ export async function applyPaymentCycle(data: {
       });
       tx.set(creditIdemRef, { key: `mp-credit:${data.paymentId}`, createdAt: nowIso(), orderId: data.orderId, credits });
       baseUpdate.status = order.billingMode === 'subscription' ? 'active' : 'approved';
+      baseUpdate.currentPeriodEnd = currentPeriodEnd;
       baseUpdate.processedAt = nowIso();
       baseUpdate.lastCreditedAt = nowIso();
     } else if (['refunded', 'charged_back', 'cancelled'].includes(status) && creditIdemSnap.exists && !reversalIdemSnap.exists) {
@@ -261,12 +308,24 @@ export async function applyPaymentCycle(data: {
       tx.set(reversalIdemRef, { key: `mp-reversal:${data.paymentId}:${status}`, createdAt: nowIso(), orderId: data.orderId, credits });
       baseUpdate.status = status;
       baseUpdate.reversedAt = nowIso();
+      userIdToRecalculate = order.userId;
     } else if (status !== 'approved') {
       baseUpdate.status = status;
     }
 
     tx.set(orderRef, baseUpdate, { merge: true });
   });
+
+  // Se houve estorno ou chargeback, recalcula o entitlement do usuário com segurança multi-pedidos
+  if (userIdToRecalculate) {
+    const recalculated = await recalculateUserPlan(userIdToRecalculate);
+    await db.collection(COLLECTIONS.wallets).doc(userIdToRecalculate).set({
+      planId: recalculated.planId,
+      planStatus: recalculated.planStatus,
+      currentPeriodEnd: recalculated.currentPeriodEnd,
+      updatedAt: nowIso()
+    }, { merge: true });
+  }
 }
 
 async function processStandardPayment(resourceId: string): Promise<{ processed: boolean; message: string }> {
@@ -359,7 +418,7 @@ export async function listUserSubscriptions(userId: string): Promise<any[]> {
 
 export async function cancelSubscription(userId: string, orderId?: string): Promise<any> {
   const subscriptions = await listUserSubscriptions(userId);
-  const target = orderId ? subscriptions.find((item) => item.id === orderId) : subscriptions.find((item) => ['active','authorized','pending'].includes(String(item.status)) || ['authorized','pending'].includes(String(item.subscriptionStatus)));
+  const target = orderId ? subscriptions.find((item) => item.id === orderId) : subscriptions.find((item) => ['active','authorized','pending','cancel_at_period_end'].includes(String(item.status)) || ['authorized','pending'].includes(String(item.subscriptionStatus)));
   if (!target) {
     const error: any = new Error('Nenhuma assinatura ativa encontrada.');
     error.statusCode = 404;
@@ -372,7 +431,26 @@ export async function cancelSubscription(userId: string, orderId?: string): Prom
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: 'cancelled' })
+  }).catch((err) => {
+    console.warn('[MercadoPago] Aviso ao cancelar no MP:', err.message);
+    return { status: 'cancelled' };
   });
-  await firestore().collection(COLLECTIONS.payments).doc(target.id).set({ status: 'cancelled', subscriptionStatus: 'cancelled', cancelledAt: nowIso(), updatedAt: nowIso() }, { merge: true });
-  return { id: target.id, providerSubscriptionId: subscriptionId, status: updated.status || 'cancelled' };
+
+  const currentPeriodEnd = target.nextPaymentDate || target.currentPeriodEnd || (target.lastCreditedAt ? new Date(new Date(target.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
+
+  await firestore().collection(COLLECTIONS.payments).doc(target.id).set({
+    status: 'cancel_at_period_end',
+    subscriptionStatus: 'cancelled',
+    currentPeriodEnd,
+    cancelledAt: nowIso(),
+    updatedAt: nowIso()
+  }, { merge: true });
+
+  await firestore().collection(COLLECTIONS.wallets).doc(userId).set({
+    planStatus: 'cancel_at_period_end',
+    currentPeriodEnd,
+    updatedAt: nowIso()
+  }, { merge: true });
+
+  return { id: target.id, providerSubscriptionId: subscriptionId, status: 'cancel_at_period_end', currentPeriodEnd };
 }

@@ -53,14 +53,14 @@ export async function ensureUserProfile(token: DecodedIdToken, extras: Partial<F
   const role: FrocRole = claimsRole || existing?.role || 'user';
   const now = nowIso();
 
-  // Validação estrita: não aceitar versões vazias quando registrando novo consentimento
+  // Preservação estrita: não promove silenciosamente versões antigas
   const newTermsVersion = typeof extras.termsVersion === 'string' && extras.termsVersion.trim() ? extras.termsVersion.trim() : undefined;
   const newPrivacyVersion = typeof extras.privacyVersion === 'string' && extras.privacyVersion.trim() ? extras.privacyVersion.trim() : undefined;
 
-  const termsAcceptedAt = extras.termsAcceptedAt ? extras.termsAcceptedAt : existing?.termsAcceptedAt;
-  const privacyAcceptedAt = extras.privacyAcceptedAt ? extras.privacyAcceptedAt : existing?.privacyAcceptedAt;
-  const termsVersion = newTermsVersion || existing?.termsVersion;
-  const privacyVersion = newPrivacyVersion || existing?.privacyVersion;
+  const termsAcceptedAt = extras.termsAcceptedAt !== undefined ? extras.termsAcceptedAt : existing?.termsAcceptedAt;
+  const privacyAcceptedAt = extras.privacyAcceptedAt !== undefined ? extras.privacyAcceptedAt : existing?.privacyAcceptedAt;
+  const termsVersion = newTermsVersion !== undefined ? newTermsVersion : existing?.termsVersion;
+  const privacyVersion = newPrivacyVersion !== undefined ? newPrivacyVersion : existing?.privacyVersion;
 
   const profile: FrocUser = {
     id: token.uid,

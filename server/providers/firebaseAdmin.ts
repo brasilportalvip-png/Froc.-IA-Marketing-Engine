@@ -8,12 +8,15 @@ let adminApp: App | null = null;
 let firestoreConfigured = false;
 
 export function isFirebaseAdminConfigured(): boolean {
-  return Boolean(
-    config.firebase.projectId &&
-    config.firebase.clientEmail &&
-    config.firebase.privateKey &&
-    !config.firebase.privateKey.includes('-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrqB0dhcVfFf+L')
-  );
+  if (!config.firebase.projectId || !config.firebase.clientEmail || !config.firebase.privateKey) {
+    return false;
+  }
+  const cleanKey = config.firebase.privateKey.replace(/\s+/g, '');
+  // Rejeita a chave dummy de exemplo
+  if (cleanKey.includes('MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrqB0dhcVfFf+L')) {
+    return false;
+  }
+  return true;
 }
 
 export function getFirebaseAdmin(): App | null {
@@ -24,7 +27,7 @@ export function getFirebaseAdmin(): App | null {
     return adminApp;
   }
 
-  if (!config.firebase.projectId || !config.firebase.clientEmail || !config.firebase.privateKey) {
+  if (!isFirebaseAdminConfigured()) {
     return null;
   }
 

@@ -153,7 +153,7 @@ export const config = {
     seo_article: 35,
     video_script: 40,
     campaign: 50,
-    autopilot_cycle: 60,
+    autopilot_cycle: 5,
     auto_calendar: 100
   }
 } as const;

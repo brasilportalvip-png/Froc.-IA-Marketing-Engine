@@ -75,7 +75,7 @@ export default function App(){
     case'empresa':return <MyCompanyPage selectedCompany={selectedCompany} companies={companies} onSelectCompany={setSelectedCompany} onRefreshCompanies={refreshCompanies}/>;
     case'vitrine':return <VitrinePage onNavigate={navigate}/>;
     case'froc-ia':case'estrategia':return <FrocIaPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
-    case'autopilot':return <AutopilotPage selectedCompany={selectedCompany} onNavigate={navigate}/>;
+    case'autopilot':return <AutopilotPage selectedCompany={selectedCompany} wallet={wallet} onNavigate={navigate}/>;
     case'criar-conteudo':return <CreateContentPage companies={companies} selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
     case'criar-imagem':return <CreateImagePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
     case'criar-video':return <CreateVideoPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
@@ -95,7 +95,7 @@ export default function App(){
     default:return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} campaigns={campaigns} scheduledPosts={scheduledPosts} onNavigate={navigate} onOpenAuth={()=>setAuthOpen(true)}/>;
   }},[currentTab,user,wallet,selectedCompany,companies,campaigns,scheduledPosts,contentItems,isAdmin,navigate,refreshWallet,refreshCompanies,refreshCampaigns,refreshContents,refreshSchedule,loadSession]);
 
-  const needsTermsConsent = Boolean(user && (!user.termsAcceptedAt || !user.privacyAcceptedAt || !user.termsVersion || !user.privacyVersion));
+  const needsTermsConsent = Boolean(user && (!user.termsAcceptedAt || !user.privacyAcceptedAt || user.termsVersion !== '2026.1' || user.privacyVersion !== '2026.1'));
 
   if(currentTab==='home') return <><OfflineBanner/><PwaInstallPrompt/>{content}<AuthModal isOpen={authOpen} onClose={()=>setAuthOpen(false)} onSuccess={authSuccess}/><TermsConsentModal isOpen={needsTermsConsent} onConsentSuccess={authSuccess} onLogout={logout}/></>;
 

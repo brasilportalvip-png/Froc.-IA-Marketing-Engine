@@ -1,6 +1,7 @@
 import { config } from '../config/index.js';
-import { generatePlatformArticle, generatePost } from './ai.js';
-import { cleanupStaleReservations } from './credits.js';
+import { generateAutopilotPost, generatePlatformArticle, generatePost } from './ai.js';
+import { cleanupStaleReservations, getWallet } from './credits.js';
+import { getPlanEntitlements } from './plans.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
 import { publishText, type SocialProvider } from './social.js';
 
@@ -221,13 +222,25 @@ export async function processAutopilot(): Promise<number> {
     const ap = { id: doc.id, ...doc.data() } as any;
     if (!isAutopilotDue(ap, now)) continue;
 
+    // Validação estrita de entitlements do plano no backend
+    const walletSnap = await db.collection(COLLECTIONS.wallets).doc(ap.userId).get();
+    const wallet = walletSnap.exists ? (walletSnap.data() as any) : null;
+    const entitlements = getPlanEntitlements(wallet?.planId);
+
+    if (!entitlements.autopilotManual && !entitlements.autopilotAutomatic) {
+      continue;
+    }
+    if (ap.mode === 'automatic' && !entitlements.autopilotAutomatic) {
+      continue;
+    }
+
     const tz = ap.timezone || 'America/Sao_Paulo';
     const { hour, dateStr } = getLocalDateAndHour(now, tz);
     const currentSlot = `${dateStr}_h${hour}`;
 
     const monthKey = now.toISOString().slice(0, 7);
     const used = ap.usageMonth === monthKey ? Number(ap.usedCreditsThisMonth || 0) : 0;
-    if (used + config.creditCosts.full_post > Number(ap.maxMonthlyCredits || 0)) {
+    if (used + config.creditCosts.autopilot_cycle > Number(ap.maxMonthlyCredits || 0)) {
       await doc.ref.set({ usageMonth: monthKey, usedCreditsThisMonth: used, lastBudgetWarningAt: nowIso() }, { merge: true });
       await createNotification({ userId: ap.userId, title: 'Limite do Autopilot atingido', message: 'O Froc Autopilot pausou novas gerações porque o limite mensal de créditos foi alcançado.', type: 'credit_low' });
       continue;
@@ -242,7 +255,7 @@ export async function processAutopilot(): Promise<number> {
     }
 
     try {
-      const generated = await generatePost({ userId: ap.userId, company, topic: `Conteúdo estratégico atual para ${company.name}`, platform: ap.targetPlatforms?.[0] || 'Instagram', goal: ap.primaryGoal || 'Atrair clientes e gerar autoridade' });
+      const generated = await generateAutopilotPost({ userId: ap.userId, company, topic: `Conteúdo estratégico atual para ${company.name}`, platform: ap.targetPlatforms?.[0] || 'Instagram', goal: ap.primaryGoal || 'Atrair clientes e gerar autoridade' });
       const contentId = newId('content');
       const content = {
         id: contentId,
@@ -360,6 +373,14 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     throw new Error('Você não tem permissão para gerenciar esta empresa.');
   }
 
+  const wallet = await getWallet(userId);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  if (!entitlements.autopilotManual && !entitlements.autopilotAutomatic) {
+    const error: any = new Error('O recurso Autopilot não está disponível no seu plano atual. Faça upgrade para o plano PRO ou superior.');
+    error.statusCode = 403;
+    throw error;
+  }
+
   // Obter ou criar configuração de Autopilot para a empresa usando ID padronizado ${userId}_${companyId}
   const canonicalId = `${userId}_${companyId}`;
   let apConfigSnap = await db.collection(COLLECTIONS.autopilotConfigs).doc(canonicalId).get();
@@ -376,7 +397,7 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     userId,
     companyId,
     enabled: true,
-    mode: 'review',
+    mode: 'manual_approval',
     frequency: 'daily',
     timezone: 'America/Sao_Paulo',
     preferredDays: [1, 2, 3, 4, 5],
@@ -386,13 +407,19 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     primaryGoal: 'Atrair clientes e gerar autoridade'
   };
 
+  if (ap.mode === 'automatic' && !entitlements.autopilotAutomatic) {
+    const error: any = new Error('Modo automático do Autopilot exclusivo para os planos BUSINESS e AGENCY. Altere para aprovação manual ou faça upgrade.');
+    error.statusCode = 403;
+    throw error;
+  }
+
   const monthKey = new Date().toISOString().slice(0, 7);
   const used = ap.usageMonth === monthKey ? Number(ap.usedCreditsThisMonth || 0) : 0;
-  if (used + config.creditCosts.full_post > Number(ap.maxMonthlyCredits || 500)) {
+  if (used + config.creditCosts.autopilot_cycle > Number(ap.maxMonthlyCredits || 500)) {
     throw new Error('Limite mensal de créditos do Autopilot atingido para esta empresa. Aumente o teto de créditos nas configurações.');
   }
 
-  const generated = await generatePost({
+  const generated = await generateAutopilotPost({
     userId,
     company,
     topic: `Conteúdo estratégico prioritário para ${company.name}`,

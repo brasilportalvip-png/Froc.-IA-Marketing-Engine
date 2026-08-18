@@ -211,6 +211,21 @@ Responda SOMENTE JSON: {"headline":"","body":"","cta":"","hashtags":[""],"visual
   });
 }
 
+export async function generateAutopilotPost(data: { userId: string; company?: any; topic: string; platform?: string; goal?: string; tone?: string }) {
+  const prompt = `Crie um post completo e verdadeiro para ${data.platform || 'Instagram'} sobre "${data.topic}".
+Objetivo: ${data.goal || 'engajamento e vendas'}.
+Tom: ${data.tone || 'persuasivo e profissional'}.
+Responda SOMENTE JSON: {"headline":"","body":"","cta":"","hashtags":[""],"visualPrompt":"","keywords":[""]}.`;
+  return executeAi<any>({
+    userId: data.userId,
+    company: data.company,
+    operation: 'autopilot_cycle',
+    prompt,
+    jsonOutput: true,
+    parse: parseAiJson
+  });
+}
+
 export async function generateStrategy(data: { userId: string; company: any; timeframe: 'semana' | 'mes'; goal?: string }) {
   const prompt = `Crie uma estratégia de marketing executável para ${data.timeframe === 'mes' ? '30 dias' : '7 dias'}.
 Objetivo: ${data.goal || 'crescer autoridade, alcance e vendas'}.

@@ -1,8 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { getAdminAuth, getAdminStorage } from '../providers/firebaseAdmin.js';
 import { config } from '../config/index.js';
-import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, ensureUserProfile, requireAdmin, requireAuth } from './auth.js';
+import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, ensureUserProfile, hasAcceptedLatestTerms, requireAdmin, requireAuth } from './auth.js';
 import { addCredits, getWallet, listCreditTransactions } from './credits.js';
+import { getPlanEntitlements } from './plans.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript } from './ai.js';
 import { analyzeSeo } from './seo.js';
@@ -117,12 +118,7 @@ async function deleteCompanyData(userId: string, companyId: string): Promise<voi
 }
 
 function planCompanyLimit(planId: string): number {
-  if (planId === 'plan_free' || !planId) return 1;
-  if (planId === 'plan_start') return 2;
-  if (planId === 'plan_pro') return 5;
-  if (planId === 'plan_business') return 15;
-  if (planId === 'plan_agency') return 50;
-  return 1;
+  return getPlanEntitlements(planId).maxCompanies;
 }
 
 function contentBodyFromArticle(article: any): string {
@@ -156,19 +152,26 @@ router.get('/health', asyncRoute(async (_req, res) => {
 router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const now = nowIso();
   const name = safeString(req.body?.name, 120);
-  const hasTerms = Boolean(req.user?.termsAcceptedAt || req.body?.termsAccepted);
-  const hasPrivacy = Boolean(req.user?.privacyAcceptedAt || req.body?.privacyAccepted);
-  if (!hasTerms || !hasPrivacy) {
-    return res.status(428).json({
-      error: 'Para ativar sua conta, aceite os Termos de Uso e a Política de Privacidade no cadastro.'
-    });
-  }
+  const isExistingUser = Boolean(req.user?.termsAcceptedAt);
 
-  // O servidor é a autoridade máxima sobre a versão legal vigente
-  const termsAcceptedAt = req.user?.termsAcceptedAt || now;
-  const privacyAcceptedAt = req.user?.privacyAcceptedAt || now;
-  const termsVersion = req.user?.termsVersion === CURRENT_TERMS_VERSION ? CURRENT_TERMS_VERSION : CURRENT_TERMS_VERSION;
-  const privacyVersion = req.user?.privacyVersion === CURRENT_PRIVACY_VERSION ? CURRENT_PRIVACY_VERSION : CURRENT_PRIVACY_VERSION;
+  let termsAcceptedAt: string | undefined = req.user?.termsAcceptedAt;
+  let privacyAcceptedAt: string | undefined = req.user?.privacyAcceptedAt;
+  let termsVersion: string | undefined = req.user?.termsVersion;
+  let privacyVersion: string | undefined = req.user?.privacyVersion;
+
+  if (!isExistingUser) {
+    const hasTerms = Boolean(req.body?.termsAccepted);
+    const hasPrivacy = Boolean(req.body?.privacyAccepted);
+    if (!hasTerms || !hasPrivacy) {
+      return res.status(428).json({
+        error: 'Para ativar sua conta, aceite os Termos de Uso e a Política de Privacidade no cadastro.'
+      });
+    }
+    termsAcceptedAt = now;
+    privacyAcceptedAt = now;
+    termsVersion = CURRENT_TERMS_VERSION;
+    privacyVersion = CURRENT_PRIVACY_VERSION;
+  }
 
   const profile = await ensureUserProfile(req.firebaseUser!, {
     name: name || req.user?.name,
@@ -182,7 +185,7 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
   const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
   const userAgent = safeString(req.headers['user-agent'], 300);
 
-  // Avaliação rigorosa anti-abuso e anti-multicontas para concessão de bônus
+  // Avaliação rigorosa anti-abuso e anti-multicontas para concessão de bônus (apenas na criação)
   const outcome = await evaluateSignupBonusEligibility({
     userId: profile.id,
     email: profile.email,
@@ -214,6 +217,8 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
   res.json({
     user: profile,
     wallet,
+    needsTermsConsent: !hasAcceptedLatestTerms(profile),
+    currentTermsVersion: CURRENT_TERMS_VERSION,
     security: {
       bonusEligible: outcome.eligibleForBonus,
       bonusAmount: outcome.bonusAmount,
@@ -224,13 +229,13 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
 }));
 
 router.post('/auth/accept-terms', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const termsAccepted = Boolean(req.body?.termsAccepted);
-  const privacyAccepted = Boolean(req.body?.privacyAccepted);
+  const termsAccepted = req.body?.termsAccepted === true;
+  const privacyAccepted = req.body?.privacyAccepted === true;
   if (!termsAccepted || !privacyAccepted) {
-    return res.status(400).json({ error: 'Você precisa aceitar os Termos de Uso e a Política de Privacidade.' });
+    return res.status(400).json({ error: 'Você precisa aceitar explicitamente os Termos de Uso e a Política de Privacidade.' });
   }
 
-  // O backend é a fonte de verdade para as versões legais vigentes (não aceita versão inventada/falsificada pelo cliente)
+  // O backend é a fonte de verdade absoluta para as versões legais vigentes (ignora versões enviadas no payload do cliente)
   const now = nowIso();
 
   const profile = await ensureUserProfile(req.firebaseUser!, {
@@ -243,12 +248,19 @@ router.post('/auth/accept-terms', requireAuth, asyncRoute(async (req: Authentica
   res.json({
     message: 'Termos de Uso e Política de Privacidade aceitos com sucesso.',
     user: profile,
-    wallet: await getWallet(profile.id)
+    wallet: await getWallet(profile.id),
+    needsTermsConsent: false,
+    currentTermsVersion: CURRENT_TERMS_VERSION
   });
 }));
 
 router.get('/auth/me', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  res.json({ user: req.user, wallet: await getWallet(req.user!.id) });
+  res.json({
+    user: req.user,
+    wallet: await getWallet(req.user!.id),
+    needsTermsConsent: !hasAcceptedLatestTerms(req.user),
+    currentTermsVersion: CURRENT_TERMS_VERSION
+  });
 }));
 
 router.patch('/auth/profile', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -694,6 +706,24 @@ router.post('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticat
   const companyId = safeString(req.body?.companyId, 200);
   if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
   await requireOwnedCompany(req.user!.id, companyId);
+
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  const requestedEnabled = Boolean(req.body?.enabled);
+  const requestedMode = req.body?.mode === 'automatic' ? 'automatic' : 'manual_approval';
+
+  if (requestedEnabled && !entitlements.autopilotManual && !entitlements.autopilotAutomatic) {
+    return res.status(403).json({
+      error: 'O recurso Autopilot não está disponível no seu plano atual. Faça upgrade para o plano PRO ou superior.'
+    });
+  }
+
+  if (requestedMode === 'automatic' && !entitlements.autopilotAutomatic) {
+    return res.status(403).json({
+      error: 'O modo automático do Autopilot é exclusivo dos planos BUSINESS e AGENCY. No plano PRO, utilize aprovação manual ou faça upgrade.'
+    });
+  }
+
   const id = `${req.user!.id}_${companyId}`;
   const ref = firestore().collection(COLLECTIONS.autopilotConfigs).doc(id);
   const current = await ref.get();
@@ -708,8 +738,8 @@ router.post('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticat
     id,
     userId: req.user!.id,
     companyId,
-    enabled: Boolean(req.body?.enabled),
-    mode: req.body?.mode === 'automatic' ? 'automatic' : 'manual_approval',
+    enabled: requestedEnabled,
+    mode: requestedMode,
     frequency: ['daily', '3_times_week', 'weekly'].includes(req.body?.frequency) ? req.body.frequency : 'daily',
     timezone,
     preferredDays,
