@@ -77,3 +77,36 @@ test('Auth: Middleware requireAdmin bloqueia usuários comuns e permite apenas a
 
   assert.equal(adminNextCalled, true);
 });
+
+test('Auth: Validação estrita de termos de uso e política de privacidade (versão 2026.1)', async () => {
+  resetMemoryDb();
+
+  const mockToken = {
+    uid: 'usr_terms_test',
+    email: 'consent@empresa.com',
+    email_verified: true
+  } as any;
+
+  // Tentativa com versão vazia de termos -> não deve registrar versão
+  const profileEmpty = await ensureUserProfile(mockToken, {
+    termsVersion: '   ',
+    privacyVersion: ''
+  });
+
+  assert.equal(profileEmpty.termsVersion, undefined);
+  assert.equal(profileEmpty.privacyVersion, undefined);
+
+  // Registro válido com versão 2026.1
+  const profileValid = await ensureUserProfile(mockToken, {
+    termsAcceptedAt: new Date().toISOString(),
+    privacyAcceptedAt: new Date().toISOString(),
+    termsVersion: '2026.1',
+    privacyVersion: '2026.1'
+  });
+
+  assert.equal(profileValid.termsVersion, '2026.1');
+  assert.equal(profileValid.privacyVersion, '2026.1');
+  assert.ok(profileValid.termsAcceptedAt);
+  assert.ok(profileValid.privacyAcceptedAt);
+});
+

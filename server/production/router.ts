@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { getAdminAuth, getAdminStorage } from '../providers/firebaseAdmin.js';
 import { config } from '../config/index.js';
-import { AuthenticatedRequest, ensureUserProfile, requireAdmin, requireAuth } from './auth.js';
+import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, ensureUserProfile, requireAdmin, requireAuth } from './auth.js';
 import { addCredits, getWallet, listCreditTransactions } from './credits.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript } from './ai.js';
@@ -77,7 +77,7 @@ function normalizeCompanyField(key: string, value: any): any {
   return safeString(value, limits[key] || 1000);
 }
 
-async function ownedCompany(userId: string, companyId?: string): Promise<any | undefined> {
+export async function ownedCompany(userId: string, companyId?: string): Promise<any | undefined> {
   if (!companyId) return undefined;
   const snap = await firestore().collection(COLLECTIONS.companies).doc(companyId).get();
   if (!snap.exists) return undefined;
@@ -85,7 +85,7 @@ async function ownedCompany(userId: string, companyId?: string): Promise<any | u
   return data.userId === userId ? data : undefined;
 }
 
-async function requireOwnedCompany(userId: string, companyId: string): Promise<any> {
+export async function requireOwnedCompany(userId: string, companyId: string): Promise<any> {
   const company = await ownedCompany(userId, companyId);
   if (!company) {
     const error: any = new Error('Empresa não encontrada ou sem permissão.');
@@ -161,10 +161,16 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
       error: 'Para ativar sua conta, aceite os Termos de Uso e a Política de Privacidade no cadastro.'
     });
   }
+
+  const termsVersion = safeString(req.body?.termsVersion, 50) || req.user?.termsVersion || CURRENT_TERMS_VERSION;
+  const privacyVersion = safeString(req.body?.privacyVersion, 50) || req.user?.privacyVersion || CURRENT_PRIVACY_VERSION;
+
   const profile = await ensureUserProfile(req.firebaseUser!, {
     name: name || req.user?.name,
     termsAcceptedAt: req.user?.termsAcceptedAt || now,
     privacyAcceptedAt: req.user?.privacyAcceptedAt || now,
+    termsVersion,
+    privacyVersion,
     avatarUrl: safeString(req.body?.avatarUrl, 1000) || req.user?.avatarUrl
   });
 
@@ -204,6 +210,31 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
       reason: outcome.reason,
       message: outcome.detail
     }
+  });
+}));
+
+router.post('/auth/accept-terms', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const termsAccepted = Boolean(req.body?.termsAccepted);
+  const privacyAccepted = Boolean(req.body?.privacyAccepted);
+  if (!termsAccepted || !privacyAccepted) {
+    return res.status(400).json({ error: 'Você precisa aceitar os Termos de Uso e a Política de Privacidade.' });
+  }
+
+  const termsVersion = safeString(req.body?.termsVersion, 50) || CURRENT_TERMS_VERSION;
+  const privacyVersion = safeString(req.body?.privacyVersion, 50) || CURRENT_PRIVACY_VERSION;
+  const now = nowIso();
+
+  const profile = await ensureUserProfile(req.firebaseUser!, {
+    termsAcceptedAt: now,
+    privacyAcceptedAt: now,
+    termsVersion,
+    privacyVersion
+  });
+
+  res.json({
+    message: 'Termos de Uso e Política de Privacidade aceitos com sucesso.',
+    user: profile,
+    wallet: await getWallet(profile.id)
   });
 }));
 
@@ -627,7 +658,24 @@ router.get('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticate
   const ref = firestore().collection(COLLECTIONS.autopilotConfigs).doc(id);
   let snap = await ref.get();
   if (!snap.exists) {
-    await ref.set({ id, userId: req.user!.id, companyId, enabled: false, mode: 'manual_approval', frequency: 'daily', preferredDays: [1,2,3,4,5], preferredHours: [10,15,19], targetPlatforms: ['Instagram','Facebook'], primaryGoal: 'Atrair clientes e gerar autoridade', maxMonthlyCredits: 100, usedCreditsThisMonth: 0, usageMonth: new Date().toISOString().slice(0, 7), createdAt: nowIso(), updatedAt: nowIso() });
+    await ref.set({
+      id,
+      userId: req.user!.id,
+      companyId,
+      enabled: false,
+      mode: 'manual_approval',
+      frequency: 'daily',
+      timezone: 'America/Sao_Paulo',
+      preferredDays: [1, 2, 3, 4, 5],
+      preferredHours: [10, 15, 19],
+      targetPlatforms: ['Instagram', 'Facebook'],
+      primaryGoal: 'Atrair clientes e gerar autoridade',
+      maxMonthlyCredits: 100,
+      usedCreditsThisMonth: 0,
+      usageMonth: new Date().toISOString().slice(0, 7),
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    });
     snap = await ref.get();
   }
   res.json({ config: { id: snap.id, ...snap.data() } });
@@ -640,7 +688,29 @@ router.post('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticat
   const id = `${req.user!.id}_${companyId}`;
   const ref = firestore().collection(COLLECTIONS.autopilotConfigs).doc(id);
   const current = await ref.get();
-  const update = cleanObject({ id, userId: req.user!.id, companyId, enabled: Boolean(req.body?.enabled), mode: req.body?.mode === 'automatic' ? 'automatic' : 'manual_approval', frequency: ['daily','3_times_week','weekly'].includes(req.body?.frequency) ? req.body.frequency : 'daily', preferredDays: Array.isArray(req.body?.preferredDays) ? req.body.preferredDays : undefined, preferredHours: Array.isArray(req.body?.preferredHours) ? req.body.preferredHours : undefined, targetPlatforms: stringArray(req.body?.targetPlatforms, 10), primaryGoal: safeString(req.body?.primaryGoal, 2000) || 'Engajamento e Vendas', maxMonthlyCredits: Math.max(5, Number(req.body?.maxMonthlyCredits || 100)), updatedAt: nowIso(), createdAt: current.exists ? undefined : nowIso() });
+
+  const rawDays = Array.isArray(req.body?.preferredDays) ? req.body.preferredDays : undefined;
+  const preferredDays = rawDays ? rawDays.filter((d: any) => typeof d === 'number' && d >= 0 && d <= 6) : undefined;
+  const rawHours = Array.isArray(req.body?.preferredHours) ? req.body.preferredHours : undefined;
+  const preferredHours = rawHours ? rawHours.filter((h: any) => typeof h === 'number' && h >= 0 && h <= 23) : undefined;
+  const timezone = safeString(req.body?.timezone, 80) || 'America/Sao_Paulo';
+
+  const update = cleanObject({
+    id,
+    userId: req.user!.id,
+    companyId,
+    enabled: Boolean(req.body?.enabled),
+    mode: req.body?.mode === 'automatic' ? 'automatic' : 'manual_approval',
+    frequency: ['daily', '3_times_week', 'weekly'].includes(req.body?.frequency) ? req.body.frequency : 'daily',
+    timezone,
+    preferredDays,
+    preferredHours,
+    targetPlatforms: stringArray(req.body?.targetPlatforms, 10),
+    primaryGoal: safeString(req.body?.primaryGoal, 2000) || 'Engajamento e Vendas',
+    maxMonthlyCredits: Math.max(5, Number(req.body?.maxMonthlyCredits || 100)),
+    updatedAt: nowIso(),
+    createdAt: current.exists ? undefined : nowIso()
+  });
   await ref.set(update, { merge: true });
   const fresh = await ref.get();
   res.json({ message: 'Configuração do Autopilot salva.', config: { id: fresh.id, ...fresh.data() } });

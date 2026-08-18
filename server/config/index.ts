@@ -61,7 +61,7 @@ export const config = {
   corsOrigins,
   geminiApiKey: env('GEMINI_API_KEY'),
   geminiModels: {
-    text: env('GEMINI_MODEL_TEXT', 'gemini-3.7-flash'),
+    text: env('GEMINI_MODEL_TEXT', 'gemini-2.5-flash'),
     pro: env('GEMINI_MODEL_PRO', 'gemini-3.1-pro-preview'),
     fallback: env('GEMINI_MODEL_FALLBACK', 'gemini-3.1-flash-lite'),
     image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image')

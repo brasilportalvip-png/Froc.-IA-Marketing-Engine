@@ -16,11 +16,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Empresas: proprietário autenticado pode ler e gerenciar; vitrine pública pode ser lida
+    // Empresas: proprietário autenticado pode ler seus dados; vitrine pública pode ser lida; escritas exclusivamente via backend
     match /companies/{id} {
-      allow read: if resource.data.isPublicInVitrine == true || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow read: if resource.data.isPublicInVitrine == true || (signedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
     }
 
     // Artigos de blog públicos
@@ -29,24 +28,33 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Conteúdos, campanhas e agendamentos do usuário
+    // Conteúdos, campanhas e agendamentos: leitura restrita ao proprietário; escritas exclusivamente via backend
     match /contentItems/{id} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
     }
     match /campaigns/{id} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
     }
     match /scheduledPosts/{id} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
     }
 
-    // Transações financeiras, claims de segurança, logs, idempotência e autopilot permanecem backend-only
+    // Notificações: leitura restrita ao próprio usuário; escrita exclusivamente via backend
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Relatórios SEO: leitura restrita ao proprietário; escritas exclusivamente via backend
+    match /seoReports/{id} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Transações financeiras, claims de segurança, logs, idempotência, autopilot e conexões sociais permanecem backend-only
     match /{document=**} {
       allow read, write: if false;
     }

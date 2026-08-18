@@ -92,10 +92,10 @@ async function generateRaw(data: {
   jsonOutput?: boolean;
   maxTokens?: number;
 }): Promise<{ text: string; modelUsed: string; attempts: string[] }> {
-  // Cascata multi-modelo ultra-resiliente Froc AI (Gemini 3.7 / 3.1 Pro / 3.1 Flash-Lite / Flash-Latest)
+  // Cascata multi-modelo oficial Froc AI (Gemini 2.5 Flash / 3.1 Pro / 3.1 Flash-Lite / 2.5 Pro)
   const prioritized = data.useProModel
-    ? [config.geminiModels.pro, 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-2.5-pro', 'gemini-2.5-flash']
-    : [config.geminiModels.text, 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+    ? [config.geminiModels.pro, 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
+    : [config.geminiModels.text, 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview', 'gemini-2.5-pro'];
 
   const models = Array.from(new Set(prioritized.filter(Boolean)));
   const attempts: string[] = [];
@@ -337,27 +337,17 @@ export async function generateMarketingImage(data: {
         }
       });
     } else {
-      // Gemini 3.1 Flash Image / multimodal image model
-      try {
-        response = await (aiClient() as any).models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            imageConfig: {
-              aspectRatio
-            }
+      // Configuração oficial do SDK @google/genai para gemini-3.1-flash-image / gemini-3.1-flash-lite-image
+      response = await aiClient().models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          imageConfig: {
+            aspectRatio,
+            imageSize: '1K'
           }
-        });
-      } catch {
-        // Fallback with responseModalities
-        response = await (aiClient() as any).models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            responseModalities: ['IMAGE']
-          }
-        });
-      }
+        }
+      });
     }
 
     const image = extractGeneratedImage(response);

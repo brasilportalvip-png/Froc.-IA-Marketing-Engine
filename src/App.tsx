@@ -3,6 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AuthModal } from './components/AuthModal';
+import { TermsConsentModal } from './components/TermsConsentModal';
 import { BottomNav } from './components/BottomNav';
 import { MobileTopBar } from './components/MobileTopBar';
 import { MobileDrawer } from './components/MobileDrawer';
@@ -94,7 +95,9 @@ export default function App(){
     default:return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} campaigns={campaigns} scheduledPosts={scheduledPosts} onNavigate={navigate} onOpenAuth={()=>setAuthOpen(true)}/>;
   }},[currentTab,user,wallet,selectedCompany,companies,campaigns,scheduledPosts,contentItems,isAdmin,navigate,refreshWallet,refreshCompanies,refreshCampaigns,refreshContents,refreshSchedule,loadSession]);
 
-  if(currentTab==='home') return <><OfflineBanner/><PwaInstallPrompt/>{content}<AuthModal isOpen={authOpen} onClose={()=>setAuthOpen(false)} onSuccess={authSuccess}/></>;
+  const needsTermsConsent = Boolean(user && (!user.termsAcceptedAt || !user.privacyAcceptedAt || !user.termsVersion || !user.privacyVersion));
+
+  if(currentTab==='home') return <><OfflineBanner/><PwaInstallPrompt/>{content}<AuthModal isOpen={authOpen} onClose={()=>setAuthOpen(false)} onSuccess={authSuccess}/><TermsConsentModal isOpen={needsTermsConsent} onConsentSuccess={authSuccess} onLogout={logout}/></>;
 
   return <div className="min-h-[100dvh] bg-[#0B0F19] text-slate-100 selection:bg-cyan-500 selection:text-slate-950">
     <OfflineBanner/><PwaInstallPrompt/>
@@ -102,5 +105,6 @@ export default function App(){
     <MobileTopBar user={user} wallet={wallet} menuOpen={mobileMenu} onToggleMenu={()=>setMobileMenu(v=>!v)} onOpenAuth={()=>setAuthOpen(true)} onNavigate={navigate}/><MobileDrawer open={mobileMenu} currentTab={currentTab} user={user} isAdmin={Boolean(isAdmin)} onClose={()=>setMobileMenu(false)} onNavigate={navigate}/>
     <div className={`min-h-[100dvh] transition-[margin] duration-300 ${sidebarCollapsed?'lg:ml-20':'lg:ml-64'}`}><main className="mx-auto w-full max-w-[1600px] px-3 pb-[calc(92px+env(safe-area-inset-bottom))] pt-[calc(72px+env(safe-area-inset-top))] sm:px-5 lg:px-8 lg:pb-10 lg:pt-24">{loading?<div className="grid min-h-[60vh] place-items-center"><div className="text-center"><span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-cyan-400/20 border-t-cyan-400"/><p className="mt-3 text-xs text-slate-400">Carregando Froc.IA…</p></div></div>:content}</main></div>
     <BottomNav currentTab={currentTab} onNavigate={navigate}/><AuthModal isOpen={authOpen} onClose={()=>setAuthOpen(false)} onSuccess={authSuccess}/>
+    <TermsConsentModal isOpen={needsTermsConsent} onConsentSuccess={authSuccess} onLogout={logout}/>
   </div>;
 }

@@ -16,6 +16,95 @@ function normalizeProvider(value: string): SocialProvider | null {
   return null;
 }
 
+export interface AutopilotScheduleConfig {
+  enabled?: boolean;
+  frequency?: 'daily' | '3_times_week' | 'weekly';
+  timezone?: string;
+  preferredDays?: number[]; // 0=Sunday, 1=Monday, ..., 6=Saturday
+  preferredHours?: number[]; // 0..23
+  lastRunAt?: string | null;
+  lastRunSlot?: string | null;
+}
+
+export function getLocalDateAndHour(date: Date, timezone: string): { dayOfWeek: number; hour: number; dateStr: string } {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: 'numeric',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(date);
+    const partMap: Record<string, string> = {};
+    for (const p of parts) {
+      partMap[p.type] = p.value;
+    }
+    const weekdayMap: Record<string, number> = {
+      'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6
+    };
+    const dayOfWeek = weekdayMap[partMap.weekday] ?? date.getUTCDay();
+    const hour = parseInt(partMap.hour, 10) % 24;
+    const dateStr = `${partMap.year}-${partMap.month}-${partMap.day}`;
+    return { dayOfWeek, hour, dateStr };
+  } catch {
+    // Fallback seguro em caso de timezone não reconhecida
+    const dayOfWeek = date.getUTCDay();
+    const hour = date.getUTCHours();
+    const dateStr = date.toISOString().slice(0, 10);
+    return { dayOfWeek, hour, dateStr };
+  }
+}
+
+export function isAutopilotDue(config: AutopilotScheduleConfig, referenceDate: Date = new Date()): boolean {
+  if (!config.enabled) return false;
+
+  const tz = config.timezone || 'America/Sao_Paulo';
+  const { dayOfWeek, hour, dateStr } = getLocalDateAndHour(referenceDate, tz);
+
+  // Validação de dias permitidos (default: Segunda a Sexta [1,2,3,4,5])
+  const preferredDays = Array.isArray(config.preferredDays) && config.preferredDays.length > 0
+    ? config.preferredDays
+    : [1, 2, 3, 4, 5];
+  if (!preferredDays.includes(dayOfWeek)) {
+    return false;
+  }
+
+  // Validação de horários permitidos (default: 10h)
+  const preferredHours = Array.isArray(config.preferredHours) && config.preferredHours.length > 0
+    ? config.preferredHours
+    : [10];
+  if (!preferredHours.includes(hour)) {
+    return false;
+  }
+
+  // Prevenção de execuções duplicadas no mesmo slot
+  const currentSlot = `${dateStr}_h${hour}`;
+  if (config.lastRunSlot === currentSlot) {
+    return false;
+  }
+
+  // Verificação de intervalo mínimo por frequência
+  if (config.lastRunAt) {
+    const lastRunMs = new Date(config.lastRunAt).getTime();
+    const elapsedHours = (referenceDate.getTime() - lastRunMs) / 3_600_000;
+
+    if (config.frequency === 'weekly' && elapsedHours < 140) {
+      return false; // ~6 dias
+    }
+    if (config.frequency === '3_times_week' && elapsedHours < 44) {
+      return false; // ~2 dias
+    }
+    if ((config.frequency === 'daily' || !config.frequency) && elapsedHours < 20) {
+      return false; // ~1 dia
+    }
+  }
+
+  return true;
+}
+
 async function acquireLock(): Promise<boolean> {
   const db = firestore();
   const ref = db.collection(COLLECTIONS.schedulerLocks).doc('process');
@@ -34,7 +123,7 @@ async function releaseLock(): Promise<void> {
   await firestore().collection(COLLECTIONS.schedulerLocks).doc('process').set({ lockedUntil: 0, releasedAt: Date.now() }, { merge: true });
 }
 
-async function processScheduledPosts(): Promise<number> {
+export async function processScheduledPosts(): Promise<number> {
   const db = firestore();
   const snap = await db.collection(COLLECTIONS.scheduledPosts)
     .where('status', '==', 'scheduled')
@@ -54,9 +143,32 @@ async function processScheduledPosts(): Promise<number> {
     if (!claimed) continue;
 
     try {
+      // 1. Revalidação de usuário
+      const userSnap = await db.collection(COLLECTIONS.users).doc(post.userId).get();
+      if (!userSnap.exists) {
+        throw new Error('Inconsistência de segurança: Usuário associado ao agendamento não encontrado.');
+      }
+
+      // 2. Revalidação de empresa e titularidade multi-tenant
+      const companySnap = await db.collection(COLLECTIONS.companies).doc(post.companyId).get();
+      if (!companySnap.exists) {
+        throw new Error('Inconsistência de segurança: Empresa associada ao agendamento não encontrada.');
+      }
+      const company = { id: companySnap.id, ...companySnap.data() } as any;
+      if (company.userId !== post.userId) {
+        throw new Error('Violação de isolamento multi-tenant: Empresa não pertence ao usuário do agendamento.');
+      }
+
+      // 3. Revalidação de conteúdo e titularidade
       const contentSnap = await db.collection(COLLECTIONS.contentItems).doc(post.contentItemId).get();
-      if (!contentSnap.exists) throw new Error('Conteúdo associado não encontrado.');
+      if (!contentSnap.exists) {
+        throw new Error('Inconsistência de segurança: Conteúdo associado não encontrado.');
+      }
       const content = { id: contentSnap.id, ...contentSnap.data() } as any;
+      if (content.userId !== post.userId || content.companyId !== post.companyId) {
+        throw new Error('Violação de isolamento multi-tenant: Conteúdo não pertence ao usuário ou empresa do agendamento.');
+      }
+
       const platforms = Array.isArray(post.platforms) ? post.platforms : [];
       if (!platforms.length) throw new Error('Nenhuma rede social selecionada para publicação.');
 
@@ -91,39 +203,44 @@ async function processScheduledPosts(): Promise<number> {
       });
       processed += 1;
     } catch (error) {
-      await doc.ref.update({ status: 'failed', errorMessage: error instanceof Error ? error.message : String(error), processedAt: nowIso() });
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await doc.ref.update({ status: 'failed', errorMessage: errorMsg, processedAt: nowIso() });
       processed += 1;
     }
   }
   return processed;
 }
 
-function autopilotDue(item: any): boolean {
-  if (!item.enabled) return false;
-  const last = item.lastRunAt ? new Date(item.lastRunAt).getTime() : 0;
-  const elapsedHours = (Date.now() - last) / 3_600_000;
-  if (item.frequency === 'weekly') return elapsedHours >= 7 * 24 - 1;
-  if (item.frequency === '3_times_week') return elapsedHours >= 48 - 1;
-  return elapsedHours >= 24 - 1;
-}
-
-async function processAutopilot(): Promise<number> {
+export async function processAutopilot(): Promise<number> {
   const db = firestore();
   const snap = await db.collection(COLLECTIONS.autopilotConfigs).where('enabled', '==', true).limit(25).get();
   let processed = 0;
+  const now = new Date();
+
   for (const doc of snap.docs) {
     const ap = { id: doc.id, ...doc.data() } as any;
-    if (!autopilotDue(ap)) continue;
-    const monthKey = new Date().toISOString().slice(0, 7);
+    if (!isAutopilotDue(ap, now)) continue;
+
+    const tz = ap.timezone || 'America/Sao_Paulo';
+    const { hour, dateStr } = getLocalDateAndHour(now, tz);
+    const currentSlot = `${dateStr}_h${hour}`;
+
+    const monthKey = now.toISOString().slice(0, 7);
     const used = ap.usageMonth === monthKey ? Number(ap.usedCreditsThisMonth || 0) : 0;
     if (used + config.creditCosts.full_post > Number(ap.maxMonthlyCredits || 0)) {
       await doc.ref.set({ usageMonth: monthKey, usedCreditsThisMonth: used, lastBudgetWarningAt: nowIso() }, { merge: true });
       await createNotification({ userId: ap.userId, title: 'Limite do Autopilot atingido', message: 'O Froc Autopilot pausou novas gerações porque o limite mensal de créditos foi alcançado.', type: 'credit_low' });
       continue;
     }
+
     const companySnap = await db.collection(COLLECTIONS.companies).doc(ap.companyId).get();
     if (!companySnap.exists) continue;
     const company = { id: companySnap.id, ...companySnap.data() } as any;
+    if (company.userId !== ap.userId) {
+      console.warn(`[Froc Autopilot] Isolamento violado para config ${doc.id}: empresa ${ap.companyId} não pertence ao usuário ${ap.userId}`);
+      continue;
+    }
+
     try {
       const generated = await generatePost({ userId: ap.userId, company, topic: `Conteúdo estratégico atual para ${company.name}`, platform: ap.targetPlatforms?.[0] || 'Instagram', goal: ap.primaryGoal || 'Atrair clientes e gerar autoridade' });
       const contentId = newId('content');
@@ -161,7 +278,13 @@ async function processAutopilot(): Promise<number> {
           createdAt: nowIso()
         });
       }
-      await doc.ref.set({ lastRunAt: nowIso(), usageMonth: monthKey, usedCreditsThisMonth: used + generated.creditsUsed, updatedAt: nowIso() }, { merge: true });
+      await doc.ref.set({
+        lastRunAt: nowIso(),
+        lastRunSlot: currentSlot,
+        usageMonth: monthKey,
+        usedCreditsThisMonth: used + generated.creditsUsed,
+        updatedAt: nowIso()
+      }, { merge: true });
       await createNotification({ userId: ap.userId, title: 'Froc Autopilot criou novo conteúdo', message: `Novo conteúdo criado para ${company.name}${ap.mode === 'automatic' ? ' e agendado para publicação.' : ' e salvo para sua aprovação.'}`, type: 'autopilot_ready' });
       processed += 1;
     } catch (error) {
@@ -237,15 +360,27 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     throw new Error('Você não tem permissão para gerenciar esta empresa.');
   }
 
-  // Obter ou criar configuração de Autopilot para a empresa
-  const apConfigSnap = await db.collection(COLLECTIONS.autopilotConfigs).doc(companyId).get();
+  // Obter ou criar configuração de Autopilot para a empresa usando ID padronizado ${userId}_${companyId}
+  const canonicalId = `${userId}_${companyId}`;
+  let apConfigSnap = await db.collection(COLLECTIONS.autopilotConfigs).doc(canonicalId).get();
+  if (!apConfigSnap.exists) {
+    // Tenta carregar fallback legado por companyId se existir
+    const legacySnap = await db.collection(COLLECTIONS.autopilotConfigs).doc(companyId).get();
+    if (legacySnap.exists && legacySnap.data()?.userId === userId) {
+      apConfigSnap = legacySnap;
+    }
+  }
+
   const ap = apConfigSnap.exists ? ({ id: apConfigSnap.id, ...apConfigSnap.data() } as any) : {
-    id: companyId,
+    id: canonicalId,
     userId,
     companyId,
     enabled: true,
     mode: 'review',
     frequency: 'daily',
+    timezone: 'America/Sao_Paulo',
+    preferredDays: [1, 2, 3, 4, 5],
+    preferredHours: [10, 15, 19],
     maxMonthlyCredits: 500,
     targetPlatforms: ['Instagram'],
     primaryGoal: 'Atrair clientes e gerar autoridade'
@@ -304,9 +439,17 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     });
   }
 
-  await db.collection(COLLECTIONS.autopilotConfigs).doc(companyId).set({
+  const tz = ap.timezone || 'America/Sao_Paulo';
+  const { hour, dateStr } = getLocalDateAndHour(new Date(), tz);
+  const currentSlot = `${dateStr}_h${hour}`;
+
+  await db.collection(COLLECTIONS.autopilotConfigs).doc(canonicalId).set({
     ...ap,
+    id: canonicalId,
+    userId,
+    companyId,
     lastRunAt: nowIso(),
+    lastRunSlot: currentSlot,
     usageMonth: monthKey,
     usedCreditsThisMonth: used + generated.creditsUsed,
     lastGeneratedContentId: contentId,
@@ -343,3 +486,4 @@ export async function processSchedulerTick() {
     await releaseLock();
   }
 }
+

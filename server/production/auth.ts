@@ -26,6 +26,19 @@ export interface AuthenticatedRequest extends Request {
   user?: FrocUser;
 }
 
+export const CURRENT_TERMS_VERSION = '2026.1';
+export const CURRENT_PRIVACY_VERSION = '2026.1';
+
+export function hasAcceptedLatestTerms(user?: FrocUser | null): boolean {
+  if (!user) return false;
+  return Boolean(
+    user.termsAcceptedAt &&
+    user.privacyAcceptedAt &&
+    user.termsVersion &&
+    user.privacyVersion
+  );
+}
+
 function displayNameFromToken(token: DecodedIdToken): string {
   if (typeof token.name === 'string' && token.name.trim()) return token.name.trim();
   if (token.email) return token.email.split('@')[0];
@@ -40,6 +53,15 @@ export async function ensureUserProfile(token: DecodedIdToken, extras: Partial<F
   const role: FrocRole = claimsRole || existing?.role || 'user';
   const now = nowIso();
 
+  // Validação estrita: não aceitar versões vazias quando registrando novo consentimento
+  const newTermsVersion = typeof extras.termsVersion === 'string' && extras.termsVersion.trim() ? extras.termsVersion.trim() : undefined;
+  const newPrivacyVersion = typeof extras.privacyVersion === 'string' && extras.privacyVersion.trim() ? extras.privacyVersion.trim() : undefined;
+
+  const termsAcceptedAt = extras.termsAcceptedAt ? extras.termsAcceptedAt : existing?.termsAcceptedAt;
+  const privacyAcceptedAt = extras.privacyAcceptedAt ? extras.privacyAcceptedAt : existing?.privacyAcceptedAt;
+  const termsVersion = newTermsVersion || existing?.termsVersion;
+  const privacyVersion = newPrivacyVersion || existing?.privacyVersion;
+
   const profile: FrocUser = {
     id: token.uid,
     name: extras.name?.trim() || existing?.name || displayNameFromToken(token),
@@ -47,10 +69,10 @@ export async function ensureUserProfile(token: DecodedIdToken, extras: Partial<F
     role,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
-    termsAcceptedAt: existing?.termsAcceptedAt || extras.termsAcceptedAt,
-    privacyAcceptedAt: existing?.privacyAcceptedAt || extras.privacyAcceptedAt,
-    termsVersion: existing?.termsVersion || extras.termsVersion,
-    privacyVersion: existing?.privacyVersion || extras.privacyVersion,
+    termsAcceptedAt,
+    privacyAcceptedAt,
+    termsVersion,
+    privacyVersion,
     currentCompanyId: extras.currentCompanyId ?? existing?.currentCompanyId,
     avatarUrl: extras.avatarUrl ?? existing?.avatarUrl ?? token.picture,
     emailVerified: token.email_verified ?? existing?.emailVerified ?? false
@@ -88,9 +110,20 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     const profile = await ensureUserProfile(decoded);
     req.firebaseUser = decoded;
     req.user = profile;
-    const isProfileActivation = req.path === '/auth/sync-profile' || req.originalUrl?.endsWith('/api/auth/sync-profile');
-    if (!isProfileActivation && (!profile.termsAcceptedAt || !profile.privacyAcceptedAt)) {
-      res.status(428).json({ error: 'Ative sua conta aceitando os Termos de Uso e a Política de Privacidade.' });
+    const isConsentFlow = req.path === '/auth/sync-profile' ||
+      req.path === '/auth/accept-terms' ||
+      req.path === '/auth/me' ||
+      req.originalUrl?.includes('/api/auth/sync-profile') ||
+      req.originalUrl?.includes('/api/auth/accept-terms') ||
+      req.originalUrl?.includes('/api/auth/me');
+
+    if (!isConsentFlow && !hasAcceptedLatestTerms(profile)) {
+      res.status(428).json({
+        error: 'Atualização de consentimento necessária: aceite os Termos de Uso e a Política de Privacidade para continuar.',
+        requiresConsent: true,
+        currentTermsVersion: CURRENT_TERMS_VERSION,
+        currentPrivacyVersion: CURRENT_PRIVACY_VERSION
+      });
       return;
     }
     next();
