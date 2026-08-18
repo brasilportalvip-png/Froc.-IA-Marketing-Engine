@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldAlert, ShieldCheck, Sparkles, User as UserIcon, X } from 'lucide-react';
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, updateProfile, type User as FirebaseUser } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db, googleAuthProvider } from '../lib/firebase';
+import { auth, googleAuthProvider } from '../lib/firebase';
 import { apiRequest } from '../lib/api';
 import { getClientSecurityFingerprint, markBonusClaimedOnThisDevice } from '../lib/security';
 import type { User, Wallet } from '../types';
@@ -27,36 +26,6 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
 
   if (!isOpen) return null;
-
-  const persistToClientFirestore = async (fbUser: FirebaseUser, displayName: string) => {
-    try {
-      const now = new Date().toISOString();
-      await setDoc(doc(db, 'users', fbUser.uid), {
-        id: fbUser.uid,
-        name: displayName || fbUser.displayName || 'Usuário Froc',
-        email: fbUser.email || '',
-        role: 'user',
-        emailVerified: fbUser.emailVerified || false,
-        avatarUrl: fbUser.photoURL || '',
-        createdAt: now,
-        updatedAt: now,
-        termsAcceptedAt: now,
-        privacyAcceptedAt: now
-      }, { merge: true });
-
-      await setDoc(doc(db, 'wallets', fbUser.uid), {
-        id: fbUser.uid,
-        userId: fbUser.uid,
-        balance: 0,
-        bonusBalance: 0,
-        totalPurchased: 0,
-        planId: 'plan_start',
-        updatedAt: now
-      }, { merge: true });
-    } catch (err: any) {
-      console.warn('[Froc Auth] Escrita local do Firestore:', err?.message);
-    }
-  };
 
   const sync = async (fbUser: FirebaseUser, extras: Record<string, any> = {}) => {
     const securityPayload = await getClientSecurityFingerprint();
@@ -107,12 +76,16 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
         if (!terms || !privacy) throw new Error('Aceite os Termos de Uso e a Política de Privacidade.');
         const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
         await updateProfile(credential.user, { displayName: name.trim() });
-        await persistToClientFirestore(credential.user, name.trim());
-        await sync(credential.user, { name: name.trim(), termsAccepted: true, privacyAccepted: true });
+        await sync(credential.user, {
+          name: name.trim(),
+          termsAccepted: true,
+          privacyAccepted: true,
+          termsVersion: '2026.1',
+          privacyVersion: '2026.1'
+        });
       } else {
         const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-        await persistToClientFirestore(credential.user, credential.user.displayName || '');
-        await sync(credential.user, { termsAccepted: true, privacyAccepted: true });
+        await sync(credential.user);
       }
     } catch (err: any) { setError(friendlyError(err)); }
     finally { setLoading(false); }
@@ -121,16 +94,12 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
   const google = async () => {
     setError(''); setSuccess(''); setSecurityNotice(null); setLoading(true);
     try {
-      if (mode === 'register' && (!terms || !privacy)) {
-        throw new Error('Para criar ou ativar a conta com Google, marque os Termos de Uso e a Política de Privacidade.');
-      }
       const credential = await signInWithPopup(auth, googleAuthProvider);
-      await persistToClientFirestore(credential.user, credential.user.displayName || '');
+      const isExplicitConsent = terms && privacy;
       await sync(credential.user, {
         name: credential.user.displayName || '',
-        termsAccepted: true,
-        privacyAccepted: true,
-        avatarUrl: credential.user.photoURL || ''
+        avatarUrl: credential.user.photoURL || '',
+        ...(isExplicitConsent ? { termsAccepted: true, privacyAccepted: true, termsVersion: '2026.1', privacyVersion: '2026.1' } : {})
       });
     } catch (err: any) { setError(friendlyError(err)); }
     finally { setLoading(false); }

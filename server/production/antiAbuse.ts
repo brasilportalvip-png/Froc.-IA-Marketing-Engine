@@ -59,6 +59,10 @@ const DISPOSABLE_EMAIL_DOMAINS = new Set([
   'dropmail.me'
 ]);
 
+export function isDisposableEmailDomain(domain: string): boolean {
+  return DISPOSABLE_EMAIL_DOMAINS.has((domain || '').toLowerCase().trim());
+}
+
 /**
  * Normaliza e-mail para formato canônico, eliminando truques de aliases (ex: user+1@gmail.com -> user@gmail.com)
  */
@@ -74,10 +78,8 @@ export function normalizeCanonicalEmail(email: string): { canonical: string; dom
   // Domínios Google (gmail.com, googlemail.com)
   if (domain === 'googlemail.com') domain = 'gmail.com';
 
-  if (domain === 'gmail.com' || domain === 'outlook.com' || domain === 'hotmail.com' || domain === 'icloud.com') {
-    // Remove qualquer sub-alias pós sinal de mais: user+bonus123 -> user
-    user = user.split('+')[0];
-  }
+  // Sub-endereçamento RFC 5233: remove qualquer sub-alias pós sinal de mais (+tag)
+  user = user.split('+')[0];
 
   if (domain === 'gmail.com') {
     // No Gmail, pontos no nome de usuário são ignorados (u.s.e.r = user)

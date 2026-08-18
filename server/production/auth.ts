@@ -14,6 +14,8 @@ export interface FrocUser {
   updatedAt?: string;
   termsAcceptedAt?: string;
   privacyAcceptedAt?: string;
+  termsVersion?: string;
+  privacyVersion?: string;
   currentCompanyId?: string;
   avatarUrl?: string;
   emailVerified?: boolean;
@@ -45,8 +47,10 @@ export async function ensureUserProfile(token: DecodedIdToken, extras: Partial<F
     role,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
-    termsAcceptedAt: extras.termsAcceptedAt || existing?.termsAcceptedAt,
-    privacyAcceptedAt: extras.privacyAcceptedAt || existing?.privacyAcceptedAt,
+    termsAcceptedAt: existing?.termsAcceptedAt || extras.termsAcceptedAt,
+    privacyAcceptedAt: existing?.privacyAcceptedAt || extras.privacyAcceptedAt,
+    termsVersion: existing?.termsVersion || extras.termsVersion,
+    privacyVersion: existing?.privacyVersion || extras.privacyVersion,
     currentCompanyId: extras.currentCompanyId ?? existing?.currentCompanyId,
     avatarUrl: extras.avatarUrl ?? existing?.avatarUrl ?? token.picture,
     emailVerified: token.email_verified ?? existing?.emailVerified ?? false
@@ -65,81 +69,22 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       return;
     }
 
-    let decoded: DecodedIdToken;
     const adminAuth = getAdminAuth();
-    if (adminAuth) {
-      try {
-        decoded = await adminAuth.verifyIdToken(token, true);
-      } catch (verifyError: any) {
-        // Se a chave de serviço do Firebase Admin estiver desincronizada/revogada em ambiente dev/preview,
-        // decodifica o JWT do Firebase para validar a estrutura do token emitido pelo Firebase Auth do cliente
-        const isSignatureIssue = verifyError?.message?.includes('Invalid JWT Signature') || 
-                                 verifyError?.message?.includes('invalid_grant') ||
-                                 verifyError?.message?.includes('UNAUTHENTICATED');
-        if (isSignatureIssue) {
-          try {
-            const parts = token.split('.');
-            if (parts.length === 3) {
-              const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-              if (payload.iss?.includes('securetoken.google.com') && payload.sub && payload.exp && payload.exp * 1000 > Date.now()) {
-                decoded = {
-                  uid: payload.sub,
-                  aud: payload.aud,
-                  auth_time: payload.auth_time,
-                  iss: payload.iss,
-                  sub: payload.sub,
-                  exp: payload.exp,
-                  iat: payload.iat,
-                  email: payload.email,
-                  email_verified: payload.email_verified,
-                  name: payload.name,
-                  picture: payload.picture,
-                  firebase: payload.firebase,
-                  ...payload
-                } as DecodedIdToken;
-              } else {
-                throw verifyError;
-              }
-            } else {
-              throw verifyError;
-            }
-          } catch {
-            throw verifyError;
-          }
-        } else {
-          throw verifyError;
-        }
-      }
-    } else {
-      // Admin SDK não conectado à nuvem: decodifica JWT emitido pelo Firebase Auth no cliente
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-        if (payload.iss?.includes('securetoken.google.com') && payload.sub && payload.exp && payload.exp * 1000 > Date.now()) {
-          decoded = {
-            uid: payload.sub,
-            aud: payload.aud,
-            auth_time: payload.auth_time,
-            iss: payload.iss,
-            sub: payload.sub,
-            exp: payload.exp,
-            iat: payload.iat,
-            email: payload.email,
-            email_verified: payload.email_verified,
-            name: payload.name,
-            picture: payload.picture,
-            firebase: payload.firebase,
-            ...payload
-          } as DecodedIdToken;
-        } else {
-          res.status(401).json({ error: 'Token de autenticação inválido ou expirado.' });
-          return;
-        }
-      } else {
-        res.status(401).json({ error: 'Token de autenticação malformado.' });
-        return;
-      }
+    if (!adminAuth) {
+      console.error('[Froc Auth Security] Firebase Admin Auth não está configurado.');
+      res.status(503).json({ error: 'Serviço de autenticação temporariamente indisponível.' });
+      return;
     }
+
+    let decoded: DecodedIdToken;
+    try {
+      decoded = await adminAuth.verifyIdToken(token, true);
+    } catch (verifyError: any) {
+      console.warn('[Froc Auth Security] Falha na verificação criptográfica do token:', verifyError?.code || verifyError?.message || 'Token inválido');
+      res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
+      return;
+    }
+
     const profile = await ensureUserProfile(decoded);
     req.firebaseUser = decoded;
     req.user = profile;
@@ -150,17 +95,26 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     }
     next();
   } catch (error) {
-    console.warn('[Froc Auth] token inválido:', error instanceof Error ? error.message : String(error));
+    console.warn('[Froc Auth] Erro inesperado de autenticação:', error instanceof Error ? error.message : 'Falha desconhecida');
     res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
   }
 }
 
 export async function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
-  await requireAuth(req, res, () => {
+  const checkRole = () => {
     if (!req.user || req.user.role !== 'admin') {
       res.status(403).json({ error: 'Acesso restrito a administradores.' });
       return;
     }
     next();
+  };
+
+  if (req.user) {
+    checkRole();
+    return;
+  }
+
+  await requireAuth(req, res, () => {
+    checkRole();
   });
 }

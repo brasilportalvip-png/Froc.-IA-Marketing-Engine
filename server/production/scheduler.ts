@@ -219,6 +219,118 @@ async function processAutoBlog(): Promise<number> {
   }
 }
 
+export async function triggerUserAutopilot(userId: string, companyId: string): Promise<{
+  success: boolean;
+  contentId?: string;
+  scheduleId?: string;
+  mode?: string;
+  creditsUsed: number;
+  message: string;
+}> {
+  const db = firestore();
+  const companySnap = await db.collection(COLLECTIONS.companies).doc(companyId).get();
+  if (!companySnap.exists) {
+    throw new Error('Empresa não encontrada.');
+  }
+  const company = { id: companySnap.id, ...companySnap.data() } as any;
+  if (company.userId !== userId) {
+    throw new Error('Você não tem permissão para gerenciar esta empresa.');
+  }
+
+  // Obter ou criar configuração de Autopilot para a empresa
+  const apConfigSnap = await db.collection(COLLECTIONS.autopilotConfigs).doc(companyId).get();
+  const ap = apConfigSnap.exists ? ({ id: apConfigSnap.id, ...apConfigSnap.data() } as any) : {
+    id: companyId,
+    userId,
+    companyId,
+    enabled: true,
+    mode: 'review',
+    frequency: 'daily',
+    maxMonthlyCredits: 500,
+    targetPlatforms: ['Instagram'],
+    primaryGoal: 'Atrair clientes e gerar autoridade'
+  };
+
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const used = ap.usageMonth === monthKey ? Number(ap.usedCreditsThisMonth || 0) : 0;
+  if (used + config.creditCosts.full_post > Number(ap.maxMonthlyCredits || 500)) {
+    throw new Error('Limite mensal de créditos do Autopilot atingido para esta empresa. Aumente o teto de créditos nas configurações.');
+  }
+
+  const generated = await generatePost({
+    userId,
+    company,
+    topic: `Conteúdo estratégico prioritário para ${company.name}`,
+    platform: ap.targetPlatforms?.[0] || 'Instagram',
+    goal: ap.primaryGoal || 'Atrair clientes e gerar autoridade'
+  });
+
+  const contentId = newId('content');
+  const content = {
+    id: contentId,
+    userId,
+    companyId,
+    type: 'post',
+    title: `[Autopilot] ${generated.result.headline}`,
+    headline: generated.result.headline,
+    body: generated.result.body,
+    cta: generated.result.cta,
+    hashtags: generated.result.hashtags || [],
+    keywords: generated.result.keywords || [],
+    visualPrompt: generated.result.visualPrompt || '',
+    targetPlatform: ap.targetPlatforms?.[0] || 'Instagram',
+    creditsUsed: generated.creditsUsed,
+    status: ap.mode === 'automatic' ? 'scheduled' : 'saved',
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set(content);
+
+  let scheduleId: string | undefined;
+  if (ap.mode === 'automatic') {
+    scheduleId = newId('sched');
+    const scheduledFor = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    await db.collection(COLLECTIONS.scheduledPosts).doc(scheduleId).set({
+      id: scheduleId,
+      userId,
+      companyId,
+      contentItemId: contentId,
+      platforms: ap.targetPlatforms || ['Instagram'],
+      scheduledFor,
+      status: 'scheduled',
+      autopilotGenerated: true,
+      createdAt: nowIso()
+    });
+  }
+
+  await db.collection(COLLECTIONS.autopilotConfigs).doc(companyId).set({
+    ...ap,
+    lastRunAt: nowIso(),
+    usageMonth: monthKey,
+    usedCreditsThisMonth: used + generated.creditsUsed,
+    lastGeneratedContentId: contentId,
+    lastError: null,
+    updatedAt: nowIso()
+  }, { merge: true });
+
+  await createNotification({
+    userId,
+    title: 'Froc Autopilot executado',
+    message: `Conteúdo gerado com sucesso para ${company.name}${ap.mode === 'automatic' ? ' e agendado.' : ' e pronto para revisão.'}`,
+    type: 'autopilot_ready'
+  });
+
+  return {
+    success: true,
+    contentId,
+    scheduleId,
+    mode: ap.mode || 'review',
+    creditsUsed: generated.creditsUsed,
+    message: ap.mode === 'automatic' ? 'Conteúdo gerado e agendado automaticamente.' : 'Conteúdo gerado com sucesso e salvo para aprovação.'
+  };
+}
+
 export async function processSchedulerTick() {
   if (!(await acquireLock())) return { skipped: true, reason: 'Outro ciclo já está em execução.' };
   try {

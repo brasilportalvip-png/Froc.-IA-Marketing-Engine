@@ -288,6 +288,14 @@ function normalizeAspectRatio(value?: string): string {
 }
 
 function extractGeneratedImage(response: any): { data: string; mimeType: string } | null {
+  // Check standard Imagen response
+  if (response?.generatedImages?.[0]?.image?.imageBytes) {
+    return {
+      data: String(response.generatedImages[0].image.imageBytes),
+      mimeType: 'image/jpeg'
+    };
+  }
+  // Check Gemini generateContent response
   const parts = response?.candidates?.[0]?.content?.parts || response?.parts || [];
   for (const part of parts) {
     if (part?.inlineData?.data) {
@@ -314,15 +322,44 @@ export async function generateMarketingImage(data: {
   const aspectRatio = normalizeAspectRatio(data.aspectRatio);
   const prompt = `${companyContext(data.company)}\n\nCrie uma imagem publicitária premium e original para: ${data.theme}.\nEstilo visual: ${data.style || 'fotografia comercial moderna e sofisticada'}.\nProporção: ${aspectRatio}.\nNão inclua logotipos ou marcas de terceiros. Não invente selos, depoimentos ou números. Se houver texto na arte, mantenha-o curto, legível e somente se fizer sentido para o briefing.`;
 
+  const model = config.geminiModels.image || 'gemini-3.1-flash-image';
+
   try {
-    const response = await (aiClient() as any).models.generateContent({
-      model: config.geminiModels.image,
-      contents: prompt,
-      config: {
-        responseModalities: ['IMAGE'],
-        responseFormat: { image: { aspectRatio, imageSize: '1K' } }
+    let response: any;
+    if (model.startsWith('imagen-')) {
+      response = await (aiClient() as any).models.generateImages({
+        model,
+        prompt,
+        config: {
+          numberOfImages: 1,
+          outputMimeType: 'image/jpeg',
+          aspectRatio: aspectRatio as any
+        }
+      });
+    } else {
+      // Gemini 3.1 Flash Image / multimodal image model
+      try {
+        response = await (aiClient() as any).models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            imageConfig: {
+              aspectRatio
+            }
+          }
+        });
+      } catch {
+        // Fallback with responseModalities
+        response = await (aiClient() as any).models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseModalities: ['IMAGE']
+          }
+        });
       }
-    });
+    }
+
     const image = extractGeneratedImage(response);
     if (!image?.data) throw new Error('O modelo de imagem não retornou um arquivo utilizável.');
     const buffer = Buffer.from(image.data, 'base64');
@@ -353,14 +390,14 @@ export async function generateMarketingImage(data: {
       userId: data.userId,
       reservationId: reservation.reservationId,
       source: 'Froc AI: image_ai',
-      metadata: { executionId, modelUsed: config.geminiModels.image, storagePath }
+      metadata: { executionId, modelUsed: model, storagePath }
     });
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
       companyId: data.company?.id || null,
       type: 'image_ai',
       provider: 'Google Gemini',
-      model: config.geminiModels.image,
+      model,
       promptHash: promptFingerprint(prompt),
       promptLength: prompt.length,
       creditsConsumed: cost,
@@ -369,7 +406,7 @@ export async function generateMarketingImage(data: {
       outputStoragePath: storagePath,
       timestamp: nowIso()
     });
-    return { imageUrl, storagePath, mimeType: image.mimeType, creditsUsed: cost, executionId, modelUsed: config.geminiModels.image };
+    return { imageUrl, storagePath, mimeType: image.mimeType, creditsUsed: cost, executionId, modelUsed: model };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await rollbackReservation(data.userId, reservation.reservationId, message);
@@ -378,7 +415,7 @@ export async function generateMarketingImage(data: {
       companyId: data.company?.id || null,
       type: 'image_ai',
       provider: 'Google Gemini',
-      model: config.geminiModels.image,
+      model,
       promptHash: promptFingerprint(prompt),
       promptLength: prompt.length,
       creditsConsumed: 0,

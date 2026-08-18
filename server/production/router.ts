@@ -8,8 +8,8 @@ import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, g
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
 import { createOAuthUrl, disconnectSocial, handleOAuthCallback, listConnections, type SocialProvider } from './social.js';
-import { processSchedulerTick } from './scheduler.js';
-import { COLLECTIONS, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
+import { processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
+import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
 
 const router = Router();
 
@@ -139,13 +139,15 @@ function contentBodyFromArticle(article: any): string {
 
 // Health
 router.get('/health', asyncRoute(async (_req, res) => {
-  let firebase = 'ok';
-  try {
-    await firestore().collection('_health').doc('ping').get();
-  } catch {
-    firebase = 'error';
-  }
-  res.status(firebase === 'ok' ? 200 : 503).json({ status: firebase === 'ok' ? 'ok' : 'degraded', service: 'Froc.IA API', firebase, timestamp: nowIso() });
+  const dbHealth = checkDatabaseHealth();
+  const statusCode = dbHealth.status === 'healthy' ? 200 : dbHealth.status === 'degraded' ? 200 : 503;
+  res.status(statusCode).json({
+    status: dbHealth.status === 'healthy' ? 'ok' : dbHealth.status,
+    service: 'Froc.IA API',
+    database: dbHealth,
+    environment: config.nodeEnv,
+    timestamp: nowIso()
+  });
 }));
 
 // Authentication/profile. Password lifecycle remains in Firebase Auth client.
@@ -643,7 +645,13 @@ router.post('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticat
   const fresh = await ref.get();
   res.json({ message: 'Configuração do Autopilot salva.', config: { id: fresh.id, ...fresh.data() } });
 }));
-router.post('/autopilot/trigger-now', requireAuth, asyncRoute(async (_req: AuthenticatedRequest, res) => res.json({ message: 'Ciclo do Autopilot processado.', result: await processSchedulerTick() })));
+router.post('/autopilot/trigger-now', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200) || safeString(req.query?.companyId, 200);
+  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório para acionar o Autopilot.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+  const result = await triggerUserAutopilot(req.user!.id, companyId);
+  res.json({ message: 'Autopilot executado para sua empresa.', result });
+}));
 
 // Social OAuth
 router.get('/social/connections', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {

@@ -237,7 +237,12 @@ export async function listConnections(userId: string, companyId: string) {
   return snap.docs.map((doc) => {
     const item = doc.data() as any;
     const { encryptedAccessToken, encryptedRefreshToken, ...safe } = item;
-    return { id: doc.id, ...safe };
+    const isExpired = item.expiresAt ? new Date(item.expiresAt).getTime() < Date.now() : false;
+    return {
+      id: doc.id,
+      ...safe,
+      status: isExpired ? 'token_expired' : item.status || 'connected'
+    };
   });
 }
 
@@ -251,9 +256,14 @@ export async function disconnectSocial(userId: string, companyId: string, provid
 }
 
 export async function publishText(data: { userId: string; companyId: string; provider: SocialProvider; text: string }) {
-  const snap = await firestore().collection(COLLECTIONS.socialConnections).where('userId', '==', data.userId).where('companyId', '==', data.companyId).where('provider', '==', data.provider).where('status', '==', 'connected').limit(1).get();
+  const snap = await firestore().collection(COLLECTIONS.socialConnections).where('userId', '==', data.userId).where('companyId', '==', data.companyId).where('provider', '==', data.provider).limit(1).get();
   if (snap.empty) throw new Error(`Conta ${data.provider} não conectada.`);
   const connection = snap.docs[0].data() as any;
+  if (connection.expiresAt && new Date(connection.expiresAt).getTime() < Date.now()) {
+    await snap.docs[0].ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+    throw new Error(`A autenticação com ${data.provider} expirou. Reconecte a conta nas configurações para autorizar novas publicações.`);
+  }
+
   const token = decrypt(connection.encryptedAccessToken);
 
   if (data.provider === 'x') {

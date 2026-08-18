@@ -4,19 +4,19 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function own(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // Perfis: usuário autenticado pode ler e criar/atualizar seu próprio documento de usuário
+    // Perfis: leitura restrita ao próprio usuário; criação e atualização exclusivamente via backend /api/auth
     match /users/{uid} {
-      allow read, write: if own(uid);
+      allow read: if own(uid);
+      allow write: if false;
     }
 
-    // Carteiras: leitura pelo próprio usuário; escrita de saldo protegida
+    // Carteiras: leitura restrita ao próprio usuário; controle de saldo e transações exclusivamente via backend
     match /wallets/{uid} {
       allow read: if own(uid);
-      allow create: if own(uid);
-      allow update, delete: if false;
+      allow write: if false;
     }
 
-    // Empresas: proprietário autenticado pode ler e gerenciar
+    // Empresas: proprietário autenticado pode ler e gerenciar; vitrine pública pode ser lida
     match /companies/{id} {
       allow read: if resource.data.isPublicInVitrine == true || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
@@ -31,16 +31,22 @@ service cloud.firestore {
 
     // Conteúdos, campanhas e agendamentos do usuário
     match /contentItems/{id} {
-      allow read, write: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
     }
     match /campaigns/{id} {
-      allow read, write: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
     }
     match /scheduledPosts/{id} {
-      allow read, write: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.userId == request.auth.uid;
     }
 
-    // Transações financeiras, claims de segurança e logs permanecem backend-only
+    // Transações financeiras, claims de segurança, logs, idempotência e autopilot permanecem backend-only
     match /{document=**} {
       allow read, write: if false;
     }

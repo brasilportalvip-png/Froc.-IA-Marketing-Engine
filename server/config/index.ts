@@ -64,7 +64,7 @@ export const config = {
     text: env('GEMINI_MODEL_TEXT', 'gemini-3.7-flash'),
     pro: env('GEMINI_MODEL_PRO', 'gemini-3.1-pro-preview'),
     fallback: env('GEMINI_MODEL_FALLBACK', 'gemini-3.1-flash-lite'),
-    image: env('GEMINI_MODEL_IMAGE', 'imagen-3.0-generate-002')
+    image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image')
   },
   firebase: {
     projectId: env('FIREBASE_ADMIN_PROJECT_ID', 'froc-ia-marketing-engine'),

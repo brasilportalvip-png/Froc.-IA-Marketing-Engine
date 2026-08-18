@@ -1,11 +1,12 @@
 import crypto from 'crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAdminFirestore } from '../providers/firebaseAdmin.js';
+import { config } from '../config/index.js';
 
-// In-Memory Database Fallback for High Availability & Sandbox Resiliency
+// In-Memory Database for Local Automated Testing & Isolated Sandbox Testing ONLY
 const inMemoryDb = new Map<string, Map<string, any>>();
 
-function getMemoryCollection(name: string): Map<string, any> {
+export function getMemoryCollection(name: string): Map<string, any> {
   let col = inMemoryDb.get(name);
   if (!col) {
     col = new Map<string, any>();
@@ -14,7 +15,11 @@ function getMemoryCollection(name: string): Map<string, any> {
   return col;
 }
 
-// Seed initial blog and showcase data into in-memory store
+export function resetMemoryDb(): void {
+  inMemoryDb.clear();
+}
+
+// Seed initial blog and showcase data into in-memory store for local sandbox
 (function seedInitialInMemoryData() {
   const blog = getMemoryCollection('blogPosts');
   if (blog.size === 0) {
@@ -112,6 +117,10 @@ class MemoryQuery {
         const itemVal = item[filter.field];
         if (filter.op === '==') return itemVal === filter.val;
         if (filter.op === '!=') return itemVal !== filter.val;
+        if (filter.op === '<=') return itemVal <= filter.val;
+        if (filter.op === '>=') return itemVal >= filter.val;
+        if (filter.op === '<') return itemVal < filter.val;
+        if (filter.op === '>') return itemVal > filter.val;
         if (filter.op === 'in') return Array.isArray(filter.val) && filter.val.includes(itemVal);
         return true;
       });
@@ -142,264 +151,89 @@ class MemoryCollectionRef extends MemoryQuery {
   }
 }
 
-class ResilientFirestoreWrapper {
-  private rawFirestore: any = null;
-  private isRemoteDisabled = false;
-
-  private getRaw() {
-    if (this.isRemoteDisabled) return null;
-    if (!this.rawFirestore) {
-      try {
-        this.rawFirestore = getAdminFirestore();
-        if (!this.rawFirestore) {
-          this.isRemoteDisabled = true;
-        }
-      } catch {
-        this.rawFirestore = null;
-        this.isRemoteDisabled = true;
-      }
-    }
-    return this.rawFirestore;
-  }
-
-  private handleRemoteError(err: any, op: string) {
-    const msg = String(err?.message || '');
-    if (
-      msg.includes('UNAUTHENTICATED') ||
-      msg.includes('PERMISSION_DENIED') ||
-      msg.includes('invalid authentication credentials') ||
-      msg.includes('Could not load the default credentials')
-    ) {
-      this.isRemoteDisabled = true;
-      this.rawFirestore = null;
-    } else {
-      console.warn(`[Froc Store] Firestore fallback ${op}:`, msg);
-    }
-  }
-
-  collection(name: string): any {
-    const raw = this.getRaw();
-    const memoryCol = new MemoryCollectionRef(name);
-
-    if (!raw) return memoryCol;
-
-    // Wrap raw collection with transparent fallback
-    return {
-      doc: (id?: string) => {
-        const targetId = id || `${name}-${crypto.randomUUID()}`;
-        const rawDoc = raw.collection(name).doc(targetId);
-        const memDoc = memoryCol.doc(targetId);
-
-        return {
-          id: targetId,
-          _rawDoc: rawDoc,
-          _memDoc: memDoc,
-          get: async () => {
-            if (!this.isRemoteDisabled && this.rawFirestore) {
-              try {
-                return await rawDoc.get();
-              } catch (err: any) {
-                this.handleRemoteError(err, `get ${name}/${targetId}`);
-              }
-            }
-            return await memDoc.get();
-          },
-          set: async (data: any, options?: any) => {
-            await memDoc.set(data, options);
-            if (!this.isRemoteDisabled && this.rawFirestore) {
-              try {
-                await rawDoc.set(data, options);
-              } catch (err: any) {
-                this.handleRemoteError(err, `set ${name}/${targetId}`);
-              }
-            }
-          },
-          create: async (data: any) => {
-            await memDoc.create(data);
-            if (!this.isRemoteDisabled && this.rawFirestore) {
-              try {
-                await rawDoc.create(data);
-              } catch (err: any) {
-                this.handleRemoteError(err, `create ${name}/${targetId}`);
-              }
-            }
-          },
-          update: async (data: any) => {
-            await memDoc.update(data);
-            if (!this.isRemoteDisabled && this.rawFirestore) {
-              try {
-                await rawDoc.update(data);
-              } catch (err: any) {
-                this.handleRemoteError(err, `update ${name}/${targetId}`);
-              }
-            }
-          },
-          delete: async () => {
-            await memDoc.delete();
-            if (!this.isRemoteDisabled && this.rawFirestore) {
-              try {
-                await rawDoc.delete();
-              } catch (err: any) {
-                this.handleRemoteError(err, `delete ${name}/${targetId}`);
-              }
-            }
-          }
-        };
-      },
-      where: (field: string, op: string, val: any) => {
-        const memQuery = memoryCol.where(field, op, val);
-        const rawQuery = this.getRaw()?.collection(name).where(field, op, val);
-        return createQueryProxy(rawQuery, memQuery);
-      },
-      limit: (n: number) => {
-        const memQuery = memoryCol.limit(n);
-        const rawQuery = this.getRaw()?.collection(name).limit(n);
-        return createQueryProxy(rawQuery, memQuery);
-      },
-      get: async () => {
-        if (!this.isRemoteDisabled && this.rawFirestore) {
-          try {
-            return await raw.collection(name).get();
-          } catch (err: any) {
-            this.handleRemoteError(err, `query ${name}`);
-          }
-        }
-        return await memoryCol.get();
-      }
-    };
+class MemoryFirestoreStore {
+  collection(name: string): MemoryCollectionRef {
+    return new MemoryCollectionRef(name);
   }
 
   batch(): any {
-    const raw = this.getRaw();
     const ops: Array<() => Promise<void>> = [];
-    const rawOps: Array<(batch: any) => void> = [];
-
     return {
       set: (docRef: any, data: any, options?: any) => {
         ops.push(async () => {
           if (docRef?.set) await docRef.set(data, options);
-        });
-        rawOps.push((batch) => {
-          const actual = docRef?._rawDoc || docRef;
-          if (actual) batch.set(actual, data, options);
         });
       },
       delete: (docRef: any) => {
         ops.push(async () => {
           if (docRef?.delete) await docRef.delete();
         });
-        rawOps.push((batch) => {
-          const actual = docRef?._rawDoc || docRef;
-          if (actual) batch.delete(actual);
-        });
       },
       update: (docRef: any, data: any) => {
         ops.push(async () => {
           if (docRef?.update) await docRef.update(data);
         });
-        rawOps.push((batch) => {
-          const actual = docRef?._rawDoc || docRef;
-          if (actual) batch.update(actual, data);
-        });
       },
       commit: async () => {
         for (const op of ops) {
-          await op().catch(() => undefined);
-        }
-        if (!this.isRemoteDisabled && this.getRaw()) {
-          try {
-            const rawBatch = this.getRaw().batch();
-            for (const rop of rawOps) {
-              rop(rawBatch);
-            }
-            await rawBatch.commit().catch(() => undefined);
-          } catch (err: any) {
-            this.handleRemoteError(err, 'batch commit');
-          }
+          await op();
         }
       }
     };
   }
 
   async runTransaction<T>(updateFunction: (transaction: any) => Promise<T>): Promise<T> {
-    const raw = this.getRaw();
-    if (raw && !this.isRemoteDisabled) {
-      try {
-        return await raw.runTransaction(async (rawTx: any) => {
-          const txProxy = {
-            get: async (docRefOrQuery: any) => {
-              const actual = docRefOrQuery?._rawDoc || docRefOrQuery;
-              return await rawTx.get(actual);
-            },
-            set: (docRef: any, data: any, options?: any) => {
-              const actual = docRef?._rawDoc || docRef;
-              if (docRef?._memDoc?.set) {
-                docRef._memDoc.set(data, options).catch?.(() => undefined);
-              }
-              return rawTx.set(actual, data, options);
-            },
-            update: (docRef: any, data: any) => {
-              const actual = docRef?._rawDoc || docRef;
-              if (docRef?._memDoc?.update) {
-                docRef._memDoc.update(data).catch?.(() => undefined);
-              }
-              return rawTx.update(actual, data);
-            },
-            delete: (docRef: any) => {
-              const actual = docRef?._rawDoc || docRef;
-              if (docRef?._memDoc?.delete) {
-                docRef._memDoc.delete().catch?.(() => undefined);
-              }
-              return rawTx.delete(actual);
-            }
-          };
-          return await updateFunction(txProxy);
-        });
-      } catch (err: any) {
-        this.handleRemoteError(err, 'transaction');
-      }
-    }
-
-    // Fallback transaction runner
     const tx = {
       get: async (docRef: any) => docRef.get(),
       set: (docRef: any, data: any, options?: any) => docRef.set(data, options),
       update: (docRef: any, data: any) => docRef.update(data),
       delete: (docRef: any) => docRef.delete()
     };
-
     return await updateFunction(tx);
   }
 }
 
-function createQueryProxy(rawQuery: any, memQuery: MemoryQuery): any {
-  return {
-    where: (field: string, op: string, val: any) => {
-      const nextMem = memQuery.where(field, op, val);
-      const nextRaw = rawQuery?.where ? rawQuery.where(field, op, val) : null;
-      return createQueryProxy(nextRaw, nextMem);
-    },
-    limit: (n: number) => {
-      const nextMem = memQuery.limit(n);
-      const nextRaw = rawQuery?.limit ? rawQuery.limit(n) : null;
-      return createQueryProxy(nextRaw, nextMem);
-    },
-    get: async () => {
-      if (rawQuery) {
-        try {
-          return await rawQuery.get();
-        } catch (err: any) {
-          console.warn('[Froc Store] Firestore query fallback executed');
-        }
-      }
-      return await memQuery.get();
-    }
-  };
+const localMemoryStore = new MemoryFirestoreStore();
+
+export function isLocalMemoryStoreAllowed(): boolean {
+  if (config.isProduction) return false;
+  return process.env.ALLOW_LOCAL_MEMORY_STORE === 'true' || process.env.NODE_ENV === 'test' || !config.isProduction;
 }
 
-const resilientFirestore = new ResilientFirestoreWrapper();
+export function firestore(): any {
+  if (process.env.NODE_ENV === 'test') {
+    return localMemoryStore;
+  }
 
-export const firestore = () => resilientFirestore;
+  const adminFirestore = getAdminFirestore();
+  if (adminFirestore) {
+    return adminFirestore;
+  }
+
+  if (config.isProduction) {
+    throw new Error('Firebase Admin Firestore não está configurado em ambiente de produção. Operação de persistência abortada.');
+  }
+
+  if (isLocalMemoryStoreAllowed()) {
+    return localMemoryStore;
+  }
+
+  throw new Error('Banco de dados Firestore não inicializado e modo em memória desabilitado.');
+}
+
+export function checkDatabaseHealth(): { status: 'healthy' | 'degraded' | 'unconfigured'; mode: string; message: string } {
+  const adminFirestore = getAdminFirestore();
+  if (adminFirestore) {
+    return { status: 'healthy', mode: 'firestore_cloud', message: 'Firestore Cloud conectado e operacional.' };
+  }
+  if (config.isProduction) {
+    return { status: 'unconfigured', mode: 'production_missing_credentials', message: 'Credenciais de produção do Firestore Admin ausentes.' };
+  }
+  if (isLocalMemoryStoreAllowed()) {
+    return { status: 'degraded', mode: 'memory_sandbox', message: 'Executando em sandbox de desenvolvimento com armazenamento local isolado.' };
+  }
+  return { status: 'unconfigured', mode: 'none', message: 'Firestore não configurado.' };
+}
 
 export const COLLECTIONS = {
   users: 'users',
