@@ -102,7 +102,10 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     try {
       decoded = await adminAuth.verifyIdToken(token, true);
     } catch (verifyError: any) {
-      console.warn('[Froc Auth Security] Falha na verificação criptográfica do token:', verifyError?.code || verifyError?.message || 'Token inválido');
+      console.warn('[Froc Auth Security] Falha na verificação criptográfica do token:', {
+        code: verifyError?.code,
+        message: verifyError?.message
+      });
       res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
       return;
     }
