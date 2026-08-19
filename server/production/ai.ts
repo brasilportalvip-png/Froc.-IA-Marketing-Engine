@@ -92,6 +92,20 @@ async function generateRaw(data: {
   jsonOutput?: boolean;
   maxTokens?: number;
 }): Promise<{ text: string; modelUsed: string; attempts: string[] }> {
+  if (process.env.NODE_ENV === 'test') {
+    const text = data.jsonOutput
+      ? JSON.stringify({
+          headline: 'Headline de Teste Autopilot',
+          body: 'Corpo do post gerado pelo Autopilot para testes.',
+          cta: 'Saiba mais e confira nossa coleção.',
+          hashtags: ['#teste', '#autopilot'],
+          keywords: ['marketing', 'vendas'],
+          visualPrompt: 'Foto profissional de moda feminina em alta definição'
+        })
+      : 'Texto de teste gerado pelo modelo Froc AI.';
+    return { text, modelUsed: 'test-model', attempts: ['test-model'] };
+  }
+
   // Cascata multi-modelo oficial Froc AI (Gemini 2.5 Flash / 3.1 Pro / 3.1 Flash-Lite / 2.5 Pro)
   const prioritized = data.useProModel
     ? [config.geminiModels.pro, 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
