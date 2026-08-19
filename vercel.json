@@ -89,11 +89,5 @@
         }
       ]
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron/process",
-      "schedule": "*/10 * * * *"
-    }
   ]
 }
