@@ -383,3 +383,212 @@ test('Plans: Entitlements de Campanhas e Social Connections seguem a matriz ofic
   assert.equal(agency.campaigns, true);
   assert.equal(agency.socialConnections, true);
 });
+
+test('Scheduler: Autopilot com plano expirado é bloqueado, não debita créditos e reconcilia para FREE', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_expired_autopilot_runner';
+  const companyId = 'comp_expired_1';
+
+  // 1. Empresa do usuário
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({
+    id: companyId,
+    userId,
+    name: 'Empresa Teste Expirada',
+    businessType: 'online'
+  });
+
+  // 2. Assinatura Business com currentPeriodEnd no passado
+  const past = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  await db.collection(COLLECTIONS.payments).doc('order_expired_biz').set({
+    id: 'order_expired_biz',
+    userId,
+    planId: 'plan_business',
+    status: 'active',
+    lastPaymentStatus: 'approved',
+    currentPeriodEnd: past,
+    createdAt: new Date(Date.now() - 32 * 24 * 60 * 60 * 1000).toISOString(),
+    lastCreditedAt: new Date(Date.now() - 32 * 24 * 60 * 60 * 1000).toISOString()
+  });
+
+  // 3. Carteira desatualizada ainda marcando plan_business
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({
+    id: userId,
+    userId,
+    balance: 100,
+    bonusBalance: 0,
+    totalUsed: 0,
+    totalReceived: 100,
+    reservedCredits: 0,
+    planId: 'plan_business',
+    planStatus: 'active',
+    updatedAt: new Date().toISOString()
+  });
+
+  // 4. Configuração de Autopilot ativa e devida
+  const now = new Date();
+  const dayOfWeek = now.getUTCDay();
+  const hour = now.getUTCHours();
+  await db.collection(COLLECTIONS.autopilotConfigs).doc(`${userId}_${companyId}`).set({
+    id: `${userId}_${companyId}`,
+    userId,
+    companyId,
+    enabled: true,
+    mode: 'automatic',
+    frequency: 'daily',
+    preferredDays: [0, 1, 2, 3, 4, 5, 6],
+    preferredHours: [hour],
+    timezone: 'UTC',
+    maxMonthlyCredits: 500,
+    usedCreditsThisMonth: 0,
+    lastRunSlot: 'old_slot',
+    targetPlatforms: ['Instagram']
+  });
+
+  // 5. Executa processAutopilot
+  const processed = await processAutopilot();
+  assert.equal(processed, 0);
+
+  // 6. Verifica que nenhum crédito foi debitado
+  const walletAfter = await getWallet(userId);
+  assert.equal(walletAfter.balance, 100);
+  assert.equal(walletAfter.planId, 'plan_free');
+  assert.equal(walletAfter.planStatus, 'free');
+
+  // 7. Verifica que nenhum post agendado ou conteúdo foi gerado
+  const scheduledSnap = await db.collection(COLLECTIONS.scheduledPosts).where('userId', '==', userId).get();
+  assert.equal(scheduledSnap.empty, true);
+  const contentSnap = await db.collection(COLLECTIONS.contentItems).where('userId', '==', userId).get();
+  assert.equal(contentSnap.empty, true);
+});
+
+test('Plans: Casos rigorosos de expiração temporal de active, approved, cancel_at_period_end e múltiplos pedidos', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const now = Date.now();
+  const future = new Date(now + 10 * 24 * 60 * 60 * 1000).toISOString();
+  const past = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Caso 1: ACTIVE FUTURE => Ativo
+  const u1 = 'usr_active_future';
+  await db.collection(COLLECTIONS.payments).doc('ord_u1').set({
+    id: 'ord_u1', userId: u1, planId: 'plan_pro', status: 'active', currentPeriodEnd: future, createdAt: new Date().toISOString()
+  });
+  const res1 = await recalculateUserPlan(u1);
+  assert.equal(res1.planId, 'plan_pro');
+  assert.equal(res1.planStatus, 'active');
+
+  // Caso 2: ACTIVE EXPIRED => FREE
+  const u2 = 'usr_active_expired';
+  await db.collection(COLLECTIONS.payments).doc('ord_u2').set({
+    id: 'ord_u2', userId: u2, planId: 'plan_pro', status: 'active', currentPeriodEnd: past, createdAt: new Date(now - 35 * 86400000).toISOString()
+  });
+  const res2 = await recalculateUserPlan(u2);
+  assert.equal(res2.planId, 'plan_free');
+  assert.equal(res2.planStatus, 'free');
+
+  // Caso 3: APPROVED EXPIRED => FREE
+  const u3 = 'usr_approved_expired';
+  await db.collection(COLLECTIONS.payments).doc('ord_u3').set({
+    id: 'ord_u3', userId: u3, planId: 'plan_business', status: 'approved', lastPaymentStatus: 'approved', currentPeriodEnd: past, createdAt: new Date(now - 35 * 86400000).toISOString()
+  });
+  const res3 = await recalculateUserPlan(u3);
+  assert.equal(res3.planId, 'plan_free');
+  assert.equal(res3.planStatus, 'free');
+
+  // Caso 4: CANCEL_AT_PERIOD_END FUTURE => Mantém plano
+  const u4 = 'usr_cancel_future';
+  await db.collection(COLLECTIONS.payments).doc('ord_u4').set({
+    id: 'ord_u4', userId: u4, planId: 'plan_business', status: 'cancel_at_period_end', subscriptionStatus: 'cancelled', currentPeriodEnd: future, createdAt: new Date().toISOString()
+  });
+  const res4 = await recalculateUserPlan(u4);
+  assert.equal(res4.planId, 'plan_business');
+  assert.equal(res4.planStatus, 'cancel_at_period_end');
+
+  // Caso 5: CANCEL_AT_PERIOD_END EXPIRED => FREE
+  const u5 = 'usr_cancel_expired';
+  await db.collection(COLLECTIONS.payments).doc('ord_u5').set({
+    id: 'ord_u5', userId: u5, planId: 'plan_agency', status: 'cancel_at_period_end', subscriptionStatus: 'cancelled', currentPeriodEnd: past, createdAt: new Date(now - 40 * 86400000).toISOString()
+  });
+  const res5 = await recalculateUserPlan(u5);
+  assert.equal(res5.planId, 'plan_free');
+  assert.equal(res5.planStatus, 'free');
+
+  // Caso 6: MULTIPLE ORDERS (Expired Business + Valid Pro => PRO)
+  const u6 = 'usr_multi_biz_pro';
+  await db.collection(COLLECTIONS.payments).doc('ord_u6_biz').set({
+    id: 'ord_u6_biz', userId: u6, planId: 'plan_business', status: 'active', currentPeriodEnd: past, createdAt: new Date(now - 40 * 86400000).toISOString()
+  });
+  await db.collection(COLLECTIONS.payments).doc('ord_u6_pro').set({
+    id: 'ord_u6_pro', userId: u6, planId: 'plan_pro', status: 'active', currentPeriodEnd: future, createdAt: new Date().toISOString()
+  });
+  const res6 = await recalculateUserPlan(u6);
+  assert.equal(res6.planId, 'plan_pro');
+  assert.equal(res6.planStatus, 'active');
+
+  // Caso 7: NO VALID ORDER => FREE
+  const u7 = 'usr_no_orders';
+  const res7 = await recalculateUserPlan(u7);
+  assert.equal(res7.planId, 'plan_free');
+  assert.equal(res7.planStatus, 'free');
+});
+
+test('AI & Credits: Mock AI em teste executa reserva, commit e rollback de créditos corretamente', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_ai_credit_test';
+
+  // 1. Inicializa carteira com 50 créditos
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({
+    id: userId,
+    userId,
+    balance: 50,
+    bonusBalance: 0,
+    totalUsed: 0,
+    totalReceived: 50,
+    reservedCredits: 0,
+    planId: 'plan_pro',
+    planStatus: 'active',
+    updatedAt: new Date().toISOString()
+  });
+
+  const { executeAi } = await import('../server/production/ai.js');
+
+  // 2. Execução bem-sucedida de cta (custo: 1 crédito)
+  const resSuccess = await executeAi({
+    userId,
+    operation: 'cta',
+    prompt: 'Crie um CTA persuasivo',
+    parse: (text) => text
+  });
+
+  assert.equal(resSuccess.creditsUsed, 1);
+  assert.equal(resSuccess.modelUsed, 'test-model');
+
+  const walletAfterSuccess = await getWallet(userId);
+  assert.equal(walletAfterSuccess.balance, 49);
+  assert.equal(walletAfterSuccess.reservedCredits, 0);
+  assert.equal(walletAfterSuccess.totalUsed, 1);
+
+  // 3. Execução com falha controlada no parser (deve acionar rollback automático)
+  await assert.rejects(
+    async () => {
+      await executeAi({
+        userId,
+        operation: 'campaign', // custo: 50 créditos (saldo atual é 49 => saldo insuficiente)
+        prompt: 'Gere campanha',
+        parse: () => {
+          throw new Error('Falha de parsing forçada');
+        }
+      });
+    },
+    (err: any) => {
+      return err.message.includes('Saldo insuficiente');
+    }
+  );
+
+  // Saldo continua 49 intacto
+  const walletAfterFail = await getWallet(userId);
+  assert.equal(walletAfterFail.balance, 49);
+  assert.equal(walletAfterFail.reservedCredits, 0);
+});

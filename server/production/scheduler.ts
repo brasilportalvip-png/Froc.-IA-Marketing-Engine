@@ -1,6 +1,6 @@
 import { config } from '../config/index.js';
 import { generateAutopilotPost, generatePlatformArticle, generatePost } from './ai.js';
-import { cleanupStaleReservations, getWallet } from './credits.js';
+import { cleanupStaleReservations, getEffectiveWallet, getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
 import { publishText, type SocialProvider } from './social.js';
@@ -222,10 +222,15 @@ export async function processAutopilot(): Promise<number> {
     const ap = { id: doc.id, ...doc.data() } as any;
     if (!isAutopilotDue(ap, now)) continue;
 
-    // Validação estrita de entitlements do plano no backend
-    const walletSnap = await db.collection(COLLECTIONS.wallets).doc(ap.userId).get();
-    const wallet = walletSnap.exists ? (walletSnap.data() as any) : null;
-    const entitlements = getPlanEntitlements(wallet?.planId);
+    // Validação estrita de entitlements do plano no backend usando plano efetivo fail-closed
+    let entitlements = getPlanEntitlements('plan_free');
+    try {
+      const wallet = await getEffectiveWallet(ap.userId, { failClosed: true });
+      entitlements = getPlanEntitlements(wallet.planId);
+    } catch (err) {
+      console.warn(`[Froc Autopilot] Falha ao obter plano efetivo para usuário ${ap.userId}, cancelando execução:`, err);
+      continue;
+    }
 
     if (!entitlements.autopilotManual && !entitlements.autopilotAutomatic) {
       continue;

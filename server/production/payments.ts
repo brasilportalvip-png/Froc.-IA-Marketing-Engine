@@ -337,14 +337,35 @@ async function processSubscription(resourceId: string): Promise<{ processed: boo
   const ref = firestore().collection(COLLECTIONS.payments).doc(orderId);
   const snap = await ref.get();
   if (!snap.exists) throw new Error('Pedido associado à assinatura não encontrado.');
+  const existing = snap.data() as any;
+  const now = nowIso();
+  const currentPeriodEnd = existing.currentPeriodEnd || (existing.lastCreditedAt ? new Date(new Date(existing.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : null);
+
+  let newStatus = String(subscription.status || 'pending');
+  if (subscription.status === 'cancelled') {
+    if (currentPeriodEnd && currentPeriodEnd > now) {
+      newStatus = 'cancel_at_period_end';
+    } else {
+      newStatus = 'cancelled';
+    }
+  } else if (subscription.status === 'authorized') {
+    newStatus = 'active';
+  }
+
   await ref.set({
     providerSubscriptionId: String(subscription.id),
     providerPreapprovalId: String(subscription.id),
     subscriptionStatus: String(subscription.status || 'pending'),
-    status: subscription.status === 'cancelled' ? 'cancelled' : subscription.status === 'authorized' ? 'active' : String(subscription.status || 'pending'),
+    status: newStatus,
+    currentPeriodEnd: currentPeriodEnd || existing.currentPeriodEnd || null,
     nextPaymentDate: subscription.next_payment_date || null,
     updatedAt: nowIso()
   }, { merge: true });
+
+  if (existing.userId) {
+    await recalculateUserPlan(existing.userId);
+  }
+
   return { processed: true, message: `Assinatura ${resourceId} sincronizada.` };
 }
 

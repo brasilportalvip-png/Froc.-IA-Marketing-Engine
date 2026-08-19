@@ -73,6 +73,14 @@ export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
   }
 }
 
+const PLAN_TIER_RANK: Record<string, number> = {
+  plan_agency: 4,
+  plan_business: 3,
+  plan_pro: 2,
+  plan_start: 1,
+  plan_free: 0
+};
+
 export async function recalculateUserPlan(userId: string): Promise<{
   planId: string;
   planStatus: 'free' | 'active' | 'cancel_at_period_end' | 'cancelled' | 'past_due';
@@ -83,11 +91,29 @@ export async function recalculateUserPlan(userId: string): Promise<{
   const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
   const now = new Date().toISOString();
 
-  // Filtra pedidos válidos e ativos
+  // Filtra pedidos estritamente válidos e não expirados
   const activeOrders = orders.filter((o) => {
-    if (['refunded', 'charged_back', 'failed'].includes(o.status) || ['refunded', 'charged_back'].includes(o.lastPaymentStatus)) {
+    // Rejeita pagamentos estornados, contestados ou com falha
+    if (['refunded', 'charged_back', 'failed'].includes(o.status) || ['refunded', 'charged_back', 'failed'].includes(o.lastPaymentStatus)) {
       return false;
     }
+
+    // Se possui currentPeriodEnd explícito, ele não pode estar vencido (currentPeriodEnd <= now)
+    if (o.currentPeriodEnd && o.currentPeriodEnd <= now) {
+      return false;
+    }
+
+    // Se não possui currentPeriodEnd explícito mas possui data base, calcula ciclo de 30 dias
+    if (!o.currentPeriodEnd) {
+      const baseDate = o.lastCreditedAt || o.createdAt;
+      if (baseDate) {
+        const computedEnd = new Date(new Date(baseDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        if (computedEnd <= now) {
+          return false;
+        }
+      }
+    }
+
     if (o.status === 'cancel_at_period_end' || o.subscriptionStatus === 'cancelled') {
       return Boolean(o.currentPeriodEnd && o.currentPeriodEnd > now);
     }
@@ -95,7 +121,13 @@ export async function recalculateUserPlan(userId: string): Promise<{
       return true;
     }
     return false;
-  }).sort((a, b) => String(b.lastCreditedAt || b.createdAt || '').localeCompare(String(a.lastCreditedAt || a.createdAt || '')));
+  }).sort((a, b) => {
+    // 1. Prioriza nível de plano mais alto (Agency > Business > Pro > Start > Free)
+    const rankDiff = (PLAN_TIER_RANK[b.planId || ''] || 0) - (PLAN_TIER_RANK[a.planId || ''] || 0);
+    if (rankDiff !== 0) return rankDiff;
+    // 2. Desempata pelo pedido válido mais recente
+    return String(b.lastCreditedAt || b.createdAt || '').localeCompare(String(a.lastCreditedAt || a.createdAt || ''));
+  });
 
   if (activeOrders.length === 0) {
     return { planId: 'plan_free', planStatus: 'free', currentPeriodEnd: null };

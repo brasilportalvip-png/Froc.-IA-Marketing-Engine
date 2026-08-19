@@ -35,7 +35,7 @@ export async function getWallet(userId: string): Promise<WalletRecord> {
   return getEffectiveWallet(userId);
 }
 
-export async function getEffectiveWallet(userId: string): Promise<WalletRecord> {
+export async function getEffectiveWallet(userId: string, options?: { failClosed?: boolean }): Promise<WalletRecord> {
   const db = firestore();
   const ref = db.collection(COLLECTIONS.wallets).doc(userId);
   const snap = await ref.get();
@@ -77,14 +77,19 @@ export async function getEffectiveWallet(userId: string): Promise<WalletRecord> 
       }, { merge: true });
     }
   } catch (err) {
-    console.warn('[Wallet] Falha não impeditiva ao recalcular plano efetivo:', err);
+    if (options?.failClosed) {
+      throw new Error(`[Froc Security] Falha ao recalcular plano efetivo para autorização: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Em caso de falha de leitura e recálculo, rebaixa o plano em memória para free (fail-closed de segurança)
+    wallet.planId = 'plan_free';
+    wallet.planStatus = 'free';
   }
 
   return wallet;
 }
 
-export async function getEffectiveUserPlan(userId: string): Promise<string> {
-  const wallet = await getEffectiveWallet(userId);
+export async function resolveEffectivePlan(userId: string): Promise<string> {
+  const wallet = await getEffectiveWallet(userId, { failClosed: true });
   return wallet.planId || 'plan_free';
 }
 
