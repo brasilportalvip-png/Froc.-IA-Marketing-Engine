@@ -273,7 +273,12 @@ router.patch('/auth/profile', requireAuth, asyncRoute(async (req: AuthenticatedR
 }));
 
 router.post('/auth/bootstrap-admin', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  if (!config.adminBootstrapKey || safeString(req.body?.secretKey, 500) !== config.adminBootstrapKey) return res.status(403).json({ error: 'Chave de bootstrap inválida.' });
+  if (!config.adminBootstrap.enabled || !config.adminBootstrap.key) {
+    return res.status(403).json({ error: 'Recurso de bootstrap de administrador desabilitado.' });
+  }
+  if (safeString(req.body?.secretKey, 500) !== config.adminBootstrap.key) {
+    return res.status(403).json({ error: 'Chave de bootstrap inválida.' });
+  }
   await getAdminAuth().setCustomUserClaims(req.user!.id, { role: 'admin', frocRole: 'admin' });
   await firestore().collection(COLLECTIONS.users).doc(req.user!.id).set({ role: 'admin', updatedAt: nowIso() }, { merge: true });
   await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'bootstrap_admin', targetUserId: req.user!.id });

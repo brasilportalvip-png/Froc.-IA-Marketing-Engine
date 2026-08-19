@@ -36,7 +36,7 @@ Este guia orienta a equipe de DevOps e Administradores na configuração das con
 
 #### 2. Agendamento do Cron Job
 - O cron job está configurado em `vercel.json` para rodar a cada 10 minutos (`*/10 * * * *`) chamando `/api/cron/process`.
-- **Requisito Externo**: O agendamento de 10 minutos na Vercel requer um plano Pro ou superior. Caso utilize o plano Hobby, configure um serviço externo de cron (ex: GitHub Actions Cron, EasyCron, Cron-Job.org, Cloud Scheduler) disparando `POST https://seu-dominio.com/api/cron/process` com o header `Authorization: Bearer <CRON_SECRET>`.
+- **Requisito Externo**: O agendamento de 10 minutos na Vercel requer um plano Pro ou superior. Caso utilize o plano Hobby, configure um serviço externo de cron (ex: GitHub Actions Cron, EasyCron, Cron-Job.org, Cloud Scheduler) disparando `GET https://seu-dominio.com/api/cron/process` com o header `Authorization: Bearer <CRON_SECRET>`.
 
 ---
 
@@ -61,7 +61,7 @@ Este guia orienta a equipe de DevOps e Administradores na configuração das con
   - **Access Token** (`MERCADO_PAGO_ACCESS_TOKEN`)
   - **Public Key** (`MERCADO_PAGO_PUBLIC_KEY`)
 - Configure o **Webhook** em *Notificações Webhook*:
-  - **URL de Produção**: `https://seu-dominio.com/api/webhooks/mercadopago` (alias suportado: `/api/payments/webhook`)
+  - **URL de Produção**: `https://seu-dominio.com/api/webhooks/mercadopago`
   - **Eventos Assinados**: Selecionar Pagamentos (`payment`), Assinaturas / Pré-aprovações (`subscription_preapproval`, `subscription_authorized_payment`).
   - **Secret do Webhook**: Copie a chave secreta gerada para a variável `MERCADO_PAGO_WEBHOOK_SECRET`.
 
@@ -73,24 +73,25 @@ Para cada plataforma que desejar habilitar a conexão social no painel:
 
 | Provedor | Variáveis Necessárias | URL de Callback Autorizada | Scopes / Requisitos |
 | :--- | :--- | :--- | :--- |
-| **Meta (Instagram & Facebook)** | `META_APP_ID`, `META_APP_SECRET` | `https://seu-dominio.com/api/social/meta/callback` | `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish` |
+| **Facebook Page** | `META_APP_ID`, `META_APP_SECRET` | `https://seu-dominio.com/api/social/facebook/callback` | `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `public_profile` |
+| **Instagram Business** | `META_APP_ID`, `META_APP_SECRET` | `https://seu-dominio.com/api/social/instagram/callback` | `instagram_basic`, `instagram_content_publish`, `pages_show_list` |
 | **LinkedIn** | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_API_VERSION` | `https://seu-dominio.com/api/social/linkedin/callback` | `openid`, `profile`, `email`, `w_member_social` |
-| **Google & YouTube** | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `https://seu-dominio.com/api/social/google/callback` | `https://www.googleapis.com/auth/youtube.upload` |
+| **YouTube** | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `https://seu-dominio.com/api/social/youtube/callback` | `openid`, `email`, `profile`, `https://www.googleapis.com/auth/youtube.upload` |
 | **X (Twitter)** | `X_CLIENT_ID`, `X_CLIENT_SECRET` | `https://seu-dominio.com/api/social/x/callback` | `tweet.read`, `tweet.write`, `users.read`, `offline.access` |
-| **TikTok** | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | `https://seu-dominio.com/api/social/tiktok/callback` | `user.info.basic`, `video.publish` |
-| **Pinterest** | `PINTEREST_APP_ID`, `PINTEREST_APP_SECRET` | `https://seu-dominio.com/api/social/pinterest/callback` | `pins:read`, `pins:write`, `boards:read` |
+| **TikTok** | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | `https://seu-dominio.com/api/social/tiktok/callback` | `user.info.basic`, `video.publish`, `video.upload` |
+| **Pinterest** | `PINTEREST_APP_ID`, `PINTEREST_APP_SECRET` | `https://seu-dominio.com/api/social/pinterest/callback` | `pins:read`, `pins:write`, `boards:read`, `user_accounts:read` |
 
 #### Matriz de Suporte Real de Publicação (Código Backend `social.ts`):
 
-| Provedor | Conexão OAuth | Publicação de Texto | Publicação de Mídia | Refresh Token | Aprovação Externa Necessária |
+| Provedor | Conexão OAuth | Publicação de Texto | Publicação de Mídia | Refresh Automático | Aprovação Externa Necessária |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **X (Twitter)** | Sim (OAuth 2.0 PKCE) | Sim (API v2 Tweets) | Requer upload v1.1 | Sim (offline.access) | Developer Portal App |
-| **Facebook** | Sim (OAuth 2.0) | Sim (Graph API /feed) | Requer upload endpoint | Sim (Long-lived token) | Meta App Review (pages_manage_posts) |
-| **LinkedIn** | Sim (OAuth 2.0) | Sim (rest/posts) | Requer UGC / Image upload | Sim (OAuth 2.0) | LinkedIn Developer Approval (w_member_social) |
-| **Instagram** | Sim (Meta OAuth) | Não (Requer mídia) | Sim (Graph API container) | Sim (Long-lived) | Meta App Review (instagram_content_publish) |
-| **YouTube** | Sim (Google OAuth) | Não aplicável | Sim (YouTube Data API v3) | Sim (Google Refresh) | Google Cloud Verification |
-| **TikTok** | Sim (OAuth 2.0 PKCE) | Não aplicável | Sim (Content Posting API) | Sim | TikTok Developer Commercial Review |
-| **Pinterest** | Sim (OAuth 2.0) | Não aplicável | Sim (Pins API com imagem) | Sim | Pinterest App Approval |
+| **X (Twitter)** | SIM (OAuth 2.0 PKCE) | SIM (API v2 Tweets) | NÃO | SIM (offline.access) | Developer Portal App (Write permission) |
+| **Facebook** | SIM (OAuth 2.0) | SIM (Graph API /feed em Páginas) | NÃO | SIM (Token Longa Duração 60d) | Meta App Review (pages_manage_posts) |
+| **LinkedIn** | SIM (OAuth 2.0) | SIM (rest/posts) | NÃO | MANUAL/RECONNECT | LinkedIn Developer Approval (w_member_social) |
+| **Instagram** | SIM (Conta profissional via Página FB) | NÃO (Requer mídia) | NÃO | SIM (Token Longa Duração Meta) | Meta App Review (instagram_content_publish) |
+| **YouTube** | SIM (Google OAuth) | NÃO (Plataforma de vídeo) | NÃO | SIM (Google offline access) | Google Cloud Verification |
+| **TikTok** | SIM (OAuth 2.0 PKCE) | NÃO (Plataforma de vídeo) | NÃO | SIM (TikTok refresh token) | TikTok Developer Commercial Review |
+| **Pinterest** | SIM (OAuth 2.0) | NÃO (Pins exigem mídia) | NÃO | SIM (Pinterest refresh token) | Pinterest App Approval |
 
 ---
 

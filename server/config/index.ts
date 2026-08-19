@@ -17,8 +17,11 @@ function required(name: string, fallback = ''): string {
   return value;
 }
 
-const appUrl = env('APP_URL', 'http://localhost:3000').replace(/\/$/, '');
-const corsOrigins = env('CORS_ORIGINS', `${appUrl},capacitor://localhost,https://localhost,http://localhost`)
+const appUrl = (isProduction
+  ? env('APP_URL')
+  : env('APP_URL', 'http://localhost:3000')).replace(/\/$/, '');
+
+const corsOrigins = env('CORS_ORIGINS', `${appUrl || 'http://localhost:3000'},capacitor://localhost,https://localhost,http://localhost`)
   .split(',')
   .map((value) => value.trim().replace(/\/$/, ''))
   .filter(Boolean);
@@ -50,6 +53,10 @@ export const config = {
   },
   encryptionKey: env('TOKEN_ENCRYPTION_KEY', nodeEnv === 'test' ? 'test_token_encryption_key_32bytes_long!' : ''),
   cronSecret: env('CRON_SECRET', nodeEnv === 'test' ? 'test_cron_secret' : ''),
+  adminBootstrap: {
+    enabled: env('ADMIN_BOOTSTRAP_ENABLED', isProduction ? 'false' : 'true').toLowerCase() === 'true',
+    key: env('ADMIN_BOOTSTRAP_KEY', nodeEnv === 'test' ? 'test_admin_bootstrap_key' : '')
+  },
   adminBootstrapKey: env('ADMIN_BOOTSTRAP_KEY', nodeEnv === 'test' ? 'test_admin_bootstrap_key' : ''),
   freeSignupBonusCredits: Number(env('FREE_SIGNUP_BONUS_CREDITS', '25')),
   support: {
@@ -137,13 +144,43 @@ export function assertProductionConfig(): void {
     ['FIREBASE_ADMIN_CLIENT_EMAIL', config.firebase.clientEmail],
     ['FIREBASE_ADMIN_PRIVATE_KEY', config.firebase.privateKey],
     ['TOKEN_ENCRYPTION_KEY', config.encryptionKey],
-    ['CRON_SECRET', config.cronSecret]
+    ['CRON_SECRET', config.cronSecret],
+    ['GEMINI_API_KEY', config.geminiApiKey]
   ];
   for (const [name, value] of requiredValues) {
     if (!value) throw new Error(`[Froc.IA] Configuração de produção incompleta: ${name}`);
   }
+
+  // Validação estrita de formato e segurança para APP_URL em produção
+  if (!config.appUrl.startsWith('https://')) {
+    throw new Error(`[Froc.IA] APP_URL em produção deve usar HTTPS obrigatório (atual: ${config.appUrl})`);
+  }
+  if (config.appUrl.includes('localhost') || config.appUrl.includes('127.0.0.1')) {
+    throw new Error(`[Froc.IA] APP_URL em produção não pode ser localhost ou 127.0.0.1 (atual: ${config.appUrl})`);
+  }
+
   if (config.mercadoPago.accessToken || config.mercadoPago.webhookSecret) {
     if (!config.mercadoPago.accessToken) throw new Error('[Froc.IA] Configuração de produção incompleta: MERCADO_PAGO_ACCESS_TOKEN');
     if (!config.mercadoPago.webhookSecret) throw new Error('[Froc.IA] Configuração de produção incompleta: MERCADO_PAGO_WEBHOOK_SECRET');
+  }
+
+  if (config.adminBootstrap.enabled && !config.adminBootstrap.key) {
+    throw new Error('[Froc.IA] ADMIN_BOOTSTRAP_KEY obrigatória quando ADMIN_BOOTSTRAP_ENABLED=true');
+  }
+
+  // Validação de pares de credenciais OAuth opcionais
+  const oauthProviders = [
+    { name: 'Meta', id: config.social.meta.clientId, secret: config.social.meta.clientSecret, idVar: 'META_APP_ID', secretVar: 'META_APP_SECRET' },
+    { name: 'LinkedIn', id: config.social.linkedin.clientId, secret: config.social.linkedin.clientSecret, idVar: 'LINKEDIN_CLIENT_ID', secretVar: 'LINKEDIN_CLIENT_SECRET' },
+    { name: 'Google/YouTube', id: config.social.google.clientId, secret: config.social.google.clientSecret, idVar: 'GOOGLE_CLIENT_ID', secretVar: 'GOOGLE_CLIENT_SECRET' },
+    { name: 'TikTok', id: config.social.tiktok.clientId, secret: config.social.tiktok.clientSecret, idVar: 'TIKTOK_CLIENT_KEY', secretVar: 'TIKTOK_CLIENT_SECRET' },
+    { name: 'Pinterest', id: config.social.pinterest.clientId, secret: config.social.pinterest.clientSecret, idVar: 'PINTEREST_APP_ID', secretVar: 'PINTEREST_APP_SECRET' },
+    { name: 'X', id: config.social.x.clientId, secret: config.social.x.clientSecret, idVar: 'X_CLIENT_ID', secretVar: 'X_CLIENT_SECRET' }
+  ];
+
+  for (const p of oauthProviders) {
+    if (Boolean(p.id) !== Boolean(p.secret)) {
+      throw new Error(`[Froc.IA] Configuração OAuth incompleta para ${p.name}: ${p.idVar} e ${p.secretVar} devem ser configurados juntos.`);
+    }
   }
 }

@@ -47,7 +47,7 @@ Este documento detalha o roteiro completo de testes ponta a ponta (E2E) para val
 - **Resultado Esperado:** Redirecionamento correto para o checkout do Mercado Pago (ou inicialização do preapproval).
 
 #### 11. Processamento de Webhook Aprovado
-- **Ação:** Recebimento da notificação de pagamento aprovado pelo Mercado Pago no endpoint `/api/webhooks/mercadopago` (ou `/api/payments/webhook`).
+- **Ação:** Recebimento da notificação de pagamento aprovado pelo Mercado Pago no endpoint oficial `POST /api/webhooks/mercadopago`.
 - **Resultado Esperado:** Webhook valida a assinatura HMAC SHA-256 (`x-signature` e `x-request-id`), consulta a API do Mercado Pago para confirmação de status, processa a ordem de forma idempotente e retorna HTTP 200.
 
 #### 12. Atualização da Carteira (`wallets`)
@@ -71,7 +71,7 @@ Este documento detalha o roteiro completo de testes ponta a ponta (E2E) para val
 - **Resultado Esperado:** Documento salvo na coleção `scheduledPosts` com status `scheduled`, validando ownership do usuário e da empresa.
 
 #### 17. Execução do Cron / Scheduler Process
-- **Ação:** Disparar requisição `POST /api/cron/process` (ou `POST /api/scheduler/tick`) com cabeçalho `Authorization: Bearer <CRON_SECRET>`.
+- **Ação:** Disparar requisição `GET /api/cron/process` com cabeçalho `Authorization: Bearer <CRON_SECRET>`.
 - **Resultado Esperado:** Resposta JSON com status de processamento de reservas expiradas, posts agendados devidos e ciclos de Autopilot devidos, sem concorrência duplicada (lock ativo).
 
 #### 18. Conexão com Rede Social (OAuth Flow)
