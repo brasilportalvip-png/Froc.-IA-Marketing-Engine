@@ -134,3 +134,62 @@ test('Routes & Entitlements: Validação fail-closed de rotas restritas a planos
   assert.equal(ent.campaigns, false);
   assert.equal(ent.socialConnections, false);
 });
+
+test('AI Grounding & Content: Validação de companyContext e restrição estrita de destinos', async () => {
+  const { companyContext, cleanHeadingText, normalizeArticleHeadings, countArticleWords } = await import('../server/production/ai.js');
+
+  // 1. Empresa sem canais cadastrados -> Não deve permitir inventar links nem WhatsApp
+  const ctxEmpty = companyContext({
+    name: 'Loja Teste',
+    businessType: 'online',
+    description: 'Venda de roupas'
+  });
+  assert.match(ctxEmpty, /NENHUM canal de contato ou link foi cadastrado/);
+  assert.match(ctxEmpty, /PROIBIÇÃO DE FATOS FICTÍCIOS/);
+  assert.match(ctxEmpty, /PROIBIÇÃO DE NÚMEROS E ESTATÍSTICAS INVENTADAS/);
+
+  // 2. Empresa com website e WhatsApp reais -> Deve listar exatamente os destinos permitidos
+  const ctxWithChannels = companyContext({
+    name: 'Advocacia Silva',
+    businessType: 'physical',
+    website: 'https://advocaciasilva.com.br',
+    whatsapp: '11999999999',
+    city: 'São Paulo',
+    state: 'SP'
+  });
+  assert.match(ctxWithChannels, /https:\/\/advocaciasilva\.com\.br/);
+  assert.match(ctxWithChannels, /11999999999/);
+  assert.match(ctxWithChannels, /DESTINOS DISPONÍVEIS PARA CTA/);
+
+  // 3. Limpeza de cabeçalhos
+  assert.equal(cleanHeadingText('## Meu Título H2'), 'Meu Título H2');
+  assert.equal(cleanHeadingText('H2: Meu Título H2'), 'Meu Título H2');
+  assert.equal(cleanHeadingText('h3 - Subtópico'), 'Subtópico');
+
+  // 4. Normalização de artigo completo
+  const rawArticle = {
+    title: '## Como Escolher Software',
+    sections: [
+      {
+        h2: 'H2: Critérios de Avaliação',
+        content: 'Conteúdo explicativo rico com várias palavras aqui.',
+        h3s: [{ h3: '### Segurança e LGPD', content: 'Detalhes sobre conformidade.' }]
+      }
+    ],
+    faqSection: [
+      { question: '## É seguro?', answer: 'Sim, totalmente seguro.' }
+    ],
+    introduction: 'Introdução do artigo com mais texto.',
+    conclusion: 'Conclusão final.',
+    callToAction: 'Entre em contato.'
+  };
+  const normalized = normalizeArticleHeadings(rawArticle);
+  assert.equal(normalized.title, 'Como Escolher Software');
+  assert.equal(normalized.sections[0].h2, 'Critérios de Avaliação');
+  assert.equal(normalized.sections[0].h3s[0].h3, 'Segurança e LGPD');
+
+  // 5. Contagem de palavras
+  const words = countArticleWords(normalized);
+  assert.equal(words > 15, true);
+});
+

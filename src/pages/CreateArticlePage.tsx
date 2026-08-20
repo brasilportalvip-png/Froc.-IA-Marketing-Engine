@@ -50,7 +50,10 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
     conclusion: string;
     callToAction: string;
     suggestedSlug: string;
+    wordCount?: number;
   } | null>(null);
+
+  const cleanHeading = (str: string) => String(str || '').replace(/^#+\s*/, '').replace(/^[Hh][1-6][:\s-]+/i, '').trim();
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,21 +89,21 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
 
   const getFullArticleText = () => {
     if (!generatedArticle) return '';
-    let text = `# ${generatedArticle.title}\n\n`;
+    let text = `# ${cleanHeading(generatedArticle.title)}\n\n`;
     text += `*Meta Description:* ${generatedArticle.metaDescription}\n\n`;
     text += `## Introdução\n${generatedArticle.introduction}\n\n`;
 
     generatedArticle.sections?.forEach((sec) => {
-      text += `## ${sec.h2}\n${sec.content}\n\n`;
+      text += `## ${cleanHeading(sec.h2)}\n${sec.content}\n\n`;
       sec.h3s?.forEach((sub) => {
-        text += `### ${sub.h3}\n${sub.content}\n\n`;
+        text += `### ${cleanHeading(sub.h3)}\n${sub.content}\n\n`;
       });
     });
 
     if (generatedArticle.faqSection && generatedArticle.faqSection.length > 0) {
       text += `## Perguntas Frequentes (FAQ)\n\n`;
       generatedArticle.faqSection.forEach((faq) => {
-        text += `**${faq.question}**\n${faq.answer}\n\n`;
+        text += `### ${cleanHeading(faq.question)}\n${faq.answer}\n\n`;
       });
     }
 
@@ -123,7 +126,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
           <FileText className="text-cyan-400" /> Criador de Artigos Longos com SEO
         </h2>
         <p className="text-xs text-slate-400">
-          Gere artigos profundos e autoritários de 1.000 a 2.500 palavras estruturados com H1, H2, H3, FAQ Schema e Meta Description.
+          Gere artigos profundos e autoritários estruturados com H1, H2, H3, FAQ Schema e Meta Description.
         </p>
       </div>
 
@@ -204,9 +207,16 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
           {generatedArticle ? (
             <div className="space-y-4 animate-fadeIn">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
-                  Artigo Gerado com Estrutura SEO
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
+                    Artigo Gerado com Estrutura SEO
+                  </span>
+                  {typeof generatedArticle.wordCount === 'number' && (
+                    <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 text-[10px] font-medium border border-cyan-500/20">
+                      {generatedArticle.wordCount} palavras
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={handleCopy}
                   className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 flex items-center gap-1.5"
@@ -220,7 +230,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
               <div>
                 <span className="text-[10px] text-amber-400 uppercase font-bold block mb-1">Título H1 Otimizado</span>
                 <h3 className="text-sm font-bold text-white bg-[#1E293B] p-3 rounded-xl border border-slate-700">
-                  {generatedArticle.title}
+                  {cleanHeading(generatedArticle.title)}
                 </h3>
               </div>
 
@@ -242,7 +252,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                   <div key={idx} className="bg-[#1E293B]/70 p-3 rounded-xl border border-slate-700/80 space-y-1.5">
                     <h4 className="text-xs font-bold text-white flex items-center gap-2">
                       <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-bold">H2</span>
-                      <span>{sec.h2}</span>
+                      <span>{cleanHeading(sec.h2)}</span>
                     </h4>
                     <p>{sec.content}</p>
 
@@ -250,7 +260,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                       <div key={sIdx} className="pl-3 border-l-2 border-cyan-500/40 mt-2 space-y-0.5">
                         <h5 className="text-[11px] font-bold text-slate-300 flex items-center gap-2">
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold">H3</span>
-                          <span>{sub.h3}</span>
+                          <span>{cleanHeading(sub.h3)}</span>
                         </h5>
                         <p className="text-[11px] text-slate-400">{sub.content}</p>
                       </div>
@@ -263,7 +273,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                     <h4 className="text-xs font-bold text-amber-300">FAQ Schema</h4>
                     {generatedArticle.faqSection.map((faq, i) => (
                       <div key={i} className="text-[11px]">
-                        <strong className="text-white">Q: {faq.question}</strong>
+                        <strong className="text-white">Q: {cleanHeading(faq.question)}</strong>
                         <p className="text-slate-300 mt-0.5">{faq.answer}</p>
                       </div>
                     ))}

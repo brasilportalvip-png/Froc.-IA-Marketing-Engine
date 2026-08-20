@@ -62,6 +62,16 @@ function sanitizedSocialLinks(value: any): Record<string, string> {
   return out;
 }
 
+function parseStrictBoolean(value: any): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === 'true') return true;
+    if (trimmed === 'false') return false;
+  }
+  return false;
+}
+
 function normalizeCompanyField(key: string, value: any): any {
   if (['website','androidApp','iosApp','logoUrl'].includes(key)) return safeHttpUrl(value);
   if (key === 'email') return safeEmail(value);
@@ -73,9 +83,7 @@ function normalizeCompanyField(key: string, value: any): any {
   if (key === 'socialLinks') return sanitizedSocialLinks(value);
   if (['products','services','competitors','keywords'].includes(key)) return stringArray(value);
   if (key === 'isPublicInVitrine') {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'string') return value.trim().toLowerCase() === 'true';
-    return Boolean(value);
+    return parseStrictBoolean(value);
   }
   if (key === 'marketingProfile') return value && typeof value === 'object' ? cleanObject(value) : undefined;
   const limits: Record<string, number> = { name:120, description:5000, phone:80, whatsapp:80, address:500, city:150, state:100, country:100, category:150, segment:200, targetAudience:3000, coverageRegion:500, differentials:3000, brandTone:500, goals:2000 };
@@ -125,15 +133,24 @@ function planCompanyLimit(planId: string): number {
   return getPlanEntitlements(planId).maxCompanies;
 }
 
+function cleanHeading(txt: string): string {
+  if (!txt) return '';
+  return String(txt)
+    .replace(/^#+\s*/, '')
+    .replace(/^[Hh][1-6][:\s-]+/i, '')
+    .replace(/^#+\s*/, '')
+    .trim();
+}
+
 function contentBodyFromArticle(article: any): string {
-  const parts = [`# ${article.title || ''}`, article.introduction || ''];
+  const parts = [`# ${cleanHeading(article.title || '')}`, article.introduction || ''];
   for (const section of article.sections || []) {
-    parts.push(`## ${section.h2 || ''}`, section.content || '');
-    for (const sub of section.h3s || []) parts.push(`### ${sub.h3 || ''}`, sub.content || '');
+    parts.push(`## ${cleanHeading(section.h2 || '')}`, section.content || '');
+    for (const sub of section.h3s || []) parts.push(`### ${cleanHeading(sub.h3 || '')}`, sub.content || '');
   }
   if (article.faqSection?.length) {
     parts.push('## Perguntas Frequentes');
-    for (const faq of article.faqSection) parts.push(`### ${faq.question || ''}`, faq.answer || '');
+    for (const faq of article.faqSection) parts.push(`### ${cleanHeading(faq.question || '')}`, faq.answer || '');
   }
   parts.push('## Conclusão', article.conclusion || '', article.callToAction || '');
   return parts.filter(Boolean).join('\n\n');
@@ -348,7 +365,7 @@ router.post('/companies', requireAuth, asyncRoute(async (req: AuthenticatedReque
     competitors: stringArray(req.body?.competitors),
     keywords: stringArray(req.body?.keywords),
     socialLinks: sanitizedSocialLinks(req.body?.socialLinks),
-    isPublicInVitrine: Boolean(req.body?.isPublicInVitrine),
+    isPublicInVitrine: normalizeCompanyField('isPublicInVitrine', req.body?.isPublicInVitrine),
     marketingProfile: req.body?.marketingProfile && typeof req.body.marketingProfile === 'object' ? req.body.marketingProfile : undefined,
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -702,29 +719,29 @@ router.get('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticate
   await requireOwnedCompany(req.user!.id, companyId);
   const id = `${req.user!.id}_${companyId}`;
   const ref = firestore().collection(COLLECTIONS.autopilotConfigs).doc(id);
-  let snap = await ref.get();
+  const snap = await ref.get();
   if (!snap.exists) {
-    await ref.set({
-      id,
-      userId: req.user!.id,
-      companyId,
-      enabled: false,
-      mode: 'manual_approval',
-      frequency: 'daily',
-      timezone: 'America/Sao_Paulo',
-      preferredDays: [1, 2, 3, 4, 5],
-      preferredHours: [10, 15, 19],
-      targetPlatforms: ['Instagram', 'Facebook'],
-      primaryGoal: 'Atrair clientes e gerar autoridade',
-      maxMonthlyCredits: 100,
-      usedCreditsThisMonth: 0,
-      usageMonth: new Date().toISOString().slice(0, 7),
-      createdAt: nowIso(),
-      updatedAt: nowIso()
+    return res.json({
+      config: {
+        id,
+        userId: req.user!.id,
+        companyId,
+        enabled: false,
+        mode: 'manual_approval',
+        frequency: 'daily',
+        timezone: 'America/Sao_Paulo',
+        preferredDays: [1, 2, 3, 4, 5],
+        preferredHours: [10, 15, 19],
+        targetPlatforms: ['Instagram', 'Facebook'],
+        primaryGoal: 'Atrair clientes e gerar autoridade',
+        maxMonthlyCredits: 100,
+        usedCreditsThisMonth: 0,
+        usageMonth: new Date().toISOString().slice(0, 7)
+      },
+      persisted: false
     });
-    snap = await ref.get();
   }
-  res.json({ config: { id: snap.id, ...snap.data() } });
+  res.json({ config: { id: snap.id, ...snap.data() }, persisted: true });
 }));
 
 router.post('/autopilot/config', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -881,9 +898,8 @@ router.get('/blog/:slug', asyncRoute(async (req, res) => {
 }));
 router.get('/vitrine', asyncRoute(async (_req, res) => {
   const snap = await firestore().collection(COLLECTIONS.companies).get();
-  const isPublic = (val: any) => val === true || val === 'true';
   const companies = queryData<any>(snap)
-    .filter((c) => isPublic(c.isPublicInVitrine))
+    .filter((c) => parseStrictBoolean(c.isPublicInVitrine))
     .map(({ userId, marketingProfile, ...company }) => ({
       ...company,
       isPublicInVitrine: true
@@ -893,11 +909,10 @@ router.get('/vitrine', asyncRoute(async (_req, res) => {
 }));
 router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
   const param = safeString(req.params.slug, 200);
-  const isPublic = (val: any) => val === true || val === 'true';
   const snap = await firestore().collection(COLLECTIONS.companies).where('slug', '==', param).limit(1).get();
   if (!snap.empty) {
     const data = snap.docs[0].data() as any;
-    if (isPublic(data.isPublicInVitrine)) {
+    if (parseStrictBoolean(data.isPublicInVitrine)) {
       const { userId, marketingProfile, ...company } = { id: snap.docs[0].id, ...data };
       return res.json({ company: { ...company, isPublicInVitrine: true } });
     }
@@ -906,7 +921,7 @@ router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
   const directSnap = await firestore().collection(COLLECTIONS.companies).doc(param).get();
   if (directSnap.exists) {
     const data = directSnap.data() as any;
-    if (isPublic(data.isPublicInVitrine)) {
+    if (parseStrictBoolean(data.isPublicInVitrine)) {
       const { userId, marketingProfile, ...company } = { id: directSnap.id, ...data };
       return res.json({ company: { ...company, isPublicInVitrine: true } });
     }

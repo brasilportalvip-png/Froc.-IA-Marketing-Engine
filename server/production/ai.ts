@@ -62,41 +62,191 @@ function promptFingerprint(prompt: string): string {
   return crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 24);
 }
 
+export function cleanHeadingText(text: string): string {
+  if (!text) return '';
+  return String(text)
+    .replace(/^#+\s*/, '')
+    .replace(/^[Hh][1-6][:\s-]+/i, '')
+    .replace(/^#+\s*/, '')
+    .trim();
+}
+
+export function normalizeArticleHeadings(article: any): any {
+  if (!article || typeof article !== 'object') return article;
+  const cleaned = { ...article };
+  if (cleaned.title) cleaned.title = cleanHeadingText(cleaned.title);
+  if (Array.isArray(cleaned.sections)) {
+    cleaned.sections = cleaned.sections.map((sec: any) => ({
+      ...sec,
+      h2: cleanHeadingText(sec.h2),
+      h3s: Array.isArray(sec.h3s)
+        ? sec.h3s.map((sub: any) => ({
+            ...sub,
+            h3: cleanHeadingText(sub.h3)
+          }))
+        : []
+    }));
+  }
+  return cleaned;
+}
+
+export function countArticleWords(article: any): number {
+  if (!article || typeof article !== 'object') return 0;
+  const parts: string[] = [
+    article.title || '',
+    article.introduction || '',
+    article.conclusion || '',
+    article.callToAction || ''
+  ];
+  if (Array.isArray(article.sections)) {
+    for (const sec of article.sections) {
+      parts.push(sec.h2 || '', sec.content || '');
+      if (Array.isArray(sec.h3s)) {
+        for (const sub of sec.h3s) {
+          parts.push(sub.h3 || '', sub.content || '');
+        }
+      }
+    }
+  }
+  if (Array.isArray(article.faqSection)) {
+    for (const faq of article.faqSection) {
+      parts.push(faq.question || '', faq.answer || '');
+    }
+  }
+  const text = parts.join(' ').replace(/[^\p{L}\p{N}\s]+/gu, ' ').trim();
+  if (!text) return 0;
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
 export function companyContext(company?: any): string {
   if (!company) {
-    return 'Você é o Froc.IA, especialista sênior em marketing digital, vendas, conteúdo e SEO. Responda em português do Brasil, com clareza, ética, precisão e foco em resultado.';
+    return `Você é o Froc.IA, especialista sênior em marketing digital, vendas, conteúdo e SEO. Responda em português do Brasil, com ética, rigor factual e precisão.
+DIRETRIZ DE GROUNDING E PROIBIÇÕES:
+- Não invente clientes, cases, avaliações, depoimentos, certificações ou dados de prova social.
+- Não invente números, percentuais, estatísticas, faturamento, leads, economia ou métricas financeiras.
+- Não invente promoções, descontos, bônus, teste grátis, cupons, prazos promocionais ("último dia") ou escassez falsa.
+- Não faça promessas de resultados garantidos ou garantias absolutas.
+- Como não há empresa cadastrada no contexto, utilize Chamadas para Ação (CTAs) neutras como "Conheça mais sobre este tema", "Entre em contato para saber mais" ou "Descubra como aplicar essa solução". Nunca invente links, canais ou URLs.`;
   }
+
   const profile = company.marketingProfile || {};
+
+  // 1. Canais e Destinos Efetivamente Verificados
+  const verifiedDestinations: Record<string, string> = {};
+  if (company.website && typeof company.website === 'string' && company.website.trim()) {
+    verifiedDestinations.website = company.website.trim();
+  }
+  if (company.whatsapp && typeof company.whatsapp === 'string' && company.whatsapp.trim()) {
+    verifiedDestinations.whatsapp = company.whatsapp.trim();
+  }
+  if (company.phone && typeof company.phone === 'string' && company.phone.trim()) {
+    verifiedDestinations.phone = company.phone.trim();
+  }
+  if (company.email && typeof company.email === 'string' && company.email.trim()) {
+    verifiedDestinations.email = company.email.trim();
+  }
+
+  const verifiedSocialLinks: Record<string, string> = {};
+  if (company.socialLinks && typeof company.socialLinks === 'object') {
+    for (const [net, link] of Object.entries(company.socialLinks)) {
+      if (typeof link === 'string' && link.trim()) {
+        verifiedSocialLinks[net] = link.trim();
+      }
+    }
+  }
+
+  const hasAnyDestination = Object.keys(verifiedDestinations).length > 0 || Object.keys(verifiedSocialLinks).length > 0;
+
+  // 2. Modelo de Operação
   const isOnline = company.businessType === 'online';
   const isPhysical = company.businessType === 'physical';
   const isHybrid = company.businessType === 'hybrid';
 
-  const typeDescription = isOnline
-    ? 'EMPRESA 100% ONLINE / DIGITAL (Atendimento remoto, e-commerce, infoprodutos, serviços digitais, SaaS ou vendas pela internet. Todo o foco de conversão deve ser direcionado para canais digitais: website, checkout, landing page, link na bio, WhatsApp ou redes sociais. NÃO sugira visitas a estabelecimentos físicos ou pontos presenciais).'
+  const opModel = isOnline
+    ? 'Operação 100% Online / Digital (atendimento e vendas à distância; sem ponto presencial físico cadastrado).'
     : isPhysical
-    ? 'EMPRESA COM PONTO FÍSICO / LOCAL (Atendimento presencial, loja, consultório, restaurante ou escritório. Enfatize presença local, localização, facilidade de acesso, atendimento presencial e raio geográfico).'
-    : 'EMPRESA HÍBRIDA (Combina ponto de atendimento presencial com forte atuação e vendas online. Equilibre a conveniência digital com a experiência presencial).';
+    ? 'Operação com Ponto Físico / Presencial.'
+    : isHybrid
+    ? 'Operação Híbrida (atendimento físico e presença digital).'
+    : 'Modelo não especificado.';
 
-  const channels = (company.onlineChannels || []).filter(Boolean).join(', ');
+  // 3. Fatos Comprovados da Empresa
+  const factualLines: string[] = [
+    `Nome da Marca: ${company.name}`,
+    `Modelo de Operação: ${opModel}`
+  ];
 
-  return `Você é o Froc.IA, estrategista de marketing da marca ${company.name}.
-Modelo de Operação: ${typeDescription}
-${channels ? `Canais Digitais & Plataformas: ${channels}` : ''}
-Segmento: ${company.category || company.segment || 'não informado'}.
-Descrição: ${company.description || 'não informada'}.
-Produtos: ${(company.products || []).join(', ') || 'não informados'}.
-Serviços: ${(company.services || []).join(', ') || 'não informados'}.
-Região de Atendimento: ${company.coverageRegion || (isOnline ? 'Nacional / Todo o Brasil (Online)' : 'Local')}.
-${!isOnline && (company.city || company.address) ? `Localização Física: ${[company.address, company.city, company.state, company.country].filter(Boolean).join(', ')}` : ''}
-Público: ${company.targetAudience || profile.targetAudience || 'não informado'}.
-Persona: ${profile.persona || 'não informada'}.
-Tom de voz: ${company.brandTone || profile.toneOfVoice || 'profissional e persuasivo'}.
-Diferenciais: ${company.differentials || profile.keyDifferentials || 'não informados'}.
-Objetivos: ${company.goals || profile.goals || 'atrair clientes e gerar autoridade'}.
-Palavras-chave: ${(company.keywords || profile.topKeywords || []).join(', ')}.
-CTAs preferidos: ${(profile.preferredCtas || []).join(' | ')}.
-Evite: ${(profile.forbiddenWords || []).join(', ')}.
-Nunca invente fatos, avaliações, clientes, resultados, certificações ou números que não estejam no briefing.`;
+  if (company.category || company.segment) {
+    factualLines.push(`Segmento/Categoria: ${[company.category, company.segment].filter(Boolean).join(' • ')}`);
+  }
+  if (company.description) {
+    factualLines.push(`Descrição Institucional: ${company.description}`);
+  }
+  if (Array.isArray(company.products) && company.products.length > 0) {
+    factualLines.push(`Produtos Oficiais: ${company.products.join(', ')}`);
+  }
+  if (Array.isArray(company.services) && company.services.length > 0) {
+    factualLines.push(`Serviços Oficiais: ${company.services.join(', ')}`);
+  }
+  if (company.differentials || profile.keyDifferentials) {
+    factualLines.push(`Diferenciais Cadastrados: ${company.differentials || profile.keyDifferentials}`);
+  }
+  if (company.targetAudience || profile.targetAudience) {
+    factualLines.push(`Público-Alvo: ${company.targetAudience || profile.targetAudience}`);
+  }
+  if (profile.persona) {
+    factualLines.push(`Persona: ${profile.persona}`);
+  }
+  if (company.brandTone || profile.toneOfVoice) {
+    factualLines.push(`Tom de Voz: ${company.brandTone || profile.toneOfVoice}`);
+  }
+  if (company.goals || profile.goals) {
+    factualLines.push(`Objetivos Estratégicos: ${company.goals || profile.goals}`);
+  }
+  if (company.coverageRegion) {
+    factualLines.push(`Região de Atendimento Declarada: ${company.coverageRegion}`);
+  }
+  if (!isOnline && (company.address || company.city || company.state)) {
+    factualLines.push(`Localização Física: ${[company.address, company.city, company.state, company.country].filter(Boolean).join(', ')}`);
+  }
+  if (Array.isArray(company.onlineChannels) && company.onlineChannels.length > 0) {
+    factualLines.push(`Canais Declarados: ${company.onlineChannels.join(', ')}`);
+  }
+  if (Array.isArray(company.keywords) && company.keywords.length > 0) {
+    factualLines.push(`Palavras-chave: ${company.keywords.join(', ')}`);
+  }
+
+  // 4. Seção de Destinos para CTA
+  const destinationLines: string[] = [];
+  if (verifiedDestinations.website) destinationLines.push(`- Website Oficial: ${verifiedDestinations.website} (Permitido CTA para o site)`);
+  if (verifiedDestinations.whatsapp) destinationLines.push(`- WhatsApp Oficial: ${verifiedDestinations.whatsapp} (Permitido CTA para WhatsApp)`);
+  if (verifiedDestinations.phone) destinationLines.push(`- Telefone Oficial: ${verifiedDestinations.phone} (Permitido CTA para ligação)`);
+  if (verifiedDestinations.email) destinationLines.push(`- E-mail Oficial: ${verifiedDestinations.email} (Permitido CTA para e-mail)`);
+  for (const [net, link] of Object.entries(verifiedSocialLinks)) {
+    destinationLines.push(`- Rede Social ${net}: ${link} (Permitido CTA para ${net})`);
+  }
+
+  const ctaInstruction = hasAnyDestination
+    ? `DESTINOS DISPONÍVEIS PARA CTA (Use SOMENTE os canais listados abaixo):\n${destinationLines.join('\n')}\nSe for sugerir CTA, direcione EXCLUSIVAMENTE para os destinos reais acima. NUNCA invente checkout, landing page, links na bio ou canais não listados.`
+    : `DESTINOS PARA CTA: NENHUM canal de contato ou link foi cadastrado para esta empresa. É OBRIGATÓRIO usar CTA neutro (Exemplos: "Conheça melhor a solução", "Descubra como essa solução pode ajudar seu negócio", "Entre em contato para saber mais"). É ESTRITAMENTE PROIBIDO inventar URLs, dizer "clique no link da bio", "chame no WhatsApp" ou criar canais fictícios.`;
+
+  return `Você é o Froc.IA, estrategista de marketing da marca "${company.name}".
+Responda em português do Brasil, com clareza, autoridade e precisão factual.
+
+=== FATOS COMPROVADOS DA EMPRESA (Use SOMENTE estes dados como verdade) ===
+${factualLines.join('\n')}
+
+=== DIRETRIZES DE DESTINOS E CTA ===
+${ctaInstruction}
+
+=== REGRAS OBRIGATÓRIAS DE GROUNDING E PROIBIÇÕES DA IA ===
+1. PROIBIÇÃO DE FATOS FICTÍCIOS: Nunca invente clientes, cases, avaliações, depoimentos ou prova social inexistente.
+2. PROIBIÇÃO DE NÚMEROS E ESTATÍSTICAS INVENTADAS: Nunca invente números, percentuais, estatísticas, horas economizadas, faturamento, alcance, conversões, leads ou economia que não foram explicitamente informados.
+3. PROIBIÇÃO DE CERTIFICAÇÕES: Não invente selos, certificações ou aprovações não cadastradas.
+4. PROIBIÇÃO DE PROMOÇÕES INVENTADAS: Nunca invente descontos, bônus, teste grátis, cupons, prazos promocionais, "último dia" ou escassez falsa.
+5. PROIBIÇÃO DE PROMESSAS ABSOLUTAS: Não faça promessas de resultado garantido ou garantias absolutas.
+6. PROIBIÇÃO DE CANAIS FICTÍCIOS: Nunca mencione WhatsApp se não estiver cadastrado; nunca mencione website/checkout/landing page se não estiver cadastrado; nunca mencione "link na bio" ou redes sociais não cadastradas.
+7. SUGESTÕES VS FATOS: Se for propor uma ideia ou canal não cadastrado, use EXPLICITAMENTE linguagem de recomendação ("Sugestão: ...", "Uma possibilidade seria...", "Você pode considerar..."). NUNCA afirme como fato estabelecido da empresa.`;
 }
 
 async function generateRaw(data: {
@@ -299,11 +449,12 @@ Público-alvo: ${data.targetAudience || 'clientes potenciais e profissionais'}.
 Tom de voz: ${data.tone || 'educativo, claro e autoritativo'}.
 
 DIRETRIZES DE CONTEÚDO E ESTRUTURA:
-1. O artigo deve ser profundo, prático e detalhado (não resuma em poucas frases; desenvolva cada seção com explicações ricas, exemplos aplicáveis e orientações acionáveis).
+1. O artigo deve ser profundo, prático e detalhado (desenvolva cada seção com explicações ricas, exemplos aplicáveis e orientações acionáveis).
 2. Estruture em 3 a 6 seções H2 lógicas e relevantes, incluindo subtópicos H3 onde apropriado.
-3. Inclua uma seção de FAQ com 3 a 5 perguntas reais e respostas diretas.
-4. Conclusão persuasiva com Chamada para Ação contextualizada.
-5. REGRAS ANTI-ALUCINAÇÃO: Não invente pesquisas falsas, percentuais inventados, testemunhos fictícios, citações de pessoas inexistentes ou promessas de ganhos financeiros milagrosos. Se usar dados, atenha-se a conceitos e práticas comprovadas de mercado.
+3. Não use marcações como "##", "H2:" ou "H3:" dentro dos campos de títulos do JSON; retorne apenas o texto puro do título.
+4. Inclua uma seção de FAQ com 3 a 5 perguntas reais e respostas diretas e fundamentadas.
+5. Conclusão persuasiva com Chamada para Ação contextualizada aos canais da empresa.
+6. REGRAS ANTI-ALUCINAÇÃO: Não invente pesquisas falsas, percentuais inventados, testemunhos fictícios, citações de pessoas inexistentes ou promessas de ganhos financeiros milagrosos. Se usar dados, atenha-se a conceitos e práticas comprovadas de mercado.
 
 Responda SOMENTE JSON válido no seguinte formato:
 {
@@ -312,11 +463,11 @@ Responda SOMENTE JSON válido no seguinte formato:
   "introduction": "Introdução engajadora apresentando a dor, a importância do tema e o que será aprendido no artigo.",
   "sections": [
     {
-      "h2": "Título da Seção H2",
+      "h2": "Título da Seção Principal",
       "content": "Conteúdo aprofundado e rico da seção...",
       "h3s": [
         {
-          "h3": "Subtópico H3",
+          "h3": "Subtópico Prático",
           "content": "Detalhamento prático..."
         }
       ]
@@ -332,7 +483,26 @@ Responda SOMENTE JSON válido no seguinte formato:
   "callToAction": "Chamada para ação clara convidando o leitor a dar o próximo passo.",
   "suggestedSlug": "slug-otimizado-para-seo"
 }`;
-  return executeAi<any>({ userId: data.userId, company: data.company, operation: 'seo_article', prompt, useProModel: true, jsonOutput: true, maxTokens: 7000, parse: parseAiJson });
+  const response = await executeAi<any>({
+    userId: data.userId,
+    company: data.company,
+    operation: 'seo_article',
+    prompt,
+    useProModel: true,
+    jsonOutput: true,
+    maxTokens: 7000,
+    parse: (text) => {
+      const parsed = parseAiJson<any>(text);
+      return normalizeArticleHeadings(parsed);
+    }
+  });
+
+  if (response.result && typeof response.result === 'object') {
+    response.result = normalizeArticleHeadings(response.result);
+    response.result.wordCount = countArticleWords(response.result);
+  }
+
+  return response;
 }
 
 export async function generatePlatformArticle(topic: string): Promise<{ article: any; modelUsed: string }> {
