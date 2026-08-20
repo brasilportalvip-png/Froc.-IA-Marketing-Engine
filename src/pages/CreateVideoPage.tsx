@@ -9,7 +9,7 @@ import {
   Mic,
   Film
 } from 'lucide-react';
-import { Company, Wallet } from '../types';
+import { Company, Wallet, CREDIT_COSTS } from '../types';
 import { apiRequest } from '../lib/api';
 
 interface CreateVideoPageProps {
@@ -146,7 +146,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               ) : (
                 <>
-                  <Film size={16} /> Gerar Roteiro Completo (15 cr)
+                  <Film size={16} /> Gerar Roteiro Completo ({CREDIT_COSTS.video_script} cr)
                 </>
               )}
             </button>

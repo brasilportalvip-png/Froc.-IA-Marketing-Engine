@@ -1,10 +1,33 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight, Clock, List, Plus, X } from 'lucide-react';
 import type { Company, ContentItem, ScheduledPost } from '../types';
 import { apiRequest } from '../lib/api';
 interface Props { scheduledPosts:ScheduledPost[]; contentItems:ContentItem[]; selectedCompany:Company|null; onRefreshSchedule:()=>void; onNavigate:(tab:string)=>void; }
 export const CalendarPage:React.FC<Props>=({scheduledPosts,contentItems,selectedCompany,onRefreshSchedule,onNavigate})=>{
- const [month,setMonth]=useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1));const[modal,setModal]=useState(false);const[contentId,setContentId]=useState('');const[dateTime,setDateTime]=useState('');const[platforms,setPlatforms]=useState<string[]>(['Instagram']);const[loading,setLoading]=useState(false);const[error,setError]=useState('');
+  const [month,setMonth]=useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1));
+  const [modal,setModal]=useState(false);
+  const [contentId,setContentId]=useState('');
+  const [dateTime,setDateTime]=useState('');
+  const [platforms,setPlatforms]=useState<string[]>(['Instagram']);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState('');
+
+  useEffect(() => {
+    try {
+      const prefillRaw = sessionStorage.getItem('froc_schedule_prefill');
+      if (prefillRaw) {
+        const data = JSON.parse(prefillRaw);
+        if (data.contentItemId) setContentId(data.contentItemId);
+        if (Array.isArray(data.platforms) && data.platforms.length > 0) setPlatforms(data.platforms);
+        const nextHour = new Date(Date.now() + 3600000);
+        setDateTime(nextHour.toISOString().slice(0, 16));
+        setModal(true);
+        sessionStorage.removeItem('froc_schedule_prefill');
+      }
+    } catch {
+      // Ignore sessionStorage parsing errors
+    }
+  }, [contentItems]);
  const posts=useMemo(()=>scheduledPosts.filter(p=>!selectedCompany||p.companyId===selectedCompany.id).sort((a,b)=>a.scheduledFor.localeCompare(b.scheduledFor)),[scheduledPosts,selectedCompany]);
  const monthKey=`${month.getFullYear()}-${String(month.getMonth()+1).padStart(2,'0')}`;const monthPosts=posts.filter(p=>p.scheduledFor.startsWith(monthKey));const days=new Date(month.getFullYear(),month.getMonth()+1,0).getDate();const first=new Date(month.getFullYear(),month.getMonth(),1).getDay();
  const toggle=(p:string)=>setPlatforms(v=>v.includes(p)?v.filter(x=>x!==p):[...v,p]);

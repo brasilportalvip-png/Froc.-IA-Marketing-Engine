@@ -876,15 +876,33 @@ router.get('/blog/:slug', asyncRoute(async (req, res) => {
   res.json({ post: { id: snap.docs[0].id, ...snap.docs[0].data() } });
 }));
 router.get('/vitrine', asyncRoute(async (_req, res) => {
-  const snap = await firestore().collection(COLLECTIONS.companies).where('isPublicInVitrine', '==', true).get();
-  const companies = queryData<any>(snap).map(({ userId, ...company }) => company);
+  const snap = await firestore().collection(COLLECTIONS.companies).get();
+  const companies = queryData<any>(snap)
+    .filter((c) => Boolean(c.isPublicInVitrine))
+    .map(({ userId, ...company }) => company)
+    .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
   res.json({ companies });
 }));
 router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
-  const snap = await firestore().collection(COLLECTIONS.companies).where('slug', '==', req.params.slug).where('isPublicInVitrine', '==', true).limit(1).get();
-  if (snap.empty) return res.status(404).json({ error: 'Empresa não encontrada.' });
-  const { userId, ...company } = { id: snap.docs[0].id, ...snap.docs[0].data() } as any;
-  res.json({ company });
+  const param = safeString(req.params.slug, 200);
+  const snap = await firestore().collection(COLLECTIONS.companies).where('slug', '==', param).limit(1).get();
+  if (!snap.empty) {
+    const data = snap.docs[0].data() as any;
+    if (data.isPublicInVitrine) {
+      const { userId, ...company } = { id: snap.docs[0].id, ...data };
+      return res.json({ company });
+    }
+  }
+  // Try direct document ID fallback
+  const directSnap = await firestore().collection(COLLECTIONS.companies).doc(param).get();
+  if (directSnap.exists) {
+    const data = directSnap.data() as any;
+    if (data.isPublicInVitrine) {
+      const { userId, ...company } = { id: directSnap.id, ...data };
+      return res.json({ company });
+    }
+  }
+  res.status(404).json({ error: 'Empresa não encontrada ou não está visível na Vitrine Pública.' });
 }));
 
 // Admin

@@ -11,3 +11,19 @@ export interface SeoReport { id:string; userId:string; companyId:string; url:str
 export interface BlogPost { id:string; title:string; slug:string; summary:string; content:string; featuredImageUrl?:string; author:string; category:string; tags:string[]; companyId?:string; isFrocMagazineSponsored?:boolean; seoTitle?:string; seoDescription?:string; status:'published'|'draft'|'archived'; publishedAt?:string; createdAt:string; updatedAt?:string; }
 export interface AutopilotConfig { id:string; userId:string; companyId:string; enabled:boolean; mode:'manual_approval'|'automatic'; frequency:'daily'|'3_times_week'|'weekly'; preferredDays:number[]; preferredHours:number[]; targetPlatforms:string[]; primaryGoal:string; maxMonthlyCredits:number; usedCreditsThisMonth:number; lastRunAt?:string; nextRunAt?:string; usageMonth?:string; }
 export interface Plan { id:string; name:string; price:number; period:string; credits:number; bonusCredits:number; totalCredits:number; popular:boolean; features:string[]; }
+
+export const CREDIT_COSTS = {
+  strategy: 30,
+  full_post: 5,
+  autopilot_cycle: 15,
+  carousel: 30,
+  video_script: 40,
+  image_prompt: 5,
+  image_ai: 30,
+  seo_article: 35,
+  site_analysis: 20,
+  cta: 1,
+  headline: 1,
+  caption: 2,
+  variations: 3
+} as const;

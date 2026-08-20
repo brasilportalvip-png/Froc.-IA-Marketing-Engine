@@ -13,7 +13,7 @@ import {
   PenTool,
   Compass
 } from 'lucide-react';
-import { Company, Wallet } from '../types';
+import { Company, Wallet, CREDIT_COSTS } from '../types';
 import { apiRequest } from '../lib/api';
 import { BrandLogo } from '../components/BrandLogo';
 
@@ -38,7 +38,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
   const [generatedStrategy, setGeneratedStrategy] = useState<any | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const estimatedCredits = 30; // Custo oficial para estratégia completa com Gemini 3.7 & 3.1 Pro
+  const estimatedCredits = CREDIT_COSTS.strategy; // Custo oficial para estratégia completa com Gemini 3.7 & 3.1 Pro
 
   const quickPrompts = [
     'Divulgue minha empresa com foco em atrair novos clientes nesta semana.',
@@ -292,8 +292,15 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
                     </div>
 
                     <button
-                      onClick={() => onNavigate('criar-conteudo')}
-                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-cyan-300 border border-slate-700 flex items-center gap-1 shrink-0 self-start md:self-center"
+                      onClick={() => {
+                        sessionStorage.setItem('froc_create_content_prefill', JSON.stringify({
+                          topic: action.topic,
+                          goal: action.hook || selectedGoal,
+                          platform: action.platform || 'Instagram'
+                        }));
+                        onNavigate('criar-conteudo');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-cyan-300 border border-slate-700 flex items-center gap-1 shrink-0 self-start md:self-center transition-colors"
                     >
                       <PenTool size={13} /> Gerar Post deste Tópico
                     </button>

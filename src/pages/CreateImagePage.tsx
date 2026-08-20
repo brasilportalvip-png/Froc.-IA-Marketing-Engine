@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Check, Copy, Download, Image as ImageIcon, Sparkles, Wand2 } from 'lucide-react';
 import type { Company, Wallet } from '../types';
+import { CREDIT_COSTS } from '../types';
 import { apiRequest } from '../lib/api';
 
 interface Props { selectedCompany: Company | null; wallet: Wallet | null; onRefreshWallet: () => void; onNavigate: (tab: string) => void; }
@@ -82,7 +83,7 @@ export const CreateImagePage: React.FC<Props> = ({ selectedCompany, wallet, onRe
         <label className="block text-xs font-semibold text-slate-300">Formato<select value={platform} onChange={e => setPlatform(e.target.value)} className="froc-input mt-1.5"><option>Instagram Feed</option><option>Stories / Reels / TikTok</option><option>YouTube / Site</option><option>Pinterest Pin</option></select></label>
         <label className="block text-xs font-semibold text-slate-300">Estilo<select value={style} onChange={e => setStyle(e.target.value)} className="froc-input mt-1.5"><option>Fotografia comercial premium, realista e moderna</option><option>Editorial de luxo, clean e sofisticado</option><option>3D publicitário de alta qualidade</option><option>Ilustração moderna e vibrante</option><option>Minimalista, tecnológico e futurista</option></select></label>
         <label className="block text-xs font-semibold text-slate-300">Iluminação<select value={lighting} onChange={e => setLighting(e.target.value)} className="froc-input mt-1.5"><option>Iluminação de estúdio suave e cinematográfica</option><option>Luz natural de golden hour</option><option>Contraste dramático com rim light</option><option>High-key clean de e-commerce</option></select></label>
-        <div className="grid gap-2 sm:grid-cols-2"><button onClick={createDirection} disabled={loadingPrompt || loadingImage} className="min-h-11 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 text-xs font-black text-cyan-200 disabled:opacity-50"><span className="flex items-center justify-center gap-2"><Wand2 size={15}/>{loadingPrompt ? 'Criando…' : 'Direção visual · 10'}</span></button><button onClick={renderImage} disabled={loadingImage || loadingPrompt} className="froc-primary flex items-center justify-center gap-2"><Sparkles size={15}/>{loadingImage ? 'Gerando imagem…' : 'Gerar imagem · 15'}</button></div>
+        <div className="grid gap-2 sm:grid-cols-2"><button onClick={createDirection} disabled={loadingPrompt || loadingImage} className="min-h-11 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 text-xs font-black text-cyan-200 disabled:opacity-50"><span className="flex items-center justify-center gap-2"><Wand2 size={15}/>{loadingPrompt ? 'Criando…' : `Direção visual · ${CREDIT_COSTS.image_prompt} cr`}</span></button><button onClick={renderImage} disabled={loadingImage || loadingPrompt} className="froc-primary flex items-center justify-center gap-2"><Sparkles size={15}/>{loadingImage ? 'Gerando imagem…' : `Gerar imagem · ${CREDIT_COSTS.image_ai} cr`}</button></div>
         <p className="text-[10px] leading-relaxed text-slate-500">A imagem é gerada no servidor, registrada no ledger de créditos e armazenada no Firebase Storage. O navegador nunca recebe sua chave Gemini.</p>
       </section>
 

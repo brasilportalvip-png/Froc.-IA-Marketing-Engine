@@ -10,7 +10,7 @@ import {
   ArrowRight,
   BookOpen
 } from 'lucide-react';
-import { Company, Wallet } from '../types';
+import { Company, Wallet, CREDIT_COSTS } from '../types';
 import { apiRequest } from '../lib/api';
 
 interface CreateArticlePageProps {
@@ -188,7 +188,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               ) : (
                 <>
-                  <Sparkles size={16} /> Gerar Artigo Completo (25 cr)
+                  <Sparkles size={16} /> Gerar Artigo Completo ({CREDIT_COSTS.seo_article} cr)
                 </>
               )}
             </button>

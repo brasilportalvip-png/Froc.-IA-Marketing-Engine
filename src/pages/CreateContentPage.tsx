@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   PenTool,
   Sparkles,
@@ -10,9 +10,10 @@ import {
   RefreshCw,
   Zap,
   Layers,
-  ArrowRight
+  ArrowRight,
+  FolderPlus
 } from 'lucide-react';
-import { Company, Wallet, ContentItem } from '../types';
+import { Company, Wallet, ContentItem, CREDIT_COSTS } from '../types';
 import { apiRequest } from '../lib/api';
 
 interface CreateContentPageProps {
@@ -37,6 +38,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
   const [tone, setTone] = useState('Persuasivo e Profissional');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [copied, setCopied] = useState(false);
 
   // Result state
@@ -50,6 +52,31 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
   } | null>(null);
 
   const [generatedCarousel, setGeneratedCarousel] = useState<any | null>(null);
+  const [lastSavedContentItem, setLastSavedContentItem] = useState<ContentItem | null>(null);
+
+  // Check for prefill from other pages (e.g. FrocIaPage)
+  useEffect(() => {
+    try {
+      const prefillRaw = sessionStorage.getItem('froc_create_content_prefill');
+      if (prefillRaw) {
+        const data = JSON.parse(prefillRaw);
+        if (data.topic) setTopic(data.topic);
+        if (data.goal) setGoal(data.goal);
+        if (data.platform) setPlatform(data.platform);
+        sessionStorage.removeItem('froc_create_content_prefill');
+      }
+    } catch {
+      // Ignore sessionStorage errors
+    }
+  }, []);
+
+  const currentCost = contentType === 'post'
+    ? CREDIT_COSTS.full_post
+    : contentType === 'carousel'
+    ? CREDIT_COSTS.carousel
+    : contentType === 'headline'
+    ? CREDIT_COSTS.headline
+    : CREDIT_COSTS.cta;
 
   const handleGenerate = async () => {
     if (!topic.trim()) {
@@ -57,11 +84,12 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
       return;
     }
     setErrorMessage('');
+    setSuccessMessage('');
     setLoading(true);
 
     try {
       if (contentType === 'post') {
-        const data = await apiRequest<{ post: any; contentItem: ContentItem }>('/api/ai/generate-post', {
+        const data = await apiRequest<{ post: any; contentItem?: ContentItem }>('/api/ai/generate-post', {
           method: 'POST',
           body: {
             companyId: selectedCompany?.id,
@@ -73,8 +101,9 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
         });
         setGeneratedPost(data.post);
         setGeneratedCarousel(null);
+        if (data.contentItem) setLastSavedContentItem(data.contentItem);
       } else if (contentType === 'carousel') {
-        const data = await apiRequest<{ carousel: any }>('/api/ai/generate-carousel', {
+        const data = await apiRequest<{ carousel: any; contentItem?: ContentItem }>('/api/ai/generate-carousel', {
           method: 'POST',
           body: {
             companyId: selectedCompany?.id,
@@ -85,6 +114,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
         });
         setGeneratedCarousel(data.carousel);
         setGeneratedPost(null);
+        if (data.contentItem) setLastSavedContentItem(data.contentItem);
       } else {
         // Copy / CTA / Headline
         const data = await apiRequest<{ text: string }>('/api/ai/generate-copy', {
@@ -95,14 +125,15 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
             prompt: `${topic} com foco em ${goal} para a plataforma ${platform}`
           }
         });
-        setGeneratedPost({
+        const postObj = {
           headline: contentType === 'headline' ? data.text : 'Copy Estratégica',
           body: data.text,
           cta: contentType === 'cta' ? data.text : 'Saiba mais no link da bio',
           hashtags: ['#marketing', '#negocios', '#inovacao'],
           visualPrompt: 'Imagem profissional moderna de alto contraste',
           keywords: []
-        });
+        };
+        setGeneratedPost(postObj);
         setGeneratedCarousel(null);
       }
 
@@ -118,6 +149,64 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSchedule = async () => {
+    try {
+      let targetItem = lastSavedContentItem;
+      if (!targetItem && (generatedPost || generatedCarousel)) {
+        // Save first if not already saved
+        const title = generatedPost?.headline || generatedCarousel?.carouselTitle || topic;
+        const body = generatedPost
+          ? `${generatedPost.headline}\n\n${generatedPost.body}\n\n${generatedPost.cta}\n\n${generatedPost.hashtags?.join(' ')}`
+          : JSON.stringify(generatedCarousel);
+        const res = await apiRequest<{ item?: ContentItem; content?: ContentItem }>('/api/content', {
+          method: 'POST',
+          body: {
+            companyId: selectedCompany?.id || 'default',
+            title,
+            type: contentType,
+            body,
+            status: 'saved'
+          }
+        });
+        targetItem = res.item || res.content || null;
+      }
+
+      if (targetItem?.id) {
+        sessionStorage.setItem('froc_schedule_prefill', JSON.stringify({
+          contentItemId: targetItem.id,
+          platforms: [platform]
+        }));
+      }
+      onNavigate('calendario');
+    } catch (e: any) {
+      setErrorMessage(e.message || 'Não foi possível preparar o agendamento.');
+    }
+  };
+
+  const handleSaveToLibrary = async () => {
+    setErrorMessage('');
+    try {
+      const title = generatedPost?.headline || generatedCarousel?.carouselTitle || topic;
+      const body = generatedPost
+        ? `${generatedPost.headline}\n\n${generatedPost.body}\n\n${generatedPost.cta}\n\n${generatedPost.hashtags?.join(' ')}`
+        : JSON.stringify(generatedCarousel);
+      await apiRequest('/api/content', {
+        method: 'POST',
+        body: {
+          companyId: selectedCompany?.id || 'default',
+          title,
+          type: contentType,
+          body,
+          status: 'saved'
+        }
+      });
+      setSuccessMessage('Conteúdo salvo com sucesso na Biblioteca de Conteúdos!');
+      setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (e: any) {
+      setErrorMessage(e.message || 'Erro ao salvar na biblioteca.');
+    }
   };
 
   return (
@@ -220,6 +309,9 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
           {errorMessage && (
             <p className="text-xs text-rose-400">⚠️ {errorMessage}</p>
           )}
+          {successMessage && (
+            <p className="text-xs text-emerald-400">✓ {successMessage}</p>
+          )}
 
           <button
             type="button"
@@ -231,7 +323,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
             ) : (
               <>
-                <Sparkles size={16} /> Gerar Conteúdo
+                <Sparkles size={16} /> Gerar Conteúdo ({currentCost} cr)
               </>
             )}
           </button>
@@ -293,12 +385,21 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               {/* Actions */}
               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800">
                 <button
-                  onClick={() => onNavigate('calendario')}
+                  type="button"
+                  onClick={handleSchedule}
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5"
                 >
                   <Calendar size={14} /> Agendar Publicação
                 </button>
                 <button
+                  type="button"
+                  onClick={handleSaveToLibrary}
+                  className="px-3 py-2 rounded-xl bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-300 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <FolderPlus size={14} /> Salvar na Biblioteca
+                </button>
+                <button
+                  type="button"
                   onClick={handleGenerate}
                   className="px-3 py-2 rounded-xl bg-[#1E293B] hover:bg-slate-800 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
                 >
@@ -323,6 +424,22 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               <p className="text-xs text-slate-400 italic bg-[#1E293B] p-3 rounded-xl">
                 Legenda: {generatedCarousel.caption}
               </p>
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={handleSchedule}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5"
+                >
+                  <Calendar size={14} /> Agendar Carrossel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveToLibrary}
+                  className="px-3 py-2 rounded-xl bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-300 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <FolderPlus size={14} /> Salvar na Biblioteca
+                </button>
+              </div>
             </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-500">

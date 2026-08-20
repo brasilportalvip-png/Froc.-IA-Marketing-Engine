@@ -36,6 +36,20 @@ function sanitizeJsonText(value: string): string {
   return trimmed;
 }
 
+function formatAiErrorMessage(error: any): string {
+  const msg = String(error?.message || error || '');
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota exceeded')) {
+    return 'Limite temporário de requisições de IA atingido na API do Google Gemini. Aguarde alguns segundos e tente novamente.';
+  }
+  if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
+    return 'Chave de API do Google Gemini inválida ou sem permissões suficientes no servidor.';
+  }
+  if (msg.includes('SAFETY') || msg.includes('HARM_CATEGORY')) {
+    return 'O conteúdo solicitado foi bloqueado pelas diretrizes de segurança da IA. Modifique o briefing e tente novamente.';
+  }
+  return msg;
+}
+
 export function parseAiJson<T = any>(value: string): T {
   try {
     return JSON.parse(sanitizeJsonText(value)) as T;
@@ -191,7 +205,7 @@ export async function executeAi<T = string>(data: {
     });
     return { result, creditsUsed: cost, executionId, modelUsed: generated.modelUsed };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
     await rollbackReservation(data.userId, reservation.reservationId, message);
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
@@ -206,7 +220,7 @@ export async function executeAi<T = string>(data: {
       error: message.slice(0, 500),
       timestamp: nowIso()
     });
-    throw error;
+    throw new Error(message);
   }
 }
 
@@ -427,7 +441,7 @@ export async function generateMarketingImage(data: {
     });
     return { imageUrl, storagePath, mimeType: image.mimeType, creditsUsed: cost, executionId, modelUsed: model };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
     await rollbackReservation(data.userId, reservation.reservationId, message);
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
@@ -443,6 +457,6 @@ export async function generateMarketingImage(data: {
       error: message.slice(0, 500),
       timestamp: nowIso()
     });
-    throw error;
+    throw new Error(message);
   }
 }
