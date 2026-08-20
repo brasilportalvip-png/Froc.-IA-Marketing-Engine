@@ -84,8 +84,8 @@ export const config = {
       clientSecret: env('GOOGLE_CLIENT_SECRET')
     },
     tiktok: {
-      clientId: env('TIKTOK_CLIENT_KEY'),
-      clientSecret: env('TIKTOK_CLIENT_SECRET')
+      clientId: env('TIKTOK_CLIENT_KEY', nodeEnv === 'test' ? 'mock_tiktok_client_id' : ''),
+      clientSecret: env('TIKTOK_CLIENT_SECRET', nodeEnv === 'test' ? 'mock_tiktok_client_secret' : '')
     },
     pinterest: {
       clientId: env('PINTEREST_APP_ID'),

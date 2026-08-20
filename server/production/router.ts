@@ -8,8 +8,9 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, handleOAuthCallback, listConnections, type SocialProvider } from './social.js';
+import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
+import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
 
 const router = Router();
@@ -872,6 +873,61 @@ router.delete('/social/connections/:connectionId', requireAuth, asyncRoute(async
   if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Conexão não encontrada.' });
   await ref.delete();
   res.json({ success: true, message: 'Conta desconectada.' });
+}));
+
+// TikTok Content Posting API (Draft Video / Inbox Upload)
+const uploadVideo = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 100 * 1024 * 1024 // 100MB
+  },
+  fileFilter: (_req, file, cb) => {
+    const mime = (file.mimetype || '').toLowerCase();
+    const originalName = (file.originalname || '').toLowerCase();
+    if (mime.includes('video') || mime.includes('mp4') || originalName.endsWith('.mp4')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos de vídeo MP4 são aceitos para envio de rascunho ao TikTok.'));
+    }
+  }
+});
+
+router.post('/social/tiktok/upload-draft', requireAuth, uploadVideo.single('video'), asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200) || safeString(req.query?.companyId, 200);
+  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  if (!req.file || !req.file.buffer || req.file.buffer.length === 0) {
+    return res.status(400).json({ error: 'Arquivo de vídeo MP4 é obrigatório.' });
+  }
+
+  const result = await uploadTikTokDraftVideo({
+    userId: req.user!.id,
+    companyId,
+    videoBuffer: req.file.buffer,
+    videoSize: req.file.size,
+    mimeType: req.file.mimetype,
+    title: safeString(req.body?.title, 300)
+  });
+
+  res.status(200).json(result);
+}));
+
+router.post('/social/tiktok/upload-status', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200) || safeString(req.query?.companyId, 200);
+  const publishId = safeString(req.body?.publishId, 200);
+  if (!companyId || !publishId) {
+    return res.status(400).json({ error: 'companyId e publishId são obrigatórios.' });
+  }
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  const result = await getTikTokUploadStatus({
+    userId: req.user!.id,
+    companyId,
+    publishId
+  });
+
+  res.status(200).json(result);
 }));
 
 // Support

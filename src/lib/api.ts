@@ -28,15 +28,19 @@ export async function apiRequest<T = any>(
   try {
     const currentUser = auth.currentUser;
     const idToken = currentUser ? await currentUser.getIdToken() : null;
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
       ...(options.headers || {})
     };
+    const body = options.body !== undefined
+      ? (isFormData ? options.body : JSON.stringify(options.body))
+      : undefined;
     const response = await fetch(requestUrl, {
       method: options.method || 'GET',
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body,
       signal: controller.signal,
       credentials: 'same-origin'
     });

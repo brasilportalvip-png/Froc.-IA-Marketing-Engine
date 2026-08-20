@@ -9,7 +9,7 @@ function key(): Buffer {
   return crypto.createHash('sha256').update(config.encryptionKey).digest();
 }
 
-function encrypt(value: string): string {
+export function encrypt(value: string): string {
   if (!value) return '';
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key(), iv);
@@ -18,7 +18,7 @@ function encrypt(value: string): string {
   return `${iv.toString('base64url')}.${tag.toString('base64url')}.${ciphertext.toString('base64url')}`;
 }
 
-function decrypt(value: string): string {
+export function decrypt(value: string): string {
   if (!value) return '';
   const [ivRaw, tagRaw, encryptedRaw] = value.split('.');
   if (!ivRaw || !tagRaw || !encryptedRaw) throw new Error('Token social criptografado inválido.');
@@ -75,7 +75,7 @@ export async function createOAuthUrl(data: { provider: SocialProvider; userId: s
       break;
     case 'tiktok':
       url = new URL('https://www.tiktok.com/v2/auth/authorize/');
-      url.search = new URLSearchParams({ client_key: credentials.clientId, response_type: 'code', scope: 'user.info.basic,video.upload,video.publish', redirect_uri: redirectUri, state }).toString();
+      url.search = new URLSearchParams({ client_key: credentials.clientId, response_type: 'code', scope: 'user.info.basic,video.upload', redirect_uri: redirectUri, state }).toString();
       break;
     case 'pinterest':
       url = new URL('https://www.pinterest.com/oauth/');
@@ -311,3 +311,195 @@ export async function publishText(data: { userId: string; companyId: string; pro
 
   throw new Error(`Publicação automática de texto para ${data.provider} exige mídia e/ou permissões específicas. Conexão mantida, mas o post não será marcado como publicado sem uma chamada real compatível.`);
 }
+
+export async function uploadTikTokDraftVideo(data: {
+  userId: string;
+  companyId: string;
+  videoBuffer: Buffer;
+  videoSize: number;
+  mimeType?: string;
+  title?: string;
+}): Promise<{
+  success: boolean;
+  publishId: string;
+  status: string;
+  message: string;
+}> {
+  if (!data.videoBuffer || data.videoSize <= 0) {
+    throw new Error('Arquivo de vídeo inválido ou vazio.');
+  }
+
+  // Limite razoável para chunk único (100MB)
+  const MAX_SINGLE_CHUNK_SIZE = 100 * 1024 * 1024;
+  if (data.videoSize > MAX_SINGLE_CHUNK_SIZE) {
+    throw new Error('O tamanho máximo do vídeo para envio direto de rascunho é de 100MB.');
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'tiktok')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Conta TikTok não conectada para esta empresa. Conecte sua conta TikTok em Redes Sociais.');
+  }
+
+  const connection = snap.docs[0].data() as any;
+  if (connection.expiresAt && new Date(connection.expiresAt).getTime() < Date.now()) {
+    await snap.docs[0].ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+    throw new Error('A autenticação com o TikTok expirou. Reconecte a conta nas configurações de Redes Sociais.');
+  }
+
+  const token = decrypt(connection.encryptedAccessToken);
+
+  // 1. Inicializar upload no modo Inbox / Draft (Content Posting API - Inbox video)
+  const initEndpoint = 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/';
+  const initBody = {
+    source_info: {
+      source: 'FILE_UPLOAD',
+      video_size: data.videoSize,
+      chunk_size: data.videoSize,
+      total_chunk_count: 1
+    }
+  };
+
+  const initResponse = await fetch(initEndpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=UTF-8'
+    },
+    body: JSON.stringify(initBody)
+  });
+
+  const initJson = await initResponse.json().catch(() => ({} as any));
+
+  if (!initResponse.ok || (initJson.error?.code && initJson.error.code !== 'ok')) {
+    const errorMsg = initJson.error?.message || initJson.message || `Erro ${initResponse.status} retornado pelo TikTok na inicialização do upload.`;
+    throw new Error(`Falha ao inicializar rascunho no TikTok: ${errorMsg}`);
+  }
+
+  const publishId = initJson.data?.publish_id;
+  const uploadUrl = initJson.data?.upload_url;
+
+  if (!publishId || !uploadUrl) {
+    throw new Error('A API do TikTok não retornou os identificadores obrigatórios (publish_id e upload_url).');
+  }
+
+  // 2. Upload Binário (PUT)
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Content-Range': `bytes 0-${data.videoSize - 1}/${data.videoSize}`
+    },
+    body: data.videoBuffer
+  });
+
+  if (!uploadResponse.ok && uploadResponse.status !== 201 && uploadResponse.status !== 200) {
+    const uploadErrText = await uploadResponse.text().catch(() => '');
+    throw new Error(`Falha ao enviar binário do vídeo para o TikTok (HTTP ${uploadResponse.status}): ${uploadErrText.slice(0, 200)}`);
+  }
+
+  // Registrar histórico de envio de rascunho
+  const draftRecordId = stableId(`${data.userId}:${data.companyId}:${publishId}`);
+  await firestore().collection('socialDraftUploads').doc(draftRecordId).set({
+    id: draftRecordId,
+    userId: data.userId,
+    companyId: data.companyId,
+    provider: 'tiktok',
+    publishId,
+    videoSize: data.videoSize,
+    mimeType: data.mimeType || 'video/mp4',
+    title: data.title || null,
+    status: 'draft_sent',
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  }, { merge: true }).catch(() => undefined);
+
+  return {
+    success: true,
+    publishId,
+    status: 'draft_sent',
+    message: 'Rascunho enviado ao TikTok. Abra o TikTok e acesse a notificação na Caixa de Entrada para continuar a edição e publicar.'
+  };
+}
+
+export async function getTikTokUploadStatus(data: {
+  userId: string;
+  companyId: string;
+  publishId: string;
+}): Promise<{
+  success: boolean;
+  publishId: string;
+  status: string;
+  failReason?: string | null;
+  isDraftDelivered: boolean;
+  message: string;
+}> {
+  if (!data.publishId) {
+    throw new Error('publish_id é obrigatório.');
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'tiktok')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Conta TikTok não conectada para esta empresa.');
+  }
+
+  const connection = snap.docs[0].data() as any;
+  if (connection.expiresAt && new Date(connection.expiresAt).getTime() < Date.now()) {
+    throw new Error('A autenticação com o TikTok expirou. Reconecte a conta.');
+  }
+
+  const token = decrypt(connection.encryptedAccessToken);
+
+  const statusEndpoint = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
+  const statusResponse = await fetch(statusEndpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=UTF-8'
+    },
+    body: JSON.stringify({ publish_id: data.publishId })
+  });
+
+  const statusJson = await statusResponse.json().catch(() => ({} as any));
+
+  if (!statusResponse.ok || (statusJson.error?.code && statusJson.error.code !== 'ok')) {
+    const errMsg = statusJson.error?.message || statusJson.message || `Erro ${statusResponse.status} ao consultar status.`;
+    throw new Error(`Falha ao consultar status no TikTok: ${errMsg}`);
+  }
+
+  const rawStatus = String(statusJson.data?.status || 'UNKNOWN');
+  const failReason = statusJson.data?.fail_reason || null;
+  const isSuccess = rawStatus === 'SUCCESS';
+
+  let userFriendlyMessage = 'Processando rascunho no TikTok...';
+  if (isSuccess) {
+    userFriendlyMessage = 'Rascunho disponível no TikTok. Acesse a notificação na Caixa de Entrada do aplicativo TikTok para continuar a edição e publicar.';
+  } else if (rawStatus === 'FAILED') {
+    userFriendlyMessage = `Falha no processamento pelo TikTok: ${failReason || 'Verifique se o arquivo segue as diretrizes do TikTok.'}`;
+  } else if (rawStatus === 'PROCESSING_DOWNLOAD' || rawStatus === 'PROCESSING_UPLOAD') {
+    userFriendlyMessage = 'O TikTok está processando o arquivo de vídeo enviado.';
+  }
+
+  return {
+    success: true,
+    publishId: data.publishId,
+    status: rawStatus,
+    failReason,
+    isDraftDelivered: isSuccess,
+    message: userFriendlyMessage
+  };
+}
+
