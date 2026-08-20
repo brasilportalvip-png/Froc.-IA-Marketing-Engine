@@ -24,6 +24,7 @@
     "api/**/*.ts",
     "server.ts",
     "server/**/*.ts",
+    "shared/**/*.ts",
     "vite.config.ts",
     "capacitor.config.ts"
   ],

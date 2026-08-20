@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { CREDIT_COSTS } from '../../src/lib/creditCosts.ts';
+import { CREDIT_COSTS } from '../../shared/creditCosts.js';
 
 dotenv.config();
 

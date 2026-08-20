@@ -62,7 +62,7 @@ function sanitizedSocialLinks(value: any): Record<string, string> {
   return out;
 }
 
-function parseStrictBoolean(value: any): boolean {
+export function parseStrictBoolean(value: any): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
     const trimmed = value.trim().toLowerCase();
@@ -1036,7 +1036,7 @@ export async function buildSitemapXml(): Promise<string> {
   try {
     const [blogSnap, companiesSnap] = await Promise.all([
       firestore().collection(COLLECTIONS.blogPosts).where('status', '==', 'published').get(),
-      firestore().collection(COLLECTIONS.companies).where('isPublicInVitrine', '==', true).get()
+      firestore().collection(COLLECTIONS.companies).get()
     ]);
     for (const doc of blogSnap.docs) {
       const item = doc.data() as any;
@@ -1044,7 +1044,8 @@ export async function buildSitemapXml(): Promise<string> {
     }
     for (const doc of companiesSnap.docs) {
       const item = doc.data() as any;
-      if (item.slug) urls.push({ loc: `${base}/vitrine/${encodeURIComponent(item.slug)}`, lastmod: item.updatedAt });
+      const isPublic = item.isPublicInVitrine === true || item.isPublicInVitrine === 'true';
+      if (isPublic && item.slug) urls.push({ loc: `${base}/vitrine/${encodeURIComponent(item.slug)}`, lastmod: item.updatedAt });
     }
   } catch (error) {
     console.warn('[Froc Sitemap] Não foi possível carregar dados dinâmicos do Firestore, usando páginas base:', error);

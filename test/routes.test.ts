@@ -193,3 +193,54 @@ test('AI Grounding & Content: Validação de companyContext e restrição estrit
   assert.equal(words > 15, true);
 });
 
+test('Shared CREDIT_COSTS: Backend e Frontend utilizam a mesma fonte e valores oficiais', async () => {
+  const { CREDIT_COSTS: backendCosts } = await import('../shared/creditCosts.js');
+  const { config } = await import('../server/config/index.js');
+
+  const officialCosts = {
+    cta: 1,
+    headline: 1,
+    caption: 2,
+    full_post: 5,
+    image_prompt: 10,
+    variations: 10,
+    image_ai: 15,
+    site_analysis: 20,
+    strategy: 30,
+    carousel: 30,
+    seo_article: 35,
+    video_script: 40,
+    campaign: 50,
+    autopilot_cycle: 5,
+    auto_calendar: 100
+  };
+
+  assert.deepEqual(backendCosts, officialCosts);
+  assert.deepEqual(config.creditCosts, officialCosts);
+});
+
+test('SEO & Google Search Console: renderPublicPage("/ ") contém meta tag oficial no head', async () => {
+  const { renderPublicPage } = await import('../server/production/publicPages.js');
+  const page = await renderPublicPage('/');
+  
+  assert.equal(page.status, 200);
+  assert.match(page.html, /name="google-site-verification"/);
+  assert.match(page.html, /content="WgcZ29owPWh-IYCntXdzzCadEoHsfk7NA7rx65_NRE4"/);
+});
+
+test('Vitrine & Sitemap: parseStrictBoolean e consistência de valores legados', async () => {
+  const { parseStrictBoolean } = await import('../server/production/router.js');
+
+  // Validação estrita
+  assert.equal(parseStrictBoolean(true), true);
+  assert.equal(parseStrictBoolean('true'), true);
+  assert.equal(parseStrictBoolean(false), false);
+  assert.equal(parseStrictBoolean('false'), false);
+  assert.equal(parseStrictBoolean(undefined), false);
+  assert.equal(parseStrictBoolean(null), false);
+  assert.equal(parseStrictBoolean(''), false);
+  assert.equal(parseStrictBoolean('sim'), false);
+  assert.equal(parseStrictBoolean(1), false);
+  assert.equal(parseStrictBoolean(0), false);
+});
+

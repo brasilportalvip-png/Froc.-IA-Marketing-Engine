@@ -45,9 +45,12 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
   if (vitrineMatch) {
     try {
       const slug = decodeURIComponent(vitrineMatch[1]);
-      const snap = await firestore().collection(COLLECTIONS.companies).where('slug', '==', slug).where('isPublicInVitrine', '==', true).limit(1).get();
+      const snap = await firestore().collection(COLLECTIONS.companies).where('slug', '==', slug).limit(1).get();
       if (snap.empty) return { ...fallback, status: 404, title: 'Empresa não encontrada — Froc.IA', description: 'Esta empresa não está disponível na Vitrine Froc.IA.' };
-      const company = { id: snap.docs[0].id, ...snap.docs[0].data() } as any;
+      const companyData = snap.docs[0].data() as any;
+      const isPublic = companyData.isPublicInVitrine === true || companyData.isPublicInVitrine === 'true';
+      if (!isPublic) return { ...fallback, status: 404, title: 'Empresa não encontrada — Froc.IA', description: 'Esta empresa não está disponível na Vitrine Froc.IA.' };
+      const company = { id: snap.docs[0].id, ...companyData } as any;
       const canonical = `${base}/vitrine/${encodeURIComponent(company.slug)}`;
       return {
         title: `${company.name} — Vitrine Froc.IA`,
@@ -105,6 +108,7 @@ export async function renderPublicPage(pathname: string): Promise<{ html: string
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#0B0F19" />
+<meta name="google-site-verification" content="WgcZ29owPWh-IYCntXdzzCadEoHsfk7NA7rx65_NRE4" />
 ${noindex}
 <title>${esc(meta.title)}</title>
 <meta name="description" content="${esc(meta.description)}" />

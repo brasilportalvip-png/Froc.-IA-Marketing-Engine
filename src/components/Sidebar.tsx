@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Building2,
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { BRAND } from '../lib/brand';
+import { apiRequest } from '../lib/api';
 import { Company, User as UserType, Wallet } from '../types';
 
 interface SidebarProps {
@@ -50,6 +51,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   isAdmin
 }) => {
+  const plan = wallet?.planId || 'free';
+  const isFree = plan === 'free' || plan === 'plan_free' || !wallet?.planId;
+  const hasAutopilotAccess = ['plan_pro', 'plan_business', 'plan_agency'].includes(plan);
+
+  const [apStatus, setApStatus] = useState<'blocked' | 'unconfigured' | 'active' | 'inactive'>('unconfigured');
+
+  useEffect(() => {
+    if (!hasAutopilotAccess) {
+      setApStatus('blocked');
+      return;
+    }
+    if (!user || !selectedCompany?.id) {
+      setApStatus('unconfigured');
+      return;
+    }
+    let isMounted = true;
+    apiRequest<{ config: any; persisted: boolean }>(`/api/autopilot/config?companyId=${encodeURIComponent(selectedCompany.id)}`)
+      .then((res) => {
+        if (!isMounted) return;
+        if (!res.persisted) {
+          setApStatus('unconfigured');
+        } else if (res.config?.enabled) {
+          setApStatus('active');
+        } else {
+          setApStatus('inactive');
+        }
+      })
+      .catch(() => {
+        if (isMounted) setApStatus('unconfigured');
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id, selectedCompany?.id, plan, hasAutopilotAccess, currentTab]);
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'empresa', label: 'Minha Empresa', icon: Building2 },
@@ -176,29 +211,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             {/* Autopilot Status Indicator */}
-            {(() => {
-              const plan = wallet?.planId || 'free';
-              const isFree = plan === 'free' || plan === 'plan_free' || !wallet?.planId;
-              return (
-                <div
-                  onClick={() => onSelectTab('autopilot')}
-                  className="px-2.5 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between text-xs cursor-pointer hover:border-slate-700 transition-colors"
-                >
-                  <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
-                    <Bot size={13} className="text-cyan-400" /> Froc Autopilot
-                  </span>
-                  {isFree ? (
-                    <span className="text-[10px] text-slate-500 font-medium">
-                      Bloqueado
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-[10px] text-cyan-400 font-medium">
-                      Configurar
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
+            <div
+              onClick={() => onSelectTab('autopilot')}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between text-xs cursor-pointer hover:border-slate-700 transition-colors"
+            >
+              <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                <Bot size={13} className="text-cyan-400" /> Froc Autopilot
+              </span>
+              {apStatus === 'blocked' && (
+                <span className="text-[10px] text-slate-500 font-medium">
+                  Bloqueado
+                </span>
+              )}
+              {apStatus === 'unconfigured' && (
+                <span className="text-[10px] text-cyan-400 font-medium">
+                  Configurar
+                </span>
+              )}
+              {apStatus === 'inactive' && (
+                <span className="flex items-center gap-1 text-[10px] text-amber-400 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                  Inativo
+                </span>
+              )}
+              {apStatus === 'active' && (
+                <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                  Ativo
+                </span>
+              )}
+            </div>
           </>
         )}
 
