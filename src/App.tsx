@@ -76,10 +76,10 @@ export default function App(){
     case'vitrine':return <VitrinePage onNavigate={navigate}/>;
     case'froc-ia':case'estrategia':return <FrocIaPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
     case'autopilot':return <AutopilotPage selectedCompany={selectedCompany} wallet={wallet} onNavigate={navigate}/>;
-    case'criar-conteudo':return <CreateContentPage companies={companies} selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
-    case'criar-imagem':return <CreateImagePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
-    case'criar-video':return <CreateVideoPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
-    case'criar-artigo':return <CreateArticlePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
+    case'criar-conteudo':return <CreateContentPage companies={companies} selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
+    case'criar-imagem':return <CreateImagePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
+    case'criar-video':return <CreateVideoPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
+    case'criar-artigo':return <CreateArticlePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
     case'seo':return <SeoPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet}/>;
     case'campanhas':return <CampaignsPage campaigns={campaigns} selectedCompany={selectedCompany} onRefreshCampaigns={refreshCampaigns} onNavigate={navigate}/>;
     case'calendario':return <CalendarPage scheduledPosts={scheduledPosts} contentItems={contentItems} selectedCompany={selectedCompany} onRefreshSchedule={refreshSchedule} onNavigate={navigate}/>;

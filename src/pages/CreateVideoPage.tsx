@@ -16,6 +16,7 @@ interface CreateVideoPageProps {
   selectedCompany: Company | null;
   wallet: Wallet | null;
   onRefreshWallet: () => void;
+  onRefreshContents?: () => void;
   onNavigate: (tab: string) => void;
 }
 
@@ -23,8 +24,10 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
   selectedCompany,
   wallet,
   onRefreshWallet,
+  onRefreshContents,
   onNavigate
 }) => {
+
   const [topic, setTopic] = useState('');
   const [format, setFormat] = useState('Reels / TikTok (60s)');
   const [objective, setObjective] = useState('Quebrar objeção e converter em vendas');
@@ -68,6 +71,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
 
       setGeneratedScript(data.videoScript);
       onRefreshWallet();
+      onRefreshContents?.();
     } catch (err: any) {
       setErrorMessage(err.message || 'Erro ao gerar roteiro de vídeo.');
     } finally {

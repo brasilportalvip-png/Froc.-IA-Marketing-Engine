@@ -4,11 +4,12 @@ import type { Company, Wallet } from '../types';
 import { CREDIT_COSTS } from '../types';
 import { apiRequest } from '../lib/api';
 
-interface Props { selectedCompany: Company | null; wallet: Wallet | null; onRefreshWallet: () => void; onNavigate: (tab: string) => void; }
+interface Props { selectedCompany: Company | null; wallet: Wallet | null; onRefreshWallet: () => void; onRefreshContents?: () => void; onNavigate: (tab: string) => void; }
 interface ImagePrompt { promptPt: string; promptEn: string; artStyle: string; composition: string; colorPalette: string[]; lightingNote: string; aspectRatio: string; }
 interface GeneratedImage { imageUrl: string; mimeType: string; creditsUsed: number; modelUsed: string; }
 
-export const CreateImagePage: React.FC<Props> = ({ selectedCompany, wallet, onRefreshWallet, onNavigate }) => {
+export const CreateImagePage: React.FC<Props> = ({ selectedCompany, wallet, onRefreshWallet, onRefreshContents, onNavigate }) => {
+
   const [theme, setTheme] = useState('');
   const [platform, setPlatform] = useState('Instagram Feed');
   const [style, setStyle] = useState('Fotografia comercial premium, realista e moderna');
@@ -59,6 +60,7 @@ export const CreateImagePage: React.FC<Props> = ({ selectedCompany, wallet, onRe
       });
       setGeneratedImage(data.image); 
       onRefreshWallet();
+      onRefreshContents?.();
     } catch (e: any) { setError(e.message || 'Falha ao gerar imagem com IA.'); }
     finally { setLoadingImage(false); }
   };

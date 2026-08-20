@@ -51,8 +51,10 @@ export const PlansPage: React.FC<Props> = ({ wallet, onRefreshWallet, onNavigate
   }, [onRefreshWallet]);
 
   const activeSubscription = useMemo(() => subscriptions.find((item) =>
-    ['active', 'authorized', 'pending'].includes(String(item.status)) || ['authorized', 'pending'].includes(String(item.subscriptionStatus))
-  ), [subscriptions]);
+    (['active', 'authorized'].includes(String(item.status)) || ['authorized', 'active'].includes(String(item.subscriptionStatus))) &&
+    wallet?.planId && wallet.planId !== 'free' && wallet.planStatus === 'active'
+  ), [subscriptions, wallet]);
+
 
   const checkout = async (planId: string) => {
     setPaying(planId); setError(''); setMessage('');

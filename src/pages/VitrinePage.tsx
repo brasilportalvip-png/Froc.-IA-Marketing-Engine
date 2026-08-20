@@ -38,19 +38,153 @@ function safeExternal(value?: string) {
   }
 }
 
+function renderMarkdownInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const boldRegex = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)(.*?)\5|(\[(.*?)\]\((https?:\/\/[^\s)]+)\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = boldRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.substring(lastIndex, match.index));
+    }
+    if (match[2]) {
+      // Bold
+      parts.push(<strong key={match.index} className="font-bold text-white">{match[2]}</strong>);
+    } else if (match[4]) {
+      // Italic
+      parts.push(<em key={match.index} className="italic text-slate-200">{match[4]}</em>);
+    } else if (match[6]) {
+      // Inline code
+      parts.push(
+        <code key={match.index} className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-cyan-300">
+          {match[6]}
+        </code>
+      );
+    } else if (match[8] && match[9]) {
+      // Link
+      parts.push(
+        <a
+          key={match.index}
+          href={match[9]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-cyan-400 underline hover:text-cyan-300"
+        >
+          {match[8]}
+        </a>
+      );
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.substring(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
+
 function ArticleBody({ content }: { content: string }) {
+  if (!content) return null;
+
+  const blocks = String(content)
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
   return (
-    <div className="space-y-4 text-sm leading-7 text-slate-300">
-      {String(content || '')
-        .split(/\n{2,}/)
-        .filter(Boolean)
-        .map((block, index) => {
-          const text = block.trim();
-          if (text.startsWith('### ')) return <h3 key={index} className="pt-2 text-base font-bold text-white">{text.slice(4)}</h3>;
-          if (text.startsWith('## ')) return <h2 key={index} className="pt-4 text-xl font-extrabold text-white">{text.slice(3)}</h2>;
-          if (text.startsWith('# ')) return <h1 key={index} className="pt-4 text-2xl font-extrabold text-white">{text.slice(2)}</h1>;
-          return <p key={index} className="whitespace-pre-line">{text}</p>;
-        })}
+    <div className="space-y-5 text-sm leading-relaxed text-slate-300">
+      {blocks.map((block, index) => {
+        // Horizontal Rule
+        if (/^[-*_]{3,}$/.test(block)) {
+          return <hr key={index} className="border-slate-800 my-6" />;
+        }
+
+        // H1
+        if (block.startsWith('# ')) {
+          const raw = block.slice(2).replace(/^[Hh]1[:\s-]+/, '').trim();
+          return (
+            <h1 key={index} className="pt-4 text-2xl font-black tracking-tight text-white md:text-3xl">
+              {renderMarkdownInline(raw)}
+            </h1>
+          );
+        }
+
+        // H2
+        if (block.startsWith('## ')) {
+          const raw = block.slice(3).replace(/^[Hh]2[:\s-]+/, '').trim();
+          return (
+            <h2 key={index} className="pt-4 text-xl font-extrabold tracking-tight text-white md:text-2xl">
+              {renderMarkdownInline(raw)}
+            </h2>
+          );
+        }
+
+        // H3
+        if (block.startsWith('### ')) {
+          const raw = block.slice(4).replace(/^[Hh]3[:\s-]+/, '').trim();
+          return (
+            <h3 key={index} className="pt-2 text-base font-bold text-cyan-200">
+              {renderMarkdownInline(raw)}
+            </h3>
+          );
+        }
+
+        // Blockquote
+        if (block.startsWith('> ')) {
+          const quote = block.replace(/^>\s*/gm, '');
+          return (
+            <blockquote
+              key={index}
+              className="my-3 rounded-2xl border-l-4 border-cyan-400 bg-slate-900/60 p-4 italic text-slate-200"
+            >
+              {renderMarkdownInline(quote)}
+            </blockquote>
+          );
+        }
+
+        // Unordered List
+        if (/^[-*•]\s+/m.test(block)) {
+          const items = block
+            .split('\n')
+            .map((line) => line.replace(/^[-*•]\s+/, '').trim())
+            .filter(Boolean);
+          return (
+            <ul key={index} className="my-3 space-y-1.5 pl-5 list-disc marker:text-cyan-400">
+              {items.map((item, i) => (
+                <li key={i} className="text-slate-300">
+                  {renderMarkdownInline(item)}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+
+        // Ordered List
+        if (/^\d+\.\s+/m.test(block)) {
+          const items = block
+            .split('\n')
+            .map((line) => line.replace(/^\d+\.\s+/, '').trim())
+            .filter(Boolean);
+          return (
+            <ol key={index} className="my-3 space-y-1.5 pl-5 list-decimal marker:text-cyan-400 font-semibold">
+              {items.map((item, i) => (
+                <li key={i} className="text-slate-300 font-normal">
+                  {renderMarkdownInline(item)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+
+        // Standard Paragraph
+        return (
+          <p key={index} className="leading-7 text-slate-300">
+            {renderMarkdownInline(block)}
+          </p>
+        );
+      })}
     </div>
   );
 }

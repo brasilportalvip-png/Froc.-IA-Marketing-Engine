@@ -175,18 +175,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             {/* Autopilot Status Indicator */}
-            <div
-              onClick={() => onSelectTab('autopilot')}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between text-xs cursor-pointer hover:border-slate-700 transition-colors"
-            >
-              <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
-                <Bot size={13} className="text-cyan-400" /> Froc Autopilot
-              </span>
-              <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Ativo
-              </span>
-            </div>
+            {(() => {
+              const isAutopilotActive = Boolean(wallet?.planId && wallet.planId !== 'free' && wallet?.planStatus === 'active');
+              return (
+                <div
+                  onClick={() => onSelectTab('autopilot')}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between text-xs cursor-pointer hover:border-slate-700 transition-colors"
+                >
+                  <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                    <Bot size={13} className="text-cyan-400" /> Froc Autopilot
+                  </span>
+                  {isAutopilotActive ? (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Ativo
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      Configurar
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
 

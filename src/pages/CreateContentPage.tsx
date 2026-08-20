@@ -21,6 +21,7 @@ interface CreateContentPageProps {
   selectedCompany: Company | null;
   wallet: Wallet | null;
   onRefreshWallet: () => void;
+  onRefreshContents?: () => void;
   onNavigate: (tab: string) => void;
 }
 
@@ -29,8 +30,10 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
   selectedCompany,
   wallet,
   onRefreshWallet,
+  onRefreshContents,
   onNavigate
 }) => {
+
   const [contentType, setContentType] = useState<'post' | 'carousel' | 'cta' | 'headline'>('post');
   const [topic, setTopic] = useState('');
   const [platform, setPlatform] = useState('Instagram');
@@ -125,10 +128,16 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
             prompt: `${topic} com foco em ${goal} para a plataforma ${platform}`
           }
         });
+        const defaultCta = selectedCompany?.website
+          ? `Acesse nosso site oficial: ${selectedCompany.website}`
+          : selectedCompany?.whatsapp
+          ? `Fale conosco pelo WhatsApp: ${selectedCompany.whatsapp}`
+          : 'Entre em contato conosco e saiba mais.';
+
         const postObj = {
           headline: contentType === 'headline' ? data.text : 'Copy Estratégica',
           body: data.text,
-          cta: contentType === 'cta' ? data.text : 'Saiba mais no link da bio',
+          cta: contentType === 'cta' ? data.text : defaultCta,
           hashtags: ['#marketing', '#negocios', '#inovacao'],
           visualPrompt: 'Imagem profissional moderna de alto contraste',
           keywords: []
@@ -138,6 +147,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
       }
 
       onRefreshWallet();
+      onRefreshContents?.();
     } catch (err: any) {
       setErrorMessage(err.message || 'Erro ao gerar conteúdo com IA.');
     } finally {
@@ -171,6 +181,8 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
           }
         });
         targetItem = res.item || res.content || null;
+        if (targetItem) setLastSavedContentItem(targetItem);
+        onRefreshContents?.();
       }
 
       if (targetItem?.id) {
@@ -187,12 +199,17 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
 
   const handleSaveToLibrary = async () => {
     setErrorMessage('');
+    if (lastSavedContentItem?.id) {
+      setSuccessMessage('Este conteúdo já está registrado na Biblioteca!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+      return;
+    }
     try {
       const title = generatedPost?.headline || generatedCarousel?.carouselTitle || topic;
       const body = generatedPost
         ? `${generatedPost.headline}\n\n${generatedPost.body}\n\n${generatedPost.cta}\n\n${generatedPost.hashtags?.join(' ')}`
         : JSON.stringify(generatedCarousel);
-      await apiRequest('/api/content', {
+      const res = await apiRequest<{ item?: ContentItem; content?: ContentItem }>('/api/content', {
         method: 'POST',
         body: {
           companyId: selectedCompany?.id || 'default',
@@ -202,12 +219,16 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
           status: 'saved'
         }
       });
+      const saved = res.item || res.content || null;
+      if (saved) setLastSavedContentItem(saved);
+      onRefreshContents?.();
       setSuccessMessage('Conteúdo salvo com sucesso na Biblioteca de Conteúdos!');
       setTimeout(() => setSuccessMessage(''), 4000);
     } catch (e: any) {
       setErrorMessage(e.message || 'Erro ao salvar na biblioteca.');
     }
   };
+
 
   return (
     <div className="space-y-6 animate-fadeIn max-w-5xl">

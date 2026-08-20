@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { CREDIT_COSTS } from '../../src/lib/creditCosts.ts';
 
 dotenv.config();
 
@@ -117,24 +118,9 @@ export const config = {
       features: ['1.000 créditos mensais incluídos', 'Empresas ilimitadas', 'Prioridade de processamento', 'Autopilot multi-marca', 'Roteiros e prompts avançados', 'Webhooks e integrações', 'Gerente de conta dedicado']
     }
   ],
-  creditCosts: {
-    cta: 1,
-    headline: 1,
-    caption: 2,
-    full_post: 5,
-    image_prompt: 10,
-    variations: 10,
-    image_ai: 15,
-    site_analysis: 20,
-    strategy: 30,
-    carousel: 30,
-    seo_article: 35,
-    video_script: 40,
-    campaign: 50,
-    autopilot_cycle: 5,
-    auto_calendar: 100
-  }
+  creditCosts: CREDIT_COSTS
 } as const;
+
 
 export function assertProductionConfig(): void {
   if (!isProduction) return;

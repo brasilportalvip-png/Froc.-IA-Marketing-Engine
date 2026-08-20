@@ -293,12 +293,45 @@ Responda SOMENTE JSON: {"promptPt":"","promptEn":"","artStyle":"","composition":
 }
 
 export async function generateArticle(data: { userId: string; company?: any; topic: string; primaryKeyword?: string; targetAudience?: string; tone?: string }) {
-  const prompt = `Escreva um artigo original, útil e otimizado para SEO sobre "${data.topic}".
+  const prompt = `Escreva um artigo de autoridade aprofundado, original, educativo e altamente otimizado para SEO sobre "${data.topic}".
 Palavra-chave principal: ${data.primaryKeyword || data.topic}.
-Público: ${data.targetAudience || 'clientes potenciais'}.
-Tom: ${data.tone || 'educativo e autoritativo'}.
-Não invente estatísticas ou fontes.
-Responda SOMENTE JSON: {"title":"","metaDescription":"","introduction":"","sections":[{"h2":"","content":"","h3s":[{"h3":"","content":""}]}],"faqSection":[{"question":"","answer":""}],"conclusion":"","callToAction":"","suggestedSlug":""}.`;
+Público-alvo: ${data.targetAudience || 'clientes potenciais e profissionais'}.
+Tom de voz: ${data.tone || 'educativo, claro e autoritativo'}.
+
+DIRETRIZES DE CONTEÚDO E ESTRUTURA:
+1. O artigo deve ser profundo, prático e detalhado (não resuma em poucas frases; desenvolva cada seção com explicações ricas, exemplos aplicáveis e orientações acionáveis).
+2. Estruture em 3 a 6 seções H2 lógicas e relevantes, incluindo subtópicos H3 onde apropriado.
+3. Inclua uma seção de FAQ com 3 a 5 perguntas reais e respostas diretas.
+4. Conclusão persuasiva com Chamada para Ação contextualizada.
+5. REGRAS ANTI-ALUCINAÇÃO: Não invente pesquisas falsas, percentuais inventados, testemunhos fictícios, citações de pessoas inexistentes ou promessas de ganhos financeiros milagrosos. Se usar dados, atenha-se a conceitos e práticas comprovadas de mercado.
+
+Responda SOMENTE JSON válido no seguinte formato:
+{
+  "title": "Título H1 cativante com a palavra-chave",
+  "metaDescription": "Meta descrição de 140 a 160 caracteres com gatilho e palavra-chave",
+  "introduction": "Introdução engajadora apresentando a dor, a importância do tema e o que será aprendido no artigo.",
+  "sections": [
+    {
+      "h2": "Título da Seção H2",
+      "content": "Conteúdo aprofundado e rico da seção...",
+      "h3s": [
+        {
+          "h3": "Subtópico H3",
+          "content": "Detalhamento prático..."
+        }
+      ]
+    }
+  ],
+  "faqSection": [
+    {
+      "question": "Pergunta comum do público sobre o tema?",
+      "answer": "Resposta direta, clara e fundamentada."
+    }
+  ],
+  "conclusion": "Síntese dos pontos-chave com visão de futuro.",
+  "callToAction": "Chamada para ação clara convidando o leitor a dar o próximo passo.",
+  "suggestedSlug": "slug-otimizado-para-seo"
+}`;
   return executeAi<any>({ userId: data.userId, company: data.company, operation: 'seo_article', prompt, useProModel: true, jsonOutput: true, maxTokens: 7000, parse: parseAiJson });
 }
 

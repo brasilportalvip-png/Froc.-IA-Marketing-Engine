@@ -131,7 +131,7 @@ export const DashboardPage: React.FC<Props> = ({
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-300">
             {selectedCompany
-              ? `Operação ativa para ${selectedCompany.name}. Todas as IAs e automações estão calibradas para sua marca.`
+              ? `Operação ativa para ${selectedCompany.name}. As diretrizes da sua empresa estão prontas para contextualizar suas criações.`
               : 'Cadastre ou selecione uma empresa para contextualizar a IA e as automações.'}
           </p>
           <div className="mt-6 flex flex-wrap gap-3">

@@ -17,6 +17,7 @@ interface CreateArticlePageProps {
   selectedCompany: Company | null;
   wallet: Wallet | null;
   onRefreshWallet: () => void;
+  onRefreshContents?: () => void;
   onNavigate: (tab: string) => void;
 }
 
@@ -24,8 +25,10 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
   selectedCompany,
   wallet,
   onRefreshWallet,
+  onRefreshContents,
   onNavigate
 }) => {
+
   const [topic, setTopic] = useState('');
   const [primaryKeyword, setPrimaryKeyword] = useState('');
   const [targetAudience, setTargetAudience] = useState(selectedCompany?.targetAudience || 'Empreendedores e Clientes');
@@ -73,6 +76,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
 
       setGeneratedArticle(data.article);
       onRefreshWallet();
+      onRefreshContents?.();
     } catch (err: any) {
       setErrorMessage(err.message || 'Erro ao gerar artigo com IA.');
     } finally {
@@ -236,15 +240,17 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
 
                 {generatedArticle.sections?.map((sec, idx) => (
                   <div key={idx} className="bg-[#1E293B]/70 p-3 rounded-xl border border-slate-700/80 space-y-1.5">
-                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <span className="text-cyan-400">H2:</span> {sec.h2}
+                    <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-bold">H2</span>
+                      <span>{sec.h2}</span>
                     </h4>
                     <p>{sec.content}</p>
 
                     {sec.h3s?.map((sub, sIdx) => (
                       <div key={sIdx} className="pl-3 border-l-2 border-cyan-500/40 mt-2 space-y-0.5">
-                        <h5 className="text-[11px] font-bold text-slate-300">
-                          <span className="text-amber-400">H3:</span> {sub.h3}
+                        <h5 className="text-[11px] font-bold text-slate-300 flex items-center gap-2">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold">H3</span>
+                          <span>{sub.h3}</span>
                         </h5>
                         <p className="text-[11px] text-slate-400">{sub.content}</p>
                       </div>
