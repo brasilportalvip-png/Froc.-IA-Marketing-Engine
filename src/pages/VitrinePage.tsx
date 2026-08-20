@@ -38,15 +38,36 @@ function safeExternal(value?: string) {
   }
 }
 
+function cleanMarkdownContent(raw: string): string {
+  if (!raw) return '';
+  let text = String(raw);
+  
+  // 1. Remove backslash escaping from markdown syntax (e.g. \* -> *, \_ -> _, \. -> ., \# -> #)
+  text = text.replace(/\\([*_[\]()#.+-])/g, '$1');
+
+  // 2. Normalize concatenated numbered lists on single lines: "1. Item one 2. Item two" -> separate lines
+  text = text.replace(/(\d+\.\s+[^\n]+?)(?=\s+\d+\.\s+)/g, '$1\n');
+
+  // 3. Normalize concatenated bullet points on single lines: "* Item one * Item two" -> separate lines
+  text = text.replace(/([•*-]\s+[^\n]+?)(?=\s+[•*-]\s+)/g, '$1\n');
+
+  // 4. Remove redundant "H1:", "H2:", "#### H2:" prefixes in headings
+  text = text.replace(/^(#{1,6})\s*[Hh][1-6][:-\s]+/gm, '$1 ');
+
+  return text;
+}
+
 function renderMarkdownInline(text: string): React.ReactNode {
+  if (!text) return null;
+  const unescaped = text.replace(/\\([*_[\]()#.+-])/g, '$1');
   const parts: React.ReactNode[] = [];
   const boldRegex = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|(`)(.*?)\5|(\[(.*?)\]\((https?:\/\/[^\s)]+)\))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = boldRegex.exec(text)) !== null) {
+  while ((match = boldRegex.exec(unescaped)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(text.substring(lastIndex, match.index));
+      parts.push(unescaped.substring(lastIndex, match.index));
     }
     if (match[2]) {
       // Bold
@@ -63,32 +84,38 @@ function renderMarkdownInline(text: string): React.ReactNode {
       );
     } else if (match[8] && match[9]) {
       // Link
-      parts.push(
-        <a
-          key={match.index}
-          href={match[9]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-cyan-400 underline hover:text-cyan-300"
-        >
-          {match[8]}
-        </a>
-      );
+      const safeUrl = safeExternal(match[9]);
+      if (safeUrl) {
+        parts.push(
+          <a
+            key={match.index}
+            href={safeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cyan-400 underline hover:text-cyan-300"
+          >
+            {match[8]}
+          </a>
+        );
+      } else {
+        parts.push(match[8]);
+      }
     }
     lastIndex = match.index + match[0].length;
   }
 
-  if (lastIndex < text.length) {
-    parts.push(text.substring(lastIndex));
+  if (lastIndex < unescaped.length) {
+    parts.push(unescaped.substring(lastIndex));
   }
 
-  return parts.length > 0 ? parts : text;
+  return parts.length > 0 ? parts : unescaped;
 }
 
 function ArticleBody({ content }: { content: string }) {
   if (!content) return null;
 
-  const blocks = String(content)
+  const cleaned = cleanMarkdownContent(content);
+  const blocks = cleaned
     .split(/\n{2,}/)
     .map((b) => b.trim())
     .filter(Boolean);
@@ -103,7 +130,7 @@ function ArticleBody({ content }: { content: string }) {
 
         // H1
         if (block.startsWith('# ')) {
-          const raw = block.slice(2).replace(/^[Hh]1[:\s-]+/, '').trim();
+          const raw = block.slice(2).trim();
           return (
             <h1 key={index} className="pt-4 text-2xl font-black tracking-tight text-white md:text-3xl">
               {renderMarkdownInline(raw)}
@@ -113,7 +140,7 @@ function ArticleBody({ content }: { content: string }) {
 
         // H2
         if (block.startsWith('## ')) {
-          const raw = block.slice(3).replace(/^[Hh]2[:\s-]+/, '').trim();
+          const raw = block.slice(3).trim();
           return (
             <h2 key={index} className="pt-4 text-xl font-extrabold tracking-tight text-white md:text-2xl">
               {renderMarkdownInline(raw)}
@@ -123,7 +150,7 @@ function ArticleBody({ content }: { content: string }) {
 
         // H3
         if (block.startsWith('### ')) {
-          const raw = block.slice(4).replace(/^[Hh]3[:\s-]+/, '').trim();
+          const raw = block.slice(4).trim();
           return (
             <h3 key={index} className="pt-2 text-base font-bold text-cyan-200">
               {renderMarkdownInline(raw)}

@@ -27,13 +27,14 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { BRAND } from '../lib/brand';
-import { User as UserType, Wallet } from '../types';
+import { Company, User as UserType, Wallet } from '../types';
 
 interface SidebarProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
   user: UserType | null;
   wallet: Wallet | null;
+  selectedCompany?: Company | null;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isAdmin: boolean;
@@ -44,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   user,
   wallet,
+  selectedCompany,
   isCollapsed,
   onToggleCollapse,
   isAdmin
@@ -67,7 +69,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'creditos', label: 'Créditos', icon: Coins },
     { id: 'planos', label: 'Planos e Pagamentos', icon: CreditCard },
     { id: 'perfil', label: 'Perfil', icon: User },
-    { id: 'configuracoes', label: 'Configurações', icon: Settings },
     { id: 'suporte', label: 'Suporte', icon: HelpCircle }
   ];
 
@@ -176,7 +177,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Autopilot Status Indicator */}
             {(() => {
-              const isAutopilotActive = Boolean(wallet?.planId && wallet.planId !== 'free' && wallet?.planStatus === 'active');
+              const plan = wallet?.planId || 'free';
+              const isFree = plan === 'free' || plan === 'plan_free' || !wallet?.planId;
               return (
                 <div
                   onClick={() => onSelectTab('autopilot')}
@@ -185,13 +187,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
                     <Bot size={13} className="text-cyan-400" /> Froc Autopilot
                   </span>
-                  {isAutopilotActive ? (
-                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      Ativo
+                  {isFree ? (
+                    <span className="text-[10px] text-slate-500 font-medium">
+                      Bloqueado
                     </span>
                   ) : (
-                    <span className="text-[10px] text-slate-400 font-medium">
+                    <span className="flex items-center gap-1 text-[10px] text-cyan-400 font-medium">
                       Configurar
                     </span>
                   )}

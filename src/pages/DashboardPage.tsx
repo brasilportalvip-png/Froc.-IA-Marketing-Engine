@@ -108,7 +108,7 @@ export const DashboardPage: React.FC<Props> = ({
         <div className="relative z-10 max-w-3xl">
           <div className="flex items-center gap-3 mb-2">
             <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-bold text-cyan-300">
-              <Zap size={13} className="text-cyan-400" /> Froc AI Engine Ativo
+              <Zap size={13} className="text-cyan-400" /> Froc AI Engine • Brand Center
             </span>
             {selectedCompany && (
               <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold ${

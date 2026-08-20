@@ -125,8 +125,18 @@ export async function analyzeSeo(data: { userId: string; rawUrl: string; company
   const weights: Record<keyof typeof criteria, number> = { hasTitle: 15, titleLengthValid: 10, hasDescription: 15, descriptionLengthValid: 10, hasH1: 10, singleH1: 5, hasKeywordsInHeadings: 10, contentLengthSufficient: 10, hasHttps: 10, hasCanonical: 5 };
   const score = (Object.keys(criteria) as Array<keyof typeof criteria>).reduce((sum, key) => sum + (criteria[key] ? weights[key] : 0), 0);
 
-  const prompt = `Audite SEO para ${page.url}. Score técnico ${score}/100. Título: ${title || 'ausente'}. Meta: ${metaDescription || 'ausente'}. H1: ${JSON.stringify(h1s)}. H2: ${JSON.stringify(h2s)}. Keywords: ${JSON.stringify(keywords.map((k) => k.word))}.
-Responda SOMENTE JSON: {"recommendations":[""],"generatedOutline":[""],"faqSuggestions":[{"question":"","answer":""}]}.`;
+  const prompt = `Você é o auditor técnico SEO do Froc.IA. Analise a página ${page.url}.
+O Score SEO Froc.IA calculado pelos critérios estruturais HTML analisados é ${score}/100.
+IMPORTANTE: Este número (${score}/100) é o SCORE TÉCNICO INTERNO FROC.IA baseado estritamente na análise das tags HTML. NÃO é Google Lighthouse, NÃO é PageSpeed Insights e NÃO mede Core Web Vitals. NUNCA cite Lighthouse, PageSpeed ou Web Vitals nas recomendações, nem invente métricas de velocidade/performance que não foram medidas.
+Dados analisados:
+- Título: ${title || 'ausente'}
+- Meta Description: ${metaDescription || 'ausente'}
+- Tags H1: ${JSON.stringify(h1s)}
+- Tags H2: ${JSON.stringify(h2s)}
+- Palavras-chave encontradas: ${JSON.stringify(keywords.map((k) => k.word))}
+
+Forneça recomendações práticas e diretas focadas no conteúdo, títulos e estrutura HTML analisados.
+Responda SOMENTE em JSON válido no formato: {"recommendations":[""],"generatedOutline":[""],"faqSuggestions":[{"question":"","answer":""}]}.`;
   const ai = await executeAi<any>({ userId: data.userId, company: data.company, operation: 'site_analysis', prompt, jsonOutput: true, parse: parseAiJson });
   const id = newId('seo');
   const report = {
