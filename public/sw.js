@@ -1,4 +1,4 @@
-const CACHE = 'froc-shell-v1.1.2';
+const CACHE = 'froc-shell-v1.1.3';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/og-froc.png'];
 
 self.addEventListener('install', (event) => {
@@ -29,6 +29,24 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // Network-first for main unhashed application bundles to prevent stale frontend caching
+  if (url.pathname === '/assets/app.js' || url.pathname === '/assets/app.css') {
+    event.respondWith(
+      fetch(request).then((response) => {
+        if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
+          try {
+            const clone = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(request, clone)).catch(() => {});
+          } catch {
+            // Ignore cloning errors
+          }
+        }
+        return response;
+      }).catch(() => caches.match(request))
     );
     return;
   }
