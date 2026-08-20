@@ -815,7 +815,8 @@ router.get('/social/connections', requireAuth, asyncRoute(async (req: Authentica
 router.get('/social/:provider/connect', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const wallet = await getWallet(req.user!.id);
   const entitlements = getPlanEntitlements(wallet.planId);
-  if (!entitlements.socialConnections) {
+  const isAdmin = req.user?.role === 'admin';
+  if (!entitlements.socialConnections && !isAdmin) {
     return res.status(403).json({
       error: 'A conexão com redes sociais está disponível a partir do plano PRO. Faça upgrade para conectar suas contas.'
     });
@@ -854,7 +855,8 @@ router.get('/social/connections/:companyId', requireAuth, asyncRoute(async (req:
 router.get('/social/oauth/:provider/start', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const wallet = await getWallet(req.user!.id);
   const entitlements = getPlanEntitlements(wallet.planId);
-  if (!entitlements.socialConnections) {
+  const isAdmin = req.user?.role === 'admin';
+  if (!entitlements.socialConnections && !isAdmin) {
     return res.status(403).json({
       error: 'A conexão com redes sociais está disponível a partir do plano PRO. Faça upgrade para conectar suas contas.'
     });

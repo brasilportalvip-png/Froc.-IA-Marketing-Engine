@@ -244,3 +244,187 @@ test('Vitrine & Sitemap: parseStrictBoolean e consistência de valores legados',
   assert.equal(parseStrictBoolean(0), false);
 });
 
+test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para role === "admin"', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const express = (await import('express')).default;
+  const routerModule = await import('../server/production/router.js');
+  const router = routerModule.default;
+  const firebaseAdminProvider = await import('../server/providers/firebaseAdmin.js');
+  const { CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION } = await import('../server/production/auth.js');
+
+  const now = new Date().toISOString();
+  const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 1. Configurar Usuário FREE Comum (role === 'user', plan_free)
+  const freeUserId = 'usr_test_free_common';
+  const freeCompanyId = 'comp_test_free_common';
+  await db.collection(COLLECTIONS.users).doc(freeUserId).set({
+    id: freeUserId,
+    email: 'free.user@example.com',
+    role: 'user',
+    createdAt: now,
+    termsAcceptedAt: now,
+    privacyAcceptedAt: now,
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
+  });
+  await db.collection(COLLECTIONS.companies).doc(freeCompanyId).set({
+    id: freeCompanyId,
+    userId: freeUserId,
+    name: 'Empresa Free'
+  });
+  await db.collection(COLLECTIONS.wallets).doc(freeUserId).set({
+    id: freeUserId,
+    userId: freeUserId,
+    balance: 10,
+    planId: 'plan_free',
+    planStatus: 'free',
+    updatedAt: now
+  });
+
+  // 2. Configurar Usuário ADMIN no plano FREE (role === 'admin', plan_free)
+  const adminUserId = 'usr_test_admin_free';
+  const adminCompanyId = 'comp_test_admin_free';
+  await db.collection(COLLECTIONS.users).doc(adminUserId).set({
+    id: adminUserId,
+    email: 'admin.user@froc.ia',
+    role: 'admin',
+    createdAt: now,
+    termsAcceptedAt: now,
+    privacyAcceptedAt: now,
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
+  });
+  await db.collection(COLLECTIONS.companies).doc(adminCompanyId).set({
+    id: adminCompanyId,
+    userId: adminUserId,
+    name: 'Empresa Admin'
+  });
+  await db.collection(COLLECTIONS.wallets).doc(adminUserId).set({
+    id: adminUserId,
+    userId: adminUserId,
+    balance: 10,
+    planId: 'plan_free',
+    planStatus: 'free',
+    updatedAt: now
+  });
+
+  // 3. Configurar Usuário PRO Comum (role === 'user', plan_pro)
+  const proUserId = 'usr_test_pro_common';
+  const proCompanyId = 'comp_test_pro_common';
+  await db.collection(COLLECTIONS.users).doc(proUserId).set({
+    id: proUserId,
+    email: 'pro.user@example.com',
+    role: 'user',
+    createdAt: now,
+    termsAcceptedAt: now,
+    privacyAcceptedAt: now,
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyVersion: CURRENT_PRIVACY_VERSION
+  });
+  await db.collection(COLLECTIONS.companies).doc(proCompanyId).set({
+    id: proCompanyId,
+    userId: proUserId,
+    name: 'Empresa Pro'
+  });
+  await db.collection(COLLECTIONS.wallets).doc(proUserId).set({
+    id: proUserId,
+    userId: proUserId,
+    balance: 50,
+    planId: 'plan_pro',
+    planStatus: 'active',
+    updatedAt: now
+  });
+  await db.collection(COLLECTIONS.payments).doc('ord_pro_test').set({
+    id: 'ord_pro_test',
+    userId: proUserId,
+    planId: 'plan_pro',
+    status: 'active',
+    lastPaymentStatus: 'approved',
+    currentPeriodEnd: future,
+    createdAt: now
+  });
+
+  // Mock do Firebase Admin Auth para autenticar os 3 usuários
+  firebaseAdminProvider.setAdminAuthForTesting({
+    verifyIdToken: async (token: string) => {
+      if (token === 'token_free_user') {
+        return { uid: freeUserId, email: 'free.user@example.com', role: 'user' } as any;
+      }
+      if (token === 'token_admin_free') {
+        return { uid: adminUserId, email: 'admin.user@froc.ia', role: 'admin' } as any;
+      }
+      if (token === 'token_pro_user') {
+        return { uid: proUserId, email: 'pro.user@example.com', role: 'user' } as any;
+      }
+      throw new Error('Invalid token');
+    }
+  } as any);
+
+  // Inicializar servidor de teste Express
+  const app = express();
+  app.use(express.json());
+  app.use('/api', router);
+
+  const server = app.listen(0);
+  const address = server.address() as any;
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    // -------------------------------------------------------------------------
+    // TESTE 1: Usuário FREE comum => deve receber HTTP 403 em ambas as rotas
+    // -------------------------------------------------------------------------
+    const resFreeConnect = await fetch(`${baseUrl}/api/social/tiktok/connect?companyId=${freeCompanyId}`, {
+      headers: { Authorization: 'Bearer token_free_user' }
+    });
+    assert.equal(resFreeConnect.status, 403, 'FREE comum deve receber 403 em /social/:provider/connect');
+    const dataFreeConnect = await resFreeConnect.json();
+    assert.ok(dataFreeConnect.error.includes('plano PRO'), 'Mensagem de upgrade deve ser retornada para FREE comum');
+
+    const resFreeStart = await fetch(`${baseUrl}/api/social/oauth/tiktok/start?companyId=${freeCompanyId}`, {
+      headers: { Authorization: 'Bearer token_free_user' }
+    });
+    assert.equal(resFreeStart.status, 403, 'FREE comum deve receber 403 em /social/oauth/:provider/start');
+    const dataFreeStart = await resFreeStart.json();
+    assert.ok(dataFreeStart.error.includes('plano PRO'), 'Mensagem de upgrade deve ser retornada para FREE comum');
+
+    // -------------------------------------------------------------------------
+    // TESTE 2: Usuário ADMIN FREE => pode iniciar OAuth / conectar (HTTP 200)
+    // -------------------------------------------------------------------------
+    const resAdminConnect = await fetch(`${baseUrl}/api/social/tiktok/connect?companyId=${adminCompanyId}`, {
+      headers: { Authorization: 'Bearer token_admin_free' }
+    });
+    assert.equal(resAdminConnect.status, 200, 'ADMIN FREE deve ter acesso permitido (200) em /social/:provider/connect');
+    const dataAdminConnect = await resAdminConnect.json();
+    assert.ok(dataAdminConnect.url, 'ADMIN FREE deve receber URL de autenticação');
+
+    const resAdminStart = await fetch(`${baseUrl}/api/social/oauth/tiktok/start?companyId=${adminCompanyId}`, {
+      headers: { Authorization: 'Bearer token_admin_free' }
+    });
+    assert.equal(resAdminStart.status, 200, 'ADMIN FREE deve ter acesso permitido (200) em /social/oauth/:provider/start');
+    const dataAdminStart = await resAdminStart.json();
+    assert.ok(dataAdminStart.authUrl || dataAdminStart.url, 'ADMIN FREE deve receber authUrl');
+
+    // -------------------------------------------------------------------------
+    // TESTE 3: Usuário PRO comum => pode iniciar OAuth / conectar (HTTP 200)
+    // -------------------------------------------------------------------------
+    const resProConnect = await fetch(`${baseUrl}/api/social/tiktok/connect?companyId=${proCompanyId}`, {
+      headers: { Authorization: 'Bearer token_pro_user' }
+    });
+    assert.equal(resProConnect.status, 200, 'PRO comum deve ter acesso permitido (200) em /social/:provider/connect');
+    const dataProConnect = await resProConnect.json();
+    assert.ok(dataProConnect.url, 'PRO comum deve receber URL de autenticação');
+
+    const resProStart = await fetch(`${baseUrl}/api/social/oauth/tiktok/start?companyId=${proCompanyId}`, {
+      headers: { Authorization: 'Bearer token_pro_user' }
+    });
+    assert.equal(resProStart.status, 200, 'PRO comum deve ter acesso permitido (200) em /social/oauth/:provider/start');
+    const dataProStart = await resProStart.json();
+    assert.ok(dataProStart.authUrl || dataProStart.url, 'PRO comum deve receber authUrl');
+  } finally {
+    server.close();
+    firebaseAdminProvider.setAdminAuthForTesting(undefined);
+  }
+});
+
