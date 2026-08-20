@@ -10,7 +10,7 @@ const networks:Array<{id:Provider;name:string;icon:string;capability:string;note
   { id:'instagram', name:'Instagram Business', icon:'📸', capability:'OAuth e conta profissional', note:'Publicação automática exige mídia compatível, conta Business/Creator e permissões Meta aprovadas.' },
   { id:'facebook', name:'Facebook Page', icon:'📘', capability:'Publicação de texto em Página', note:'Disponível quando o token possui a Página e os escopos aprovados necessários.' },
   { id:'linkedin', name:'LinkedIn', icon:'💼', capability:'Publicação de texto', note:'Disponível quando o aplicativo LinkedIn e o usuário possuem o escopo de publicação autorizado.' },
-  { id:'tiktok', name:'TikTok', icon:'🎵', capability:'Login Kit & Content Posting (Rascunho)', note:'Envio de vídeo MP4 como rascunho para a Caixa de Entrada do TikTok. A publicação final é concluída no app do TikTok.' },
+  { id:'tiktok', name:'TikTok', icon:'🎵', capability:'Login Kit & Content Posting (Rascunho)', note:'Envio de vídeo MP4 (até 4 MB) como rascunho para a Caixa de Entrada do TikTok. A publicação final é concluída pelo usuário no app do TikTok.' },
   { id:'youtube', name:'YouTube', icon:'▶️', capability:'OAuth e canal conectado', note:'Upload/publicação exige arquivo de vídeo e permissões próprias da API do YouTube.' },
   { id:'pinterest', name:'Pinterest', icon:'📌', capability:'OAuth e conta conectada', note:'Criação de Pin exige imagem ou mídia e escopos próprios do Pinterest.' },
   { id:'x', name:'X', icon:'𝕏', capability:'Publicação de texto', note:'Disponível quando o aplicativo X permite escrita e o token OAuth 2.0 possui o escopo necessário.' }
@@ -85,14 +85,14 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     // Validação de formato MP4
     const isMp4 = file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4');
     if (!isMp4) {
-      setTiktokError('Formato inválido. Selecione um arquivo de vídeo no formato MP4.');
+      setTiktokError('Formato inválido. Selecione um arquivo de vídeo no formato MP4 (.mp4).');
       return;
     }
 
-    // Validação de tamanho (máximo 100MB)
-    const maxSize = 100 * 1024 * 1024;
+    // Validação de tamanho (máximo 4MB para fase de Sandbox / Vercel Serverless)
+    const maxSize = 4 * 1024 * 1024;
     if (file.size > maxSize) {
-      setTiktokError('O arquivo selecionado é muito grande. O limite máximo é de 100MB.');
+      setTiktokError('O vídeo excede o limite de 4 MB desta fase de verificação do TikTok.');
       return;
     }
 
@@ -134,7 +134,8 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
         message: string;
       }>('/api/social/tiktok/upload-draft', {
         method: 'POST',
-        body: formData
+        body: formData,
+        timeoutMs: 120_000
       });
 
       if (res.success && res.publishId) {
@@ -349,7 +350,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="video/mp4,video/*"
+                    accept="video/mp4,.mp4"
                     onChange={handleFileChange}
                     className="hidden"
                   />
@@ -372,7 +373,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
                       <div className="space-y-1">
                         <Upload size={28} className="mx-auto text-slate-400" />
                         <p className="text-xs font-bold text-slate-200">Clique para selecionar o vídeo MP4</p>
-                        <p className="text-[11px] text-slate-400">Formatos aceitos: MP4 (máx. 100MB)</p>
+                        <p className="text-[11px] text-slate-400">MP4 · até 4 MB nesta fase de verificação</p>
                       </div>
                     )}
                   </div>

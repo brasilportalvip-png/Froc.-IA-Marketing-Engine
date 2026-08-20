@@ -312,6 +312,14 @@ export async function publishText(data: { userId: string; companyId: string; pro
   throw new Error(`Publicação automática de texto para ${data.provider} exige mídia e/ou permissões específicas. Conexão mantida, mas o post não será marcado como publicado sem uma chamada real compatível.`);
 }
 
+export const MAX_TIKTOK_SANDBOX_VIDEO_SIZE = 4 * 1024 * 1024; // 4 MiB
+
+export function isValidMp4Buffer(buffer: Buffer): boolean {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 8) return false;
+  const ftyp = buffer.subarray(4, 8).toString('ascii');
+  return ftyp === 'ftyp';
+}
+
 export async function uploadTikTokDraftVideo(data: {
   userId: string;
   companyId: string;
@@ -329,10 +337,14 @@ export async function uploadTikTokDraftVideo(data: {
     throw new Error('Arquivo de vídeo inválido ou vazio.');
   }
 
-  // Limite razoável para chunk único (100MB)
-  const MAX_SINGLE_CHUNK_SIZE = 100 * 1024 * 1024;
-  if (data.videoSize > MAX_SINGLE_CHUNK_SIZE) {
-    throw new Error('O tamanho máximo do vídeo para envio direto de rascunho é de 100MB.');
+  // Limite estrito de 4 MiB para fase de Sandbox / Vercel Serverless
+  if (data.videoSize > MAX_TIKTOK_SANDBOX_VIDEO_SIZE) {
+    throw new Error('O vídeo excede o limite de 4 MB desta fase de verificação do TikTok.');
+  }
+
+  // Validação de assinatura de container MP4 (ftyp)
+  if (!isValidMp4Buffer(data.videoBuffer)) {
+    throw new Error('Arquivo de vídeo inválido. Apenas containers MP4 autênticos (.mp4 com assinatura ftyp) são aceitos.');
   }
 
   const snap = await firestore()
@@ -394,17 +406,18 @@ export async function uploadTikTokDraftVideo(data: {
     method: 'PUT',
     headers: {
       'Content-Type': 'video/mp4',
+      'Content-Length': String(data.videoSize),
       'Content-Range': `bytes 0-${data.videoSize - 1}/${data.videoSize}`
     },
     body: data.videoBuffer
   });
 
-  if (!uploadResponse.ok && uploadResponse.status !== 201 && uploadResponse.status !== 200) {
+  if (uploadResponse.status !== 201) {
     const uploadErrText = await uploadResponse.text().catch(() => '');
     throw new Error(`Falha ao enviar binário do vídeo para o TikTok (HTTP ${uploadResponse.status}): ${uploadErrText.slice(0, 200)}`);
   }
 
-  // Registrar histórico de envio de rascunho
+  // Registrar histórico de envio de rascunho com isolamento multi-tenant (NUNCA salvar token ou uploadUrl)
   const draftRecordId = stableId(`${data.userId}:${data.companyId}:${publishId}`);
   await firestore().collection('socialDraftUploads').doc(draftRecordId).set({
     id: draftRecordId,
@@ -442,6 +455,20 @@ export async function getTikTokUploadStatus(data: {
 }> {
   if (!data.publishId) {
     throw new Error('publish_id é obrigatório.');
+  }
+
+  // Fortalecimento de isolamento multi-tenant: o publishId deve pertencer a um upload registrado para este usuário e empresa
+  const draftRecordId = stableId(`${data.userId}:${data.companyId}:${data.publishId}`);
+  const draftRef = firestore().collection('socialDraftUploads').doc(draftRecordId);
+  const draftSnap = await draftRef.get();
+
+  if (!draftSnap.exists) {
+    throw new Error('Envio de rascunho não encontrado ou não pertence a esta empresa.');
+  }
+
+  const draftData = draftSnap.data() as any;
+  if (draftData.userId !== data.userId || draftData.companyId !== data.companyId || draftData.provider !== 'tiktok') {
+    throw new Error('Envio de rascunho não encontrado ou não pertence a esta empresa.');
   }
 
   const snap = await firestore()
@@ -482,23 +509,32 @@ export async function getTikTokUploadStatus(data: {
 
   const rawStatus = String(statusJson.data?.status || 'UNKNOWN');
   const failReason = statusJson.data?.fail_reason || null;
-  const isSuccess = rawStatus === 'SUCCESS';
+  const isDraftDelivered = rawStatus === 'SEND_TO_USER_INBOX' || rawStatus === 'PUBLISH_COMPLETE';
 
   let userFriendlyMessage = 'Processando rascunho no TikTok...';
-  if (isSuccess) {
-    userFriendlyMessage = 'Rascunho disponível no TikTok. Acesse a notificação na Caixa de Entrada do aplicativo TikTok para continuar a edição e publicar.';
+  if (rawStatus === 'SEND_TO_USER_INBOX') {
+    userFriendlyMessage = 'Rascunho entregue ao TikTok. Abra a Caixa de Entrada do TikTok para continuar a edição e publicar.';
+  } else if (rawStatus === 'PUBLISH_COMPLETE') {
+    userFriendlyMessage = 'O TikTok informa que o conteúdo enviado foi publicado após a continuidade do fluxo pelo usuário no aplicativo TikTok.';
   } else if (rawStatus === 'FAILED') {
     userFriendlyMessage = `Falha no processamento pelo TikTok: ${failReason || 'Verifique se o arquivo segue as diretrizes do TikTok.'}`;
-  } else if (rawStatus === 'PROCESSING_DOWNLOAD' || rawStatus === 'PROCESSING_UPLOAD') {
+  } else if (rawStatus === 'PROCESSING_UPLOAD' || rawStatus === 'PROCESSING_DOWNLOAD') {
     userFriendlyMessage = 'O TikTok está processando o arquivo de vídeo enviado.';
   }
+
+  // Atualizar histórico sem salvar token ou upload_url
+  await draftRef.update({
+    status: rawStatus,
+    failReason: failReason || null,
+    updatedAt: nowIso()
+  }).catch(() => undefined);
 
   return {
     success: true,
     publishId: data.publishId,
     status: rawStatus,
     failReason,
-    isDraftDelivered: isSuccess,
+    isDraftDelivered,
     message: userFriendlyMessage
   };
 }

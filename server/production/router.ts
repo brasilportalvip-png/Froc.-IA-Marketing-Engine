@@ -8,7 +8,7 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
@@ -879,20 +879,32 @@ router.delete('/social/connections/:connectionId', requireAuth, asyncRoute(async
 const uploadVideo = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 100 * 1024 * 1024 // 100MB
+    fileSize: MAX_TIKTOK_SANDBOX_VIDEO_SIZE // 4 MiB
   },
   fileFilter: (_req, file, cb) => {
-    const mime = (file.mimetype || '').toLowerCase();
     const originalName = (file.originalname || '').toLowerCase();
-    if (mime.includes('video') || mime.includes('mp4') || originalName.endsWith('.mp4')) {
+    const mime = (file.mimetype || '').toLowerCase();
+    const isMp4Ext = originalName.endsWith('.mp4');
+    const isMp4Mime = !mime || mime === 'video/mp4' || mime === 'application/mp4' || mime === 'application/octet-stream';
+    if (isMp4Ext && isMp4Mime) {
       cb(null, true);
     } else {
-      cb(new Error('Apenas arquivos de vídeo MP4 são aceitos para envio de rascunho ao TikTok.'));
+      cb(new Error('Apenas arquivos de vídeo MP4 (.mp4) são aceitos para envio de rascunho ao TikTok.'));
     }
   }
 });
 
-router.post('/social/tiktok/upload-draft', requireAuth, uploadVideo.single('video'), asyncRoute(async (req: AuthenticatedRequest, res) => {
+router.post('/social/tiktok/upload-draft', requireAuth, (req, res, next) => {
+  uploadVideo.single('video')(req, res, (err) => {
+    if (err) {
+      if ((err as any).code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'O vídeo excede o limite de 4 MB desta fase de verificação do TikTok.' });
+      }
+      return res.status(400).json({ error: err.message || 'Erro no envio do arquivo de vídeo.' });
+    }
+    next();
+  });
+}, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const companyId = safeString(req.body?.companyId, 200) || safeString(req.query?.companyId, 200);
   if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
   await requireOwnedCompany(req.user!.id, companyId);
