@@ -18,9 +18,15 @@ export interface VideoJob {
   companyId: string;
   title: string;
   prompt: string;
+  sourcePrompt?: string;
+  finalPrompt?: string;
   preset: 'demo_720p' | 'pro_1080p' | 'cinema_4k';
+  resolution?: '720p' | '1080p' | '4k';
+  requestedResolution?: '720p' | '1080p' | '4k';
+  actualResolution?: '720p' | '1080p' | '4k';
+  durationSeconds?: number;
   aspectRatio: '9:16' | '16:9';
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'processing' | 'finalizing' | 'completed' | 'failed';
   progressPct: number;
   creditsReserved: number;
   creditsCommitted?: number;
@@ -28,8 +34,10 @@ export interface VideoJob {
   storagePath?: string;
   contentItemId?: string;
   error?: string;
+  errorMessage?: string;
   createdAt: string;
   updatedAt: string;
+  completedAt?: string;
 }
 
 export { CREDIT_COSTS } from './lib/creditCosts';

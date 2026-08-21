@@ -212,10 +212,10 @@ test('Shared CREDIT_COSTS: Backend e Frontend utilizam a mesma fonte e valores o
     strategy: 30,
     carousel: 30,
     seo_article: 35,
-    video_script: 40,
+    video_script: 10,
     video_veo_fast: 50,
     video_veo_1080p: 100,
-    video_veo_4k: 180,
+    video_veo_4k: 200,
     campaign: 50,
     autopilot_cycle: 5,
     auto_calendar: 100

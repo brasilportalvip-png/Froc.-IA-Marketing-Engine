@@ -661,7 +661,8 @@ export async function generateMarketingImage(data: {
         });
         imageUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
       } catch (storageErr) {
-        console.warn('[Froc AI Storage Fallback] Firebase Storage indisponível, utilizando Data URI seguro:', storageErr);
+        console.error('[Froc AI Image Storage Error] Falha ao persistir imagem no Firebase Storage:', storageErr);
+        throw new Error('Não foi possível armazenar a imagem gerada com segurança. Seus créditos foram preservados.');
       }
     }
 
@@ -709,6 +710,46 @@ export async function generateMarketingImage(data: {
 
 export type VideoPreset = 'demo_720p' | 'pro_1080p' | 'cinema_4k';
 
+export interface VideoPresetConfig {
+  preset: VideoPreset;
+  name: string;
+  model: string;
+  resolution: '720p' | '1080p' | '4k';
+  durationSeconds: number;
+  creditsKey: 'video_veo_fast' | 'video_veo_1080p' | 'video_veo_4k';
+  credits: number;
+}
+
+export const VIDEO_PRESETS: Record<VideoPreset, VideoPresetConfig> = {
+  demo_720p: {
+    preset: 'demo_720p',
+    name: 'Fast 720p',
+    model: config.geminiModels.veoLite || 'veo-3.1-lite-generate-preview',
+    resolution: '720p',
+    durationSeconds: 4,
+    creditsKey: 'video_veo_fast',
+    credits: 50
+  },
+  pro_1080p: {
+    preset: 'pro_1080p',
+    name: 'Pro 1080p',
+    model: config.geminiModels.veoFast || 'veo-3.1-fast-generate-preview',
+    resolution: '1080p',
+    durationSeconds: 8,
+    creditsKey: 'video_veo_1080p',
+    credits: 100
+  },
+  cinema_4k: {
+    preset: 'cinema_4k',
+    name: 'Cinema 4K',
+    model: config.geminiModels.veoCinema || 'veo-3.1-generate-preview',
+    resolution: '4k',
+    durationSeconds: 8,
+    creditsKey: 'video_veo_4k',
+    credits: 200
+  }
+};
+
 export interface VideoJobData {
   id: string;
   userId: string;
@@ -716,19 +757,29 @@ export interface VideoJobData {
   operationName?: string;
   reservationId: string;
   creditsReserved: number;
+  creditsCommitted?: number;
+  sourcePrompt: string;
+  finalPrompt: string;
   prompt: string;
   title?: string;
   preset: VideoPreset;
   resolution: '720p' | '1080p' | '4k';
+  requestedResolution: '720p' | '1080p' | '4k';
+  actualResolution?: '720p' | '1080p' | '4k';
+  durationSeconds: number;
   aspectRatio: '9:16' | '16:9';
   modelUsed: string;
   initialImageUrl?: string;
   videoUrl?: string;
   storagePath?: string;
-  contentItemId?: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  contentItemId: string;
+  status: 'queued' | 'processing' | 'finalizing' | 'completed' | 'failed';
   errorMessage?: string;
+  errorCode?: string;
   progressPct?: number;
+  finalizationToken?: string;
+  finalizationStartedAt?: string;
+  finalizationLeaseUntil?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -743,11 +794,19 @@ export async function generateVideoDirection(data: {
   cameraMotion?: string;
   lighting?: string;
 }): Promise<{ visualPrompt: string; cameraMotion: string; lighting: string; mood: string }> {
-  const systemInstruction = `Você é um diretor de fotografia e cinematógrafo publicitário de classe mundial da Froc.IA.
-Sua missão é expandir a ideia bruta do usuário em uma descrição visual cinematográfica de altíssima fidelidade e apelo comercial para o modelo Veo 3.1.
-Retorne um JSON estrito no formato:
+  const systemInstruction = `Você é um diretor de fotografia e cinematógrafo publicitário de alto nível da Froc.IA.
+Sua missão é expandir a ideia bruta do usuário em uma especificação visual cinematográfica de alta precisão, realismo fotográfico e apelo comercial para o modelo Veo 3.1.
+
+DIRETRIZES CINEMATOGRÁFICAS E REALISMO:
+1. Descreva o sujeito, ambiente, textura dos materiais e ação fluida e plausível.
+2. Especifique iluminação realista (ex: natural golden hour, soft studio softbox, dramatic volumetric sidelight, neon bounce).
+3. Especifique movimento de câmera preciso e estável (ex: smooth dolly push-in, low-angle orbital tracking, cinematic slider, crane pedestal).
+4. Especifique gradação de cor e tom fotográfico (ex: 35mm film grain aesthetic, clean commercial look, warm luxury palette).
+5. REGRAS DE INTEGRIDADE VISUAL: Enfatize anatomia natural, pele realista com micro-textura, ausência de artefatos de morfologia, sem membros extras, sem distorção em produtos.
+
+Retorne SOMENTE um JSON estrito no formato:
 {
-  "visualPrompt": "Descrição visual vívida e detalhada da cena em inglês e português para renderização cinematográfica",
+  "visualPrompt": "Descrição visual cinematográfica vívida e detalhada da cena em inglês e português",
   "cameraMotion": "Movimento de câmera preciso (ex: Smooth cinematic push-in with low angle track)",
   "lighting": "Esquema de iluminação refinado (ex: Volumetric golden hour side-lighting with soft fill)",
   "mood": "Atmosfera e gradação de cor (ex: Premium, sleek commercial aesthetic with high dynamic range)"
@@ -795,36 +854,52 @@ export async function startVideoGenerationJob(data: {
   mood?: string;
 }): Promise<VideoJobData> {
   const preset: VideoPreset = data.preset === 'cinema_4k' ? 'cinema_4k' : data.preset === 'pro_1080p' ? 'pro_1080p' : 'demo_720p';
+  const presetConfig = VIDEO_PRESETS[preset];
   const aspectRatio = data.aspectRatio === '16:9' ? '16:9' : '9:16';
-  const resolution: '720p' | '1080p' | '4k' = preset === 'cinema_4k' ? '4k' : preset === 'pro_1080p' ? '1080p' : '720p';
-  
-  const opKey = preset === 'cinema_4k' ? 'video_veo_4k' : preset === 'pro_1080p' ? 'video_veo_1080p' : 'video_veo_fast';
-  const cost = Number(config.creditCosts[opKey] || 50);
-  
-  const model = preset === 'cinema_4k'
-    ? (config.geminiModels.veoCinema || 'veo-3.1-generate-preview')
-    : preset === 'pro_1080p'
-      ? (config.geminiModels.veoFast || 'veo-3.1-generate-preview')
-      : (config.geminiModels.veoLite || 'veo-3.1-lite-generate-preview');
+  const cost = presetConfig.credits;
 
+  // 1. Direção cinematográfica automática via textAiClient
+  let direction = {
+    visualPrompt: data.prompt,
+    cameraMotion: data.cameraMotion || 'Smooth cinematic movement',
+    lighting: data.lighting || 'Refined commercial lighting',
+    mood: data.mood || 'High-end commercial aesthetic'
+  };
+
+  try {
+    direction = await generateVideoDirection({
+      userId: data.userId,
+      company: data.company,
+      prompt: data.prompt,
+      aspectRatio,
+      mood: data.mood,
+      cameraMotion: data.cameraMotion,
+      lighting: data.lighting
+    });
+  } catch (dirErr) {
+    console.warn('[Froc Video Direction] Direção automática simplificada por fallback:', dirErr);
+  }
+
+  const finalPrompt = [
+    companyContext(data.company),
+    `Cinematic commercial video: ${direction.visualPrompt}.`,
+    `Camera direction: ${data.cameraMotion || direction.cameraMotion}.`,
+    `Lighting scheme: ${data.lighting || direction.lighting}.`,
+    `Atmosphere & color grading: ${data.mood || direction.mood}.`,
+    `Target format: ${aspectRatio}. Technical parameters: Ultra high definition commercial rendering, authentic physical textures, realistic lighting and reflections, natural fluid motion, no morphing artifacts, no anatomical distortions.`
+  ].filter(Boolean).join('\n');
+
+  // 2. Reserva segura de créditos
   const reservation = await reserveCredits({
     userId: data.userId,
     amount: cost,
-    operation: opKey,
+    operation: presetConfig.creditsKey,
     companyId: data.company?.id
   });
 
   const jobId = newId('vjob');
+  const contentItemId = newId('content');
   const now = nowIso();
-
-  const fullPrompt = [
-    companyContext(data.company),
-    `Vídeo publicitário de alta qualidade e apelo comercial: ${data.prompt}.`,
-    data.cameraMotion ? `Movimento de câmera: ${data.cameraMotion}.` : '',
-    data.lighting ? `Iluminação: ${data.lighting}.` : '',
-    data.mood ? `Atmosfera/Estilo: ${data.mood}.` : '',
-    `Proporção de tela: ${aspectRatio}. Renderização cinematográfica sem artefatos ou elementos distorcidos.`
-  ].filter(Boolean).join('\n');
 
   try {
     let operationName = `mock_op_${jobId}`;
@@ -832,13 +907,14 @@ export async function startVideoGenerationJob(data: {
     if (process.env.NODE_ENV !== 'test') {
       const videoConfig: any = {
         numberOfVideos: 1,
-        resolution: resolution === '4k' ? '1080p' : resolution, // Ajuste para suporte seguro da API Veo
+        resolution: presetConfig.resolution,
+        durationSeconds: presetConfig.durationSeconds,
         aspectRatio
       };
 
       const reqPayload: any = {
-        model,
-        prompt: fullPrompt,
+        model: presetConfig.model,
+        prompt: finalPrompt,
         config: videoConfig
       };
 
@@ -864,13 +940,19 @@ export async function startVideoGenerationJob(data: {
       operationName,
       reservationId: reservation.reservationId,
       creditsReserved: cost,
-      prompt: data.prompt,
+      sourcePrompt: data.prompt,
+      finalPrompt,
+      prompt: finalPrompt,
       title: data.title || `Vídeo IA - ${data.prompt.slice(0, 60)}`,
       preset,
-      resolution,
+      resolution: presetConfig.resolution,
+      requestedResolution: presetConfig.resolution,
+      actualResolution: presetConfig.resolution,
+      durationSeconds: presetConfig.durationSeconds,
       aspectRatio,
-      modelUsed: model,
+      modelUsed: presetConfig.model,
       initialImageUrl: data.initialImageBase64 ? 'provided' : undefined,
+      contentItemId,
       status: 'processing',
       progressPct: 10,
       createdAt: now,
@@ -902,14 +984,44 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     throw err;
   }
 
-  // Idempotência estrita: se já foi concluído ou falhou, retorna direto sem refazer operações
+  // Idempotência estrita: se já concluído ou falhou, retorna imediatamente
   if (job.status === 'completed' || job.status === 'failed') {
     return job;
   }
 
-  // Simulação para ambiente de testes
+  // Ambiente de teste com transação atômica e mock controlado
   if (process.env.NODE_ENV === 'test') {
-    const contentItemId = newId('content');
+    const nowMs = Date.now();
+    const claim = await firestore().runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docRef);
+      if (!freshSnap.exists) return { claimed: false, reason: 'not_found' };
+      const cur = freshSnap.data() as VideoJobData;
+      if (cur.status === 'completed' || cur.status === 'failed') {
+        return { claimed: false, job: cur, reason: 'already_terminal' };
+      }
+      if (cur.status === 'finalizing') {
+        const lease = cur.finalizationLeaseUntil ? new Date(cur.finalizationLeaseUntil).getTime() : 0;
+        if (nowMs < lease) {
+          return { claimed: false, job: cur, reason: 'locked_by_other' };
+        }
+      }
+      const token = newId('claim');
+      const leaseMs = 2.5 * 60 * 1000;
+      tx.update(docRef, {
+        status: 'finalizing',
+        finalizationToken: token,
+        finalizationStartedAt: nowIso(),
+        finalizationLeaseUntil: new Date(nowMs + leaseMs).toISOString(),
+        updatedAt: nowIso()
+      });
+      return { claimed: true, token, job: { ...cur, status: 'finalizing', finalizationToken: token } };
+    });
+
+    if (!claim.claimed) {
+      return (claim.job as VideoJobData) || job;
+    }
+
+    const contentItemId = job.contentItemId || newId('content');
     const mockUrl = 'https://storage.googleapis.com/froc-ia-test-bucket/mock-video.mp4';
     
     const contentItem = {
@@ -917,9 +1029,9 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       userId: job.userId,
       companyId: job.companyId || 'default',
       type: 'video',
-      title: job.title || `Vídeo IA Veo - ${job.prompt.slice(0, 60)}`,
+      title: job.title || `Vídeo IA Veo - ${(job.sourcePrompt || job.prompt).slice(0, 60)}`,
       headline: job.title || '',
-      body: job.prompt,
+      body: job.sourcePrompt || job.prompt,
       videoUrl: mockUrl,
       targetPlatform: job.aspectRatio === '9:16' ? 'Reels / TikTok / Shorts' : 'YouTube / Banner',
       creditsUsed: job.creditsReserved,
@@ -930,7 +1042,11 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
         jobId: job.id,
         preset: job.preset,
         resolution: job.resolution,
-        aspectRatio: job.aspectRatio
+        actualResolution: job.resolution,
+        durationSeconds: job.durationSeconds,
+        aspectRatio: job.aspectRatio,
+        modelUsed: job.modelUsed,
+        finalPrompt: job.finalPrompt
       }
     };
     await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).set(contentItem);
@@ -939,7 +1055,7 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       userId: job.userId,
       reservationId: job.reservationId,
       source: `Froc AI: video_${job.preset}`,
-      metadata: { jobId: job.id, contentItemId, modelUsed: job.modelUsed }
+      metadata: { jobId: job.id, contentItemId, modelUsed: job.modelUsed, resolution: job.resolution }
     });
 
     const updatedJob: VideoJobData = {
@@ -948,6 +1064,8 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       progressPct: 100,
       videoUrl: mockUrl,
       contentItemId,
+      actualResolution: job.resolution,
+      creditsCommitted: job.creditsReserved,
       completedAt: nowIso(),
       updatedAt: nowIso()
     };
@@ -955,16 +1073,15 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     return updatedJob;
   }
 
-  // Verificação real com a API Veo via mediaAiClient
+  // Verificação real com a API Veo em produção
   try {
     const op = new GenerateVideosOperation();
     op.name = job.operationName;
     const updated = await mediaAiClient().operations.getVideosOperation({ operation: op });
 
     if (!updated.done) {
-      // Calcular estimativa de progresso baseada no tempo decorrido
       const elapsedSec = Math.max(0, (Date.now() - new Date(job.createdAt).getTime()) / 1000);
-      const estTotalSec = job.preset === 'cinema_4k' ? 90 : 45;
+      const estTotalSec = job.preset === 'cinema_4k' ? 90 : job.preset === 'pro_1080p' ? 60 : 35;
       const progressPct = Math.min(92, Math.round(15 + (elapsedSec / estTotalSec) * 75));
       
       const inProgressJob: VideoJobData = {
@@ -976,7 +1093,6 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return inProgressJob;
     }
 
-    // Se concluiu com erro da API do Veo
     if (updated.error) {
       const errMsg = String(updated.error.message || 'Falha no processamento de vídeo pelo modelo Veo.');
       await rollbackReservation(job.userId, job.reservationId, errMsg);
@@ -992,10 +1108,50 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return failedJob;
     }
 
-    // Se concluiu com sucesso, baixar o arquivo e salvar no Storage
+    // Geração concluída pelo Veo: Obter claim atômico antes de iniciar download e persistência
+    const nowMs = Date.now();
+    const claim = await firestore().runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docRef);
+      if (!freshSnap.exists) return { claimed: false, reason: 'not_found' };
+      const cur = freshSnap.data() as VideoJobData;
+      if (cur.status === 'completed' || cur.status === 'failed') {
+        return { claimed: false, job: cur, reason: 'already_terminal' };
+      }
+      if (cur.status === 'finalizing') {
+        const lease = cur.finalizationLeaseUntil ? new Date(cur.finalizationLeaseUntil).getTime() : 0;
+        if (nowMs < lease) {
+          return { claimed: false, job: cur, reason: 'locked_by_other' };
+        }
+      }
+      const token = newId('claim');
+      const leaseMs = 2.5 * 60 * 1000;
+      tx.update(docRef, {
+        status: 'finalizing',
+        finalizationToken: token,
+        finalizationStartedAt: nowIso(),
+        finalizationLeaseUntil: new Date(nowMs + leaseMs).toISOString(),
+        updatedAt: nowIso()
+      });
+      return { claimed: true, token, job: { ...cur, status: 'finalizing', finalizationToken: token } };
+    });
+
+    if (!claim.claimed) {
+      return (claim.job as VideoJobData) || job;
+    }
+
     const downloadUri = updated.response?.generatedVideos?.[0]?.video?.uri;
     if (!downloadUri) {
-      throw new Error('O modelo Veo indicou conclusão, mas não retornou o link do vídeo.');
+      const errMsg = 'O modelo Veo indicou conclusão, mas não retornou a URI de download do vídeo.';
+      await rollbackReservation(job.userId, job.reservationId, errMsg);
+      const failedJob: VideoJobData = {
+        ...job,
+        status: 'failed',
+        errorMessage: errMsg,
+        progressPct: 0,
+        updatedAt: nowIso()
+      };
+      await docRef.set(failedJob);
+      return failedJob;
     }
 
     const apiKeyForDownload = config.geminiMediaApiKey || config.geminiApiKey;
@@ -1006,17 +1162,18 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     });
 
     if (!videoRes.ok) {
-      throw new Error(`Falha ao baixar o arquivo de vídeo gerado (status ${videoRes.status}).`);
+      throw new Error(`Falha ao baixar o arquivo de vídeo gerado (status HTTP ${videoRes.status}).`);
     }
 
     const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
     if (!videoBuffer.length || videoBuffer.length > 150 * 1024 * 1024) {
-      throw new Error('O arquivo de vídeo baixado é inválido ou excede o limite aceito.');
+      throw new Error('O arquivo de vídeo baixado possui tamanho inválido.');
     }
 
     const storagePath = `generated/${job.userId}/videos/${job.id}.mp4`;
-    let publicVideoUrl = downloadUri;
+    let publicVideoUrl = '';
 
+    // Persistência no Firebase Storage FAIL-CLOSED (sem fallback para URLs do Google)
     try {
       const token = crypto.randomUUID();
       const bucket = getAdminStorage().bucket();
@@ -1031,40 +1188,76 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       });
       publicVideoUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
     } catch (storageErr) {
-      console.warn('[Froc Video Storage Fallback] Firebase Storage indisponível, utilizando URL direta:', storageErr);
+      console.error('[Froc AI Video Storage Error] Falha ao persistir vídeo no Firebase Storage:', storageErr);
+      const errMsg = 'Não foi possível armazenar o vídeo gerado com segurança no Firebase Storage. Seus créditos foram estornados.';
+      await rollbackReservation(job.userId, job.reservationId, errMsg);
+      const failedJob: VideoJobData = {
+        ...job,
+        status: 'failed',
+        errorCode: 'STORAGE_PERSIST_FAILED',
+        errorMessage: errMsg,
+        progressPct: 0,
+        updatedAt: nowIso()
+      };
+      await docRef.set(failedJob);
+      return failedJob;
     }
 
-    const contentItemId = newId('content');
-    const contentItem = {
-      id: contentItemId,
-      userId: job.userId,
-      companyId: job.companyId || 'default',
-      type: 'video',
-      title: job.title || `Vídeo IA - ${job.prompt.slice(0, 60)}`,
-      headline: job.title || '',
-      body: job.prompt,
-      videoUrl: publicVideoUrl,
-      targetPlatform: job.aspectRatio === '9:16' ? 'Reels / TikTok / Shorts' : 'YouTube / Banner',
-      creditsUsed: job.creditsReserved,
-      status: 'saved',
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      metadata: {
-        jobId: job.id,
-        storagePath,
-        preset: job.preset,
-        resolution: job.resolution,
-        aspectRatio: job.aspectRatio,
-        modelUsed: job.modelUsed
-      }
-    };
-    await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).set(contentItem);
+    // Persistência determinística em contentItems
+    const contentItemId = job.contentItemId || newId('content');
+    try {
+      const contentItem = {
+        id: contentItemId,
+        userId: job.userId,
+        companyId: job.companyId || 'default',
+        type: 'video',
+        title: job.title || `Vídeo IA - ${(job.sourcePrompt || job.prompt).slice(0, 60)}`,
+        headline: job.title || '',
+        body: job.sourcePrompt || job.prompt,
+        videoUrl: publicVideoUrl,
+        targetPlatform: job.aspectRatio === '9:16' ? 'Reels / TikTok / Shorts' : 'YouTube / Banner',
+        creditsUsed: job.creditsReserved,
+        status: 'saved',
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        metadata: {
+          jobId: job.id,
+          storagePath,
+          preset: job.preset,
+          resolution: job.resolution,
+          actualResolution: job.resolution,
+          durationSeconds: job.durationSeconds,
+          aspectRatio: job.aspectRatio,
+          modelUsed: job.modelUsed,
+          finalPrompt: job.finalPrompt
+        }
+      };
+      await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).set(contentItem);
+    } catch (contentErr) {
+      console.error('[Froc AI ContentItem Error] Falha ao registrar contentItem:', contentErr);
+      try {
+        await getAdminStorage().bucket().file(storagePath).delete();
+      } catch {}
+      const errMsg = 'Falha ao vincular o vídeo gerado aos conteúdos da sua conta. Seus créditos foram estornados.';
+      await rollbackReservation(job.userId, job.reservationId, errMsg);
+      const failedJob: VideoJobData = {
+        ...job,
+        status: 'failed',
+        errorCode: 'CONTENT_ITEM_PERSIST_FAILED',
+        errorMessage: errMsg,
+        progressPct: 0,
+        updatedAt: nowIso()
+      };
+      await docRef.set(failedJob);
+      return failedJob;
+    }
 
+    // Commit definitivo da reserva de créditos
     await commitReservation({
       userId: job.userId,
       reservationId: job.reservationId,
       source: `Froc AI: video_${job.preset}`,
-      metadata: { jobId: job.id, contentItemId, storagePath, modelUsed: job.modelUsed }
+      metadata: { jobId: job.id, contentItemId, storagePath, modelUsed: job.modelUsed, resolution: job.resolution }
     });
 
     await createNotification({
@@ -1081,6 +1274,8 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       videoUrl: publicVideoUrl,
       storagePath,
       contentItemId,
+      actualResolution: job.resolution,
+      creditsCommitted: job.creditsReserved,
       completedAt: nowIso(),
       updatedAt: nowIso()
     };
@@ -1088,7 +1283,6 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     return completedJob;
   } catch (error) {
     const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
-    // Se houve erro crítico de download/storage, marcamos como failed e estornamos
     await rollbackReservation(job.userId, job.reservationId, message);
     const failedJob: VideoJobData = {
       ...job,
@@ -1104,17 +1298,33 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
 
 export async function processPendingVideoJobs(): Promise<{ checked: number; completed: number; failed: number }> {
   try {
-    const snap = await firestore().collection(COLLECTIONS.mediaGenerationJobs)
+    const db = firestore();
+    const processingSnap = await db.collection(COLLECTIONS.mediaGenerationJobs)
       .where('status', '==', 'processing')
-      .limit(15)
+      .limit(5)
+      .get();
+
+    const finalizingSnap = await db.collection(COLLECTIONS.mediaGenerationJobs)
+      .where('status', '==', 'finalizing')
+      .limit(5)
       .get();
     
+    const docs = [...processingSnap.docs, ...finalizingSnap.docs].slice(0, 5);
     let checked = 0;
     let completed = 0;
     let failed = 0;
 
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const job = doc.data() as VideoJobData;
+      
+      // Se status for finalizing, verificar se o lease expirou antes de reprocessar
+      if (job.status === 'finalizing' && job.finalizationLeaseUntil) {
+        const leaseTime = new Date(job.finalizationLeaseUntil).getTime();
+        if (Date.now() < leaseTime) {
+          continue; // Outro processo ainda possui o lease
+        }
+      }
+
       checked++;
       try {
         const res = await checkAndCompleteVideoJob(job.userId, job.id);

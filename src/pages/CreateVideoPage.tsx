@@ -90,7 +90,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
       if (Array.isArray(data.jobs)) {
         setRecentJobs(data.jobs);
         // Se houver algum em processamento, seleciona para acompanhar
-        const ongoing = data.jobs.find((j) => j.status === 'processing' || j.status === 'pending');
+        const ongoing = data.jobs.find((j) => j.status === 'processing' || j.status === 'pending' || j.status === 'finalizing');
         if (ongoing && !activeJob) {
           setActiveJob(ongoing);
         }
@@ -425,6 +425,8 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                         : activeJob.status === 'failed'
                         ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        : activeJob.status === 'finalizing'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
                         : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 animate-pulse'
                     }`}
                   >
@@ -432,12 +434,14 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                       ? 'Concluído'
                       : activeJob.status === 'failed'
                       ? 'Falhou'
+                      : activeJob.status === 'finalizing'
+                      ? 'Finalizando...'
                       : 'Renderizando...'}
                   </span>
                 </div>
 
-                {/* Status em Processamento */}
-                {activeJob.status === 'processing' || activeJob.status === 'pending' ? (
+                {/* Status em Processamento ou Finalização */}
+                {activeJob.status === 'processing' || activeJob.status === 'pending' || activeJob.status === 'finalizing' ? (
                   <div className="rounded-2xl border border-cyan-500/30 bg-cyan-950/20 p-6 text-center space-y-4 my-auto">
                     <Loader2 size={36} className="text-cyan-400 animate-spin mx-auto" />
                     <div>

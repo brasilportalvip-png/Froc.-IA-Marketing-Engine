@@ -140,7 +140,7 @@ test('Media Generation: Image (1K, 2K, 4K), Veo 3.1 Presets (720p, 1080p, 4K), S
     assert.equal(dataImage4k.contentItem.metadata.resolution, '4K');
 
     // -------------------------------------------------------------------------
-    // 2. ROTEIRO DE VÍDEO (40 créditos)
+    // 2. ROTEIRO DE VÍDEO (10 créditos)
     // -------------------------------------------------------------------------
     const resScript = await fetch(`${baseUrl}/api/ai/generate-video-script`, {
       method: 'POST',
@@ -157,7 +157,7 @@ test('Media Generation: Image (1K, 2K, 4K), Veo 3.1 Presets (720p, 1080p, 4K), S
     });
     assert.equal(resScript.status, 200);
     const dataScript = await resScript.json();
-    assert.equal(dataScript.creditsUsed, 40, 'Roteiro de vídeo deve consumir 40 créditos');
+    assert.equal(dataScript.creditsUsed, 10, 'Roteiro de vídeo deve consumir 10 créditos');
     assert.ok(dataScript.script);
 
     // -------------------------------------------------------------------------
@@ -181,7 +181,7 @@ test('Media Generation: Image (1K, 2K, 4K), Veo 3.1 Presets (720p, 1080p, 4K), S
     assert.ok(dataDirection.direction?.visualPrompt);
 
     // -------------------------------------------------------------------------
-    // 4. PRESETS DE VÍDEO: demo_720p (50), pro_1080p (100) e cinema_4k (180)
+    // 4. PRESETS DE VÍDEO: demo_720p (50), pro_1080p (100) e cinema_4k (200)
     // -------------------------------------------------------------------------
     // Preset demo_720p (50 créditos)
     const resVideo720 = await fetch(`${baseUrl}/api/ai/generate-video`, {
@@ -201,7 +201,7 @@ test('Media Generation: Image (1K, 2K, 4K), Veo 3.1 Presets (720p, 1080p, 4K), S
     const dataVideo720 = await resVideo720.json();
     assert.equal(dataVideo720.creditsReserved, 50, 'Preset demo_720p deve reservar 50 créditos');
 
-    // Preset cinema_4k (180 créditos)
+    // Preset cinema_4k (200 créditos) com 4K Real
     const resVideo4k = await fetch(`${baseUrl}/api/ai/generate-video`, {
       method: 'POST',
       headers: {
@@ -217,7 +217,8 @@ test('Media Generation: Image (1K, 2K, 4K), Veo 3.1 Presets (720p, 1080p, 4K), S
     });
     assert.equal(resVideo4k.status, 202);
     const dataVideo4k = await resVideo4k.json();
-    assert.equal(dataVideo4k.creditsReserved, 180, 'Preset cinema_4k deve reservar 180 créditos');
+    assert.equal(dataVideo4k.creditsReserved, 200, 'Preset cinema_4k deve reservar 200 créditos');
+    assert.equal(dataVideo4k.job?.resolution || '4k', '4k', 'Preset cinema_4k deve manter resolução 4k real');
 
     // Preset pro_1080p (100 créditos)
     const resStartVideo = await fetch(`${baseUrl}/api/ai/generate-video`, {

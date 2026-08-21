@@ -43,7 +43,7 @@ export const config = {
     image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image'),
     imageLite: env('GEMINI_MODEL_IMAGE_LITE', 'gemini-3.1-flash-lite-image'),
     veoLite: env('GEMINI_MODEL_VEO_LITE', 'veo-3.1-lite-generate-preview'),
-    veoFast: env('GEMINI_MODEL_VEO_FAST', 'veo-3.1-generate-preview'),
+    veoFast: env('GEMINI_MODEL_VEO_FAST', 'veo-3.1-fast-generate-preview'),
     veoCinema: env('GEMINI_MODEL_VEO_CINEMA', 'veo-3.1-generate-preview'),
     veo: env('GEMINI_MODEL_VEO', 'veo-3.1-generate-preview')
   },
@@ -137,7 +137,8 @@ export function assertProductionConfig(): void {
     ['FIREBASE_ADMIN_PRIVATE_KEY', config.firebase.privateKey],
     ['TOKEN_ENCRYPTION_KEY', config.encryptionKey],
     ['CRON_SECRET', config.cronSecret],
-    ['GEMINI_API_KEY', config.geminiApiKey]
+    ['GEMINI_API_KEY', config.geminiApiKey],
+    ['GEMINI_MEDIA_API_KEY', process.env.GEMINI_MEDIA_API_KEY || '']
   ];
   for (const [name, value] of requiredValues) {
     if (!value) throw new Error(`[Froc.IA] Configuração de produção incompleta: ${name}`);
