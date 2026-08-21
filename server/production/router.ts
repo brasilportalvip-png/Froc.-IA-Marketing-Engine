@@ -897,13 +897,19 @@ router.get('/social/:provider/connect', requireAuth, asyncRoute(async (req: Auth
 }));
 router.get('/social/:provider/callback', asyncRoute(async (req, res) => {
   const provider = req.params.provider as SocialProvider;
-  const errorParam = safeString(req.query.error, 500);
+  const errorParam = safeString(req.query.error, 500) || safeString(req.query.error_description, 500);
   if (errorParam) return res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent(errorParam)}`);
   const code = safeString(req.query.code, 3000);
   const state = safeString(req.query.state, 3000);
   if (!code || !state) return res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent('Autorização OAuth incompleta')}`);
-  const result = await handleOAuthCallback({ provider, code, state });
-  res.redirect(`${config.appUrl}/redes-sociais?connected=${encodeURIComponent(provider)}&companyId=${encodeURIComponent(result.companyId)}`);
+  try {
+    const result = await handleOAuthCallback({ provider, code, state });
+    res.redirect(`${config.appUrl}/redes-sociais?connected=${encodeURIComponent(provider)}&companyId=${encodeURIComponent(result.companyId)}`);
+  } catch (err: any) {
+    const safeError = err?.message || 'Falha ao processar autorização social.';
+    console.error(`[Social OAuth Callback Error] [${provider}]:`, safeError);
+    res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent(safeError)}`);
+  }
 }));
 router.delete('/social/:provider/disconnect', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const companyId = safeString(req.body?.companyId, 200);
@@ -1211,4 +1217,5 @@ Sitemap: ${config.appUrl.replace(/\/$/, '')}/sitemap.xml
 `;
 }
 
+export { router };
 export default router;

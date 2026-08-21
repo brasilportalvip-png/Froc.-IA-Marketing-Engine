@@ -92,7 +92,7 @@ export async function createOAuthUrl(data: { provider: SocialProvider; userId: s
         redirect_uri: redirectUri,
         state,
         response_type: 'code',
-        scope: 'public_profile,pages_show_list,pages_read_engagement,pages_manage_posts'
+        scope: 'public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,business_management'
       }).toString();
       break;
     case 'instagram':
@@ -165,7 +165,41 @@ async function fetchAccount(provider: SocialProvider, accessToken: string): Prom
   return { id: String(source?.id || source?.sub || source?.open_id || source?.username || 'unknown'), name: String(source?.name || source?.display_name || source?.username || provider) };
 }
 
-async function resolveMetaAccount(provider: 'facebook' | 'instagram', shortToken: string): Promise<{ id: string; name: string; accessToken: string; pageId?: string }> {
+export function hasPagePublishTask(tasks?: string[]): boolean {
+  if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+    return true;
+  }
+  const normalized = tasks.map((t) => String(t).toUpperCase());
+  return normalized.some((t) =>
+    ['CREATE_CONTENT', 'MANAGE', 'MODERATE', 'PUBLISH_TO_PAGE', 'CONTENT'].includes(t)
+  );
+}
+
+async function diagnoseMetaPermissions(userToken: string, requiredPermissions: string[]): Promise<string | null> {
+  try {
+    const url = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/permissions`);
+    url.search = new URLSearchParams({ access_token: userToken }).toString();
+    const res = await fetch(url);
+    const json = await res.json().catch(() => ({} as any));
+    if (res.ok && Array.isArray(json.data)) {
+      const granted = new Set(
+        json.data
+          .filter((item: any) => item?.status === 'granted')
+          .map((item: any) => String(item?.permission))
+      );
+      for (const perm of requiredPermissions) {
+        if (!granted.has(perm)) {
+          return `Permissão '${perm}' não foi concedida na autorização da Meta.`;
+        }
+      }
+    }
+  } catch {
+    // Diagnóstico silencioso em caso de erro de rede
+  }
+  return null;
+}
+
+export async function resolveMetaAccount(provider: 'facebook' | 'instagram', shortToken: string): Promise<{ id: string; name: string; accessToken: string; pageId?: string }> {
   let userToken = shortToken;
   // Troca o token curto por token de usuário de longa duração quando o app secret está disponível.
   if (config.social.meta.clientSecret) {
@@ -181,6 +215,88 @@ async function resolveMetaAccount(provider: 'facebook' | 'instagram', shortToken
     if (response.ok && json.access_token) userToken = String(json.access_token);
   }
 
+  if (provider === 'facebook') {
+    // 1. Descoberta primária: /me/accounts
+    const pagesUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/accounts`);
+    pagesUrl.search = new URLSearchParams({
+      fields: 'id,name,access_token,tasks,category',
+      access_token: userToken
+    }).toString();
+    const pagesResponse = await fetch(pagesUrl);
+    const pagesJson = await pagesResponse.json().catch(() => ({} as any));
+    const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
+
+    let eligiblePage = pages.find((item: any) => item?.id && item?.access_token && hasPagePublishTask(item?.tasks));
+
+    // 2. Fallback para Business Manager: /me/assigned_pages
+    if (!eligiblePage) {
+      const assignedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/assigned_pages`);
+      assignedUrl.search = new URLSearchParams({
+        fields: 'id,name,tasks,category',
+        access_token: userToken
+      }).toString();
+      const assignedResponse = await fetch(assignedUrl);
+      const assignedJson = await assignedResponse.json().catch(() => ({} as any));
+      const assignedPages = Array.isArray(assignedJson.data) ? assignedJson.data : [];
+
+      for (const assigned of assignedPages) {
+        if (!assigned?.id) continue;
+        if (assigned?.tasks && !hasPagePublishTask(assigned.tasks)) continue;
+
+        // Obter Page Access Token legítimo via nó da Página com o User Access Token
+        const pageDetailUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${assigned.id}`);
+        pageDetailUrl.search = new URLSearchParams({
+          fields: 'id,name,access_token,tasks,category',
+          access_token: userToken
+        }).toString();
+        const pageDetailResponse = await fetch(pageDetailUrl);
+        const pageDetailJson = await pageDetailResponse.json().catch(() => ({} as any));
+
+        if (pageDetailResponse.ok && pageDetailJson?.id && pageDetailJson?.access_token && hasPagePublishTask(pageDetailJson?.tasks)) {
+          eligiblePage = {
+            id: String(pageDetailJson.id),
+            name: String(pageDetailJson.name || assigned.name || 'Facebook Page'),
+            access_token: String(pageDetailJson.access_token),
+            tasks: pageDetailJson.tasks || assigned.tasks
+          };
+          break;
+        }
+      }
+    }
+
+    if (eligiblePage && eligiblePage.id && eligiblePage.access_token) {
+      return {
+        id: String(eligiblePage.id),
+        name: String(eligiblePage.name || 'Facebook Page'),
+        accessToken: String(eligiblePage.access_token),
+        pageId: String(eligiblePage.id)
+      };
+    }
+
+    // 3. Diagnóstico seguro de permissões quando nenhuma página utilizável foi localizada
+    const permDiag = await diagnoseMetaPermissions(userToken, [
+      'public_profile',
+      'pages_show_list',
+      'pages_read_engagement',
+      'pages_manage_posts',
+      'business_management'
+    ]);
+    if (permDiag) {
+      throw new Error(permDiag);
+    }
+
+    if (pages.length > 0) {
+      const pageWithoutTask = pages.find((p: any) => p?.id && p?.tasks && !hasPagePublishTask(p.tasks));
+      if (pageWithoutTask) {
+        throw new Error('A Página do Facebook encontrada não possui permissão de criação/publicação de conteúdo.');
+      }
+      throw new Error('A Página do Facebook encontrada não forneceu um Page Access Token válido para publicação.');
+    }
+
+    throw new Error('Nenhuma Página do Facebook foi encontrada nesta conta ou Portfólio Empresarial (Business Manager). Certifique-se de que sua conta tenha Controle Total ou permissão de publicação na Página.');
+  }
+
+  // Provider: Instagram
   const pagesUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/accounts`);
   pagesUrl.search = new URLSearchParams({
     fields: 'id,name,access_token,instagram_business_account{id,username,name}',
@@ -188,17 +304,49 @@ async function resolveMetaAccount(provider: 'facebook' | 'instagram', shortToken
   }).toString();
   const pagesResponse = await fetch(pagesUrl);
   const pagesJson = await pagesResponse.json().catch(() => ({} as any));
-  if (!pagesResponse.ok) throw new Error(pagesJson.error?.message || 'Não foi possível consultar as Páginas Meta autorizadas.');
   const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
-  if (provider === 'facebook') {
-    const page = pages.find((item: any) => item?.id && item?.access_token);
-    if (!page) throw new Error('Nenhuma Página do Facebook com permissão de publicação foi encontrada nesta conta.');
-    return { id: String(page.id), name: String(page.name || 'Facebook Page'), accessToken: String(page.access_token), pageId: String(page.id) };
+  let page = pages.find((item: any) => item?.instagram_business_account?.id && item?.access_token);
+
+  if (!page) {
+    // Fallback: tentar /me/assigned_pages para encontrar a página vinculada
+    const assignedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/assigned_pages`);
+    assignedUrl.search = new URLSearchParams({
+      fields: 'id,name,instagram_business_account{id,username,name}',
+      access_token: userToken
+    }).toString();
+    const assignedResponse = await fetch(assignedUrl);
+    const assignedJson = await assignedResponse.json().catch(() => ({} as any));
+    const assignedPages = Array.isArray(assignedJson.data) ? assignedJson.data : [];
+
+    for (const assigned of assignedPages) {
+      if (!assigned?.id) continue;
+      const pageDetailUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${assigned.id}`);
+      pageDetailUrl.search = new URLSearchParams({
+        fields: 'id,name,access_token,instagram_business_account{id,username,name}',
+        access_token: userToken
+      }).toString();
+      const pageDetailResponse = await fetch(pageDetailUrl);
+      const pageDetailJson = await pageDetailResponse.json().catch(() => ({} as any));
+      if (pageDetailResponse.ok && pageDetailJson?.instagram_business_account?.id && pageDetailJson?.access_token) {
+        page = pageDetailJson;
+        break;
+      }
+    }
   }
 
-  const page = pages.find((item: any) => item?.instagram_business_account?.id && item?.access_token);
-  if (!page) throw new Error('Nenhuma conta profissional do Instagram vinculada a uma Página do Facebook foi encontrada.');
+  if (!page || !page.instagram_business_account?.id || !page.access_token) {
+    const permDiag = await diagnoseMetaPermissions(userToken, [
+      'public_profile',
+      'pages_show_list',
+      'pages_read_engagement',
+      'instagram_basic',
+      'instagram_content_publish'
+    ]);
+    if (permDiag) throw new Error(permDiag);
+    throw new Error('Nenhuma conta profissional do Instagram vinculada a uma Página do Facebook foi encontrada.');
+  }
+
   const ig = page.instagram_business_account;
   return {
     id: String(ig.id),
