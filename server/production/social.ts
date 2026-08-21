@@ -86,9 +86,24 @@ export async function createOAuthUrl(data: { provider: SocialProvider; userId: s
       url.search = new URLSearchParams({ response_type: 'code', client_id: credentials.clientId, redirect_uri: redirectUri, scope: 'tweet.read tweet.write users.read offline.access', state, code_challenge: base64UrlSha256(codeVerifier), code_challenge_method: 'S256' }).toString();
       break;
     case 'facebook':
+      url = new URL(`https://www.facebook.com/${config.social.meta.graphVersion}/dialog/oauth`);
+      url.search = new URLSearchParams({
+        client_id: credentials.clientId,
+        redirect_uri: redirectUri,
+        state,
+        response_type: 'code',
+        scope: 'public_profile,pages_show_list,pages_read_engagement,pages_manage_posts'
+      }).toString();
+      break;
     case 'instagram':
       url = new URL(`https://www.facebook.com/${config.social.meta.graphVersion}/dialog/oauth`);
-      url.search = new URLSearchParams({ client_id: credentials.clientId, redirect_uri: redirectUri, state, response_type: 'code', scope: 'public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish' }).toString();
+      url.search = new URLSearchParams({
+        client_id: credentials.clientId,
+        redirect_uri: redirectUri,
+        state,
+        response_type: 'code',
+        scope: 'public_profile,pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish'
+      }).toString();
       break;
   }
   return { url: url.toString(), provider: data.provider };

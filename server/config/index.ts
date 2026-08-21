@@ -76,30 +76,30 @@ export const config = {
   },
   social: {
     meta: {
-      clientId: env('META_APP_ID'),
-      clientSecret: env('META_APP_SECRET'),
+      clientId: env('META_APP_ID', nodeEnv === 'test' ? 'mock_meta_app_id' : ''),
+      clientSecret: env('META_APP_SECRET', nodeEnv === 'test' ? 'mock_meta_app_secret' : ''),
       graphVersion: env('META_GRAPH_VERSION', 'v24.0')
     },
     linkedin: {
-      clientId: env('LINKEDIN_CLIENT_ID'),
-      clientSecret: env('LINKEDIN_CLIENT_SECRET'),
+      clientId: env('LINKEDIN_CLIENT_ID', nodeEnv === 'test' ? 'mock_linkedin_client_id' : ''),
+      clientSecret: env('LINKEDIN_CLIENT_SECRET', nodeEnv === 'test' ? 'mock_linkedin_client_secret' : ''),
       apiVersion: env('LINKEDIN_API_VERSION')
     },
     google: {
-      clientId: env('GOOGLE_CLIENT_ID'),
-      clientSecret: env('GOOGLE_CLIENT_SECRET')
+      clientId: env('GOOGLE_CLIENT_ID', nodeEnv === 'test' ? 'mock_google_client_id' : ''),
+      clientSecret: env('GOOGLE_CLIENT_SECRET', nodeEnv === 'test' ? 'mock_google_client_secret' : '')
     },
     tiktok: {
       clientId: env('TIKTOK_CLIENT_KEY', nodeEnv === 'test' ? 'mock_tiktok_client_id' : ''),
       clientSecret: env('TIKTOK_CLIENT_SECRET', nodeEnv === 'test' ? 'mock_tiktok_client_secret' : '')
     },
     pinterest: {
-      clientId: env('PINTEREST_APP_ID'),
-      clientSecret: env('PINTEREST_APP_SECRET')
+      clientId: env('PINTEREST_APP_ID', nodeEnv === 'test' ? 'mock_pinterest_client_id' : ''),
+      clientSecret: env('PINTEREST_APP_SECRET', nodeEnv === 'test' ? 'mock_pinterest_client_secret' : '')
     },
     x: {
-      clientId: env('X_CLIENT_ID'),
-      clientSecret: env('X_CLIENT_SECRET')
+      clientId: env('X_CLIENT_ID', nodeEnv === 'test' ? 'mock_x_client_id' : ''),
+      clientSecret: env('X_CLIENT_SECRET', nodeEnv === 'test' ? 'mock_x_client_secret' : '')
     }
   },
   plans: [
