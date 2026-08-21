@@ -95,6 +95,50 @@ test('2. Meta OAuth Instagram: Escopos cirúrgicos de Instagram Professional (se
   assert.ok(!scopes.includes('business_management'), 'NÃO deve conter business_management');
 });
 
+test('2b. Meta OAuth Instagram: Descoberta de conta profissional via /me/accounts NÃO consulta /me/businesses nem depende de business_management', async () => {
+  const originalFetch = globalThis.fetch;
+  let businessesCalled = false;
+
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/oauth/access_token')) {
+        return new Response(JSON.stringify({ access_token: 'ig_user_token_mock', token_type: 'bearer' }), { status: 200 });
+      }
+      if (url.includes('/me/businesses')) {
+        businessesCalled = true;
+        return new Response(JSON.stringify({ error: { message: 'Permissions error #200', code: 200 } }), { status: 400 });
+      }
+      if (url.includes('/me/accounts')) {
+        return new Response(JSON.stringify({
+          data: [
+            {
+              id: 'page_ig_host_101',
+              name: 'Instagram Host Page',
+              access_token: 'EAAB_page_token_for_ig',
+              instagram_business_account: {
+                id: 'ig_biz_account_777',
+                username: 'minha_empresa_oficial',
+                name: 'Minha Empresa Oficial'
+              }
+            }
+          ]
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const resolved = await resolveMetaAccount('instagram', 'short_ig_token');
+    assert.equal(businessesCalled, false, 'Instagram NÃO deve consultar /me/businesses');
+    assert.equal(resolved.id, 'ig_biz_account_777');
+    assert.equal(resolved.name, 'minha_empresa_oficial');
+    assert.equal(resolved.accessToken, 'EAAB_page_token_for_ig');
+    assert.equal(resolved.pageId, 'page_ig_host_101');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('3. Facebook Page: Descoberta primária via /me/accounts com Page Access Token real e tarefas de publicação', async () => {
   const originalFetch = globalThis.fetch;
   try {

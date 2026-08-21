@@ -361,44 +361,7 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
   const pagesJson = await pagesResponse.json().catch(() => ({} as any));
   const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
-  let page = pages.find((item: any) => item?.instagram_business_account?.id && item?.access_token);
-
-  if (!page) {
-    // Fallback: tentar /me/businesses para encontrar a página com instagram_business_account
-    const businessesUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/businesses`);
-    businessesUrl.search = new URLSearchParams({
-      fields: 'id,name',
-      access_token: userToken
-    }).toString();
-    const businessesResponse = await fetch(businessesUrl);
-    const businessesJson = await businessesResponse.json().catch(() => ({} as any));
-    const businesses = Array.isArray(businessesJson.data) ? businessesJson.data : [];
-
-    for (const biz of businesses) {
-      if (!biz?.id) continue;
-      const ownedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/owned_pages`);
-      ownedUrl.search = new URLSearchParams({
-        fields: 'id,name,access_token,instagram_business_account{id,username,name}',
-        access_token: userToken
-      }).toString();
-      const ownedRes = await fetch(ownedUrl);
-      const ownedJson = await ownedRes.json().catch(() => ({} as any));
-      const ownedPages = Array.isArray(ownedJson.data) ? ownedJson.data : [];
-      page = ownedPages.find((p: any) => p?.instagram_business_account?.id && p?.access_token);
-      if (page) break;
-
-      const clientUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/client_pages`);
-      clientUrl.search = new URLSearchParams({
-        fields: 'id,name,access_token,instagram_business_account{id,username,name}',
-        access_token: userToken
-      }).toString();
-      const clientRes = await fetch(clientUrl);
-      const clientJson = await clientRes.json().catch(() => ({} as any));
-      const clientPages = Array.isArray(clientJson.data) ? clientJson.data : [];
-      page = clientPages.find((p: any) => p?.instagram_business_account?.id && p?.access_token);
-      if (page) break;
-    }
-  }
+  const page = pages.find((item: any) => item?.instagram_business_account?.id && item?.access_token);
 
   if (!page || !page.instagram_business_account?.id || !page.access_token) {
     const permDiag = await diagnoseMetaPermissions(userToken, [
