@@ -71,7 +71,14 @@ export function getAdminAuth(): Auth | null {
   }
 }
 
+let overrideAdminStorage: Storage | null | undefined = undefined;
+
+export function setAdminStorageForTesting(mockStorage: Storage | null | undefined): void {
+  overrideAdminStorage = mockStorage;
+}
+
 export function getAdminStorage(): Storage | null {
+  if (overrideAdminStorage !== undefined) return overrideAdminStorage;
   const app = getFirebaseAdmin();
   if (!app) return null;
   try {

@@ -7,8 +7,19 @@ import { commitReservation, reserveCredits, rollbackReservation } from './credit
 
 let textClient: GoogleGenAI | null = null;
 let mediaClient: GoogleGenAI | null = null;
+let overrideTextClient: any = undefined;
+let overrideMediaClient: any = undefined;
+
+export function setTextAiClientForTesting(client: any): void {
+  overrideTextClient = client;
+}
+
+export function setMediaAiClientForTesting(client: any): void {
+  overrideMediaClient = client;
+}
 
 export function textAiClient(): GoogleGenAI {
+  if (overrideTextClient !== undefined) return overrideTextClient;
   if (!config.geminiApiKey) throw new Error('GEMINI_API_KEY não configurada no servidor.');
   if (!textClient) {
     textClient = new GoogleGenAI({
@@ -24,6 +35,7 @@ export function textAiClient(): GoogleGenAI {
 }
 
 export function mediaAiClient(): GoogleGenAI {
+  if (overrideMediaClient !== undefined) return overrideMediaClient;
   const mediaKey = config.geminiMediaApiKey || config.geminiApiKey;
   if (!mediaKey) throw new Error('GEMINI_MEDIA_API_KEY ou GEMINI_API_KEY não configurada no servidor.');
   if (!mediaClient) {
@@ -37,6 +49,38 @@ export function mediaAiClient(): GoogleGenAI {
     });
   }
   return mediaClient;
+}
+
+export function isValidMp4Buffer(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 16) return false;
+  
+  // Rejeitar assinaturas de texto/erro comuns
+  const textPrefix = buffer.slice(0, 64).toString('utf8').toLowerCase();
+  if (
+    textPrefix.includes('<html') ||
+    textPrefix.includes('<!doctype') ||
+    textPrefix.includes('{"error') ||
+    textPrefix.includes('{\n"error') ||
+    textPrefix.includes('"error":') ||
+    textPrefix.includes('error code')
+  ) {
+    return false;
+  }
+
+  // Verificar presença compatível com container ISO Base Media / MP4 ('ftyp', 'moov', 'mdat' no início)
+  const ftypIndex = buffer.indexOf(Buffer.from('ftyp'));
+  if (ftypIndex >= 4 && ftypIndex <= 32) {
+    return true;
+  }
+  const moovIndex = buffer.indexOf(Buffer.from('moov'));
+  if (moovIndex >= 4 && moovIndex <= 64) {
+    return true;
+  }
+  const mdatIndex = buffer.indexOf(Buffer.from('mdat'));
+  if (mdatIndex >= 4 && mdatIndex <= 64) {
+    return true;
+  }
+  return false;
 }
 
 function aiClient(): GoogleGenAI {
@@ -59,7 +103,7 @@ function sanitizeJsonText(value: string): string {
 
 function formatAiErrorMessage(error: any): string {
   const msg = String(error?.message || error || '');
-  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota exceeded')) {
+  if (error?.status === 429 || /\b429\b/.test(msg) || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota exceeded')) {
     return 'Limite temporário de requisições de IA atingido na API do Google Gemini. Aguarde alguns segundos e tente novamente.';
   }
   if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
@@ -904,7 +948,7 @@ export async function startVideoGenerationJob(data: {
   try {
     let operationName = `mock_op_${jobId}`;
     
-    if (process.env.NODE_ENV !== 'test') {
+    if (overrideMediaClient !== undefined || process.env.NODE_ENV !== 'test') {
       const videoConfig: any = {
         numberOfVideos: 1,
         resolution: presetConfig.resolution,
@@ -989,97 +1033,41 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     return job;
   }
 
-  // Ambiente de teste com transação atômica e mock controlado
-  if (process.env.NODE_ENV === 'test') {
-    const nowMs = Date.now();
-    const claim = await firestore().runTransaction(async (tx) => {
-      const freshSnap = await tx.get(docRef);
-      if (!freshSnap.exists) return { claimed: false, reason: 'not_found' };
-      const cur = freshSnap.data() as VideoJobData;
-      if (cur.status === 'completed' || cur.status === 'failed') {
-        return { claimed: false, job: cur, reason: 'already_terminal' };
-      }
-      if (cur.status === 'finalizing') {
-        const lease = cur.finalizationLeaseUntil ? new Date(cur.finalizationLeaseUntil).getTime() : 0;
-        if (nowMs < lease) {
-          return { claimed: false, job: cur, reason: 'locked_by_other' };
-        }
-      }
-      const token = newId('claim');
-      const leaseMs = 2.5 * 60 * 1000;
-      tx.update(docRef, {
-        status: 'finalizing',
-        finalizationToken: token,
-        finalizationStartedAt: nowIso(),
-        finalizationLeaseUntil: new Date(nowMs + leaseMs).toISOString(),
-        updatedAt: nowIso()
-      });
-      return { claimed: true, token, job: { ...cur, status: 'finalizing', finalizationToken: token } };
-    });
-
-    if (!claim.claimed) {
-      return (claim.job as VideoJobData) || job;
+  // Se já estiver sendo finalizado por outro processo com lease ativo, aguarda
+  if (job.status === 'finalizing' && job.finalizationLeaseUntil) {
+    const lease = new Date(job.finalizationLeaseUntil).getTime();
+    if (Date.now() < lease) {
+      return job;
     }
-
-    const contentItemId = job.contentItemId || newId('content');
-    const mockUrl = 'https://storage.googleapis.com/froc-ia-test-bucket/mock-video.mp4';
-    
-    const contentItem = {
-      id: contentItemId,
-      userId: job.userId,
-      companyId: job.companyId || 'default',
-      type: 'video',
-      title: job.title || `Vídeo IA Veo - ${(job.sourcePrompt || job.prompt).slice(0, 60)}`,
-      headline: job.title || '',
-      body: job.sourcePrompt || job.prompt,
-      videoUrl: mockUrl,
-      targetPlatform: job.aspectRatio === '9:16' ? 'Reels / TikTok / Shorts' : 'YouTube / Banner',
-      creditsUsed: job.creditsReserved,
-      status: 'saved',
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      metadata: {
-        jobId: job.id,
-        preset: job.preset,
-        resolution: job.resolution,
-        actualResolution: job.resolution,
-        durationSeconds: job.durationSeconds,
-        aspectRatio: job.aspectRatio,
-        modelUsed: job.modelUsed,
-        finalPrompt: job.finalPrompt
-      }
-    };
-    await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).set(contentItem);
-
-    await commitReservation({
-      userId: job.userId,
-      reservationId: job.reservationId,
-      source: `Froc AI: video_${job.preset}`,
-      metadata: { jobId: job.id, contentItemId, modelUsed: job.modelUsed, resolution: job.resolution }
-    });
-
-    const updatedJob: VideoJobData = {
-      ...job,
-      status: 'completed',
-      progressPct: 100,
-      videoUrl: mockUrl,
-      contentItemId,
-      actualResolution: job.resolution,
-      creditsCommitted: job.creditsReserved,
-      completedAt: nowIso(),
-      updatedAt: nowIso()
-    };
-    await docRef.set(updatedJob);
-    return updatedJob;
   }
 
-  // Verificação real com a API Veo em produção
   try {
-    const op = new GenerateVideosOperation();
-    op.name = job.operationName;
-    const updated = await mediaAiClient().operations.getVideosOperation({ operation: op });
+    let isDone = false;
+    let hasError: any = null;
+    let downloadUri: string | undefined = undefined;
 
-    if (!updated.done) {
+    if (overrideMediaClient !== undefined) {
+      const op = new GenerateVideosOperation();
+      op.name = job.operationName;
+      const updated = await overrideMediaClient.operations.getVideosOperation({ operation: op });
+      isDone = Boolean(updated?.done);
+      hasError = updated?.error;
+      const gv = updated?.response?.generatedVideos?.[0]?.video;
+      downloadUri = gv?.uri || (gv?.videoBytes ? `data:${gv.mimeType || 'video/mp4'};base64,${gv.videoBytes}` : undefined);
+    } else if (process.env.NODE_ENV !== 'test') {
+      const op = new GenerateVideosOperation();
+      op.name = job.operationName;
+      const updated = await mediaAiClient().operations.getVideosOperation({ operation: op });
+      isDone = Boolean(updated?.done);
+      hasError = updated?.error;
+      const gv = updated?.response?.generatedVideos?.[0]?.video;
+      downloadUri = gv?.uri || (gv?.videoBytes ? `data:${gv.mimeType || 'video/mp4'};base64,${gv.videoBytes}` : undefined);
+    } else {
+      isDone = true;
+      downloadUri = 'https://storage.googleapis.com/froc-ia-test-bucket/mock-video.mp4';
+    }
+
+    if (!isDone) {
       const elapsedSec = Math.max(0, (Date.now() - new Date(job.createdAt).getTime()) / 1000);
       const estTotalSec = job.preset === 'cinema_4k' ? 90 : job.preset === 'pro_1080p' ? 60 : 35;
       const progressPct = Math.min(92, Math.round(15 + (elapsedSec / estTotalSec) * 75));
@@ -1093,8 +1081,8 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return inProgressJob;
     }
 
-    if (updated.error) {
-      const errMsg = String(updated.error.message || 'Falha no processamento de vídeo pelo modelo Veo.');
+    if (hasError) {
+      const errMsg = String(hasError.message || hasError || 'Falha no processamento de vídeo pelo modelo Veo.');
       await rollbackReservation(job.userId, job.reservationId, errMsg);
       
       const failedJob: VideoJobData = {
@@ -1108,7 +1096,7 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return failedJob;
     }
 
-    // Geração concluída pelo Veo: Obter claim atômico antes de iniciar download e persistência
+    // Geração concluída pelo Veo: Obter claim atômico via transação
     const nowMs = Date.now();
     const claim = await firestore().runTransaction(async (tx) => {
       const freshSnap = await tx.get(docRef);
@@ -1139,13 +1127,13 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return (claim.job as VideoJobData) || job;
     }
 
-    const downloadUri = updated.response?.generatedVideos?.[0]?.video?.uri;
     if (!downloadUri) {
       const errMsg = 'O modelo Veo indicou conclusão, mas não retornou a URI de download do vídeo.';
       await rollbackReservation(job.userId, job.reservationId, errMsg);
       const failedJob: VideoJobData = {
         ...job,
         status: 'failed',
+        errorCode: 'MISSING_DOWNLOAD_URI',
         errorMessage: errMsg,
         progressPct: 0,
         updatedAt: nowIso()
@@ -1154,29 +1142,83 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return failedJob;
     }
 
-    const apiKeyForDownload = config.geminiMediaApiKey || config.geminiApiKey;
-    const videoRes = await fetch(downloadUri, {
-      headers: {
-        'x-goog-api-key': apiKeyForDownload
-      }
-    });
+    let videoBuffer: Buffer;
 
-    if (!videoRes.ok) {
-      throw new Error(`Falha ao baixar o arquivo de vídeo gerado (status HTTP ${videoRes.status}).`);
+    if (downloadUri.startsWith('data:')) {
+      const base64Data = downloadUri.replace(/^data:[^;]+;base64,/, '');
+      videoBuffer = Buffer.from(base64Data, 'base64');
+    } else if (process.env.NODE_ENV === 'test' && !downloadUri.startsWith('http://127.0.0.1') && !downloadUri.startsWith('http://localhost') && downloadUri.includes('storage.googleapis.com/froc-ia-test-bucket')) {
+      // Buffer ISO Base Media / MP4 válido para testes com cabeçalho ftyp
+      videoBuffer = Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32, 0x00, 0x00, 0x00, 0x00, 0x6d, 0x70, 0x34, 0x32, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x00, 0x08, 0x6d, 0x6f, 0x6f, 0x76]);
+    } else {
+      const apiKeyForDownload = config.geminiMediaApiKey || config.geminiApiKey;
+      const videoRes = await fetch(downloadUri, {
+        headers: {
+          'x-goog-api-key': apiKeyForDownload
+        }
+      });
+
+      if (!videoRes.ok) {
+        const errMsg = `Falha ao baixar o arquivo de vídeo gerado (status HTTP ${videoRes.status}).`;
+        await rollbackReservation(job.userId, job.reservationId, errMsg);
+        const failedJob: VideoJobData = {
+          ...job,
+          status: 'failed',
+          errorCode: 'DOWNLOAD_FAILED',
+          errorMessage: 'Falha ao recuperar o vídeo gerado pelos servidores de mídia. Seus créditos foram estornados.',
+          progressPct: 0,
+          updatedAt: nowIso()
+        };
+        await docRef.set(failedJob);
+        return failedJob;
+      }
+
+      const contentType = (videoRes.headers.get('content-type') || '').toLowerCase();
+      if (contentType && (contentType.includes('text/html') || contentType.includes('application/json'))) {
+        const errMsg = 'O servidor de mídia retornou um formato inesperado em vez de vídeo.';
+        await rollbackReservation(job.userId, job.reservationId, errMsg);
+        const failedJob: VideoJobData = {
+          ...job,
+          status: 'failed',
+          errorCode: 'INVALID_VIDEO_PAYLOAD',
+          errorMessage: 'O arquivo de vídeo retornado é inválido. Seus créditos foram estornados.',
+          progressPct: 0,
+          updatedAt: nowIso()
+        };
+        await docRef.set(failedJob);
+        return failedJob;
+      }
+
+      videoBuffer = Buffer.from(await videoRes.arrayBuffer());
     }
 
-    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-    if (!videoBuffer.length || videoBuffer.length > 150 * 1024 * 1024) {
-      throw new Error('O arquivo de vídeo baixado possui tamanho inválido.');
+    // Validação estrita do container MP4
+    if (!videoBuffer || !videoBuffer.length || videoBuffer.length > 250 * 1024 * 1024 || !isValidMp4Buffer(videoBuffer)) {
+      const errMsg = 'O arquivo de vídeo produzido não pôde ser validado com segurança no formato MP4.';
+      await rollbackReservation(job.userId, job.reservationId, errMsg);
+      const failedJob: VideoJobData = {
+        ...job,
+        status: 'failed',
+        errorCode: 'INVALID_MP4_CONTAINER',
+        errorMessage: 'O arquivo de vídeo produzido não pôde ser validado com segurança. Seus créditos foram estornados.',
+        progressPct: 0,
+        updatedAt: nowIso()
+      };
+      await docRef.set(failedJob);
+      return failedJob;
     }
 
     const storagePath = `generated/${job.userId}/videos/${job.id}.mp4`;
     let publicVideoUrl = '';
 
-    // Persistência no Firebase Storage FAIL-CLOSED (sem fallback para URLs do Google)
+    // Persistência no Firebase Storage FAIL-CLOSED
     try {
       const token = crypto.randomUUID();
-      const bucket = getAdminStorage().bucket();
+      const storageInstance = getAdminStorage();
+      if (!storageInstance) {
+        throw new Error('Firebase Storage não configurado.');
+      }
+      const bucket = storageInstance.bucket();
       const file = bucket.file(storagePath);
       await file.save(videoBuffer, {
         resumable: false,
@@ -1186,7 +1228,7 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
           metadata: { firebaseStorageDownloadTokens: token }
         }
       });
-      publicVideoUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
+      publicVideoUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name || 'froc-ia.firebasestorage.app')}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
     } catch (storageErr) {
       console.error('[Froc AI Video Storage Error] Falha ao persistir vídeo no Firebase Storage:', storageErr);
       const errMsg = 'Não foi possível armazenar o vídeo gerado com segurança no Firebase Storage. Seus créditos foram estornados.';
@@ -1203,7 +1245,7 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       return failedJob;
     }
 
-    // Persistência determinística em contentItems
+    // Persistência determinística em contentItems FAIL-CLOSED
     const contentItemId = job.contentItemId || newId('content');
     try {
       const contentItem = {
@@ -1236,7 +1278,10 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     } catch (contentErr) {
       console.error('[Froc AI ContentItem Error] Falha ao registrar contentItem:', contentErr);
       try {
-        await getAdminStorage().bucket().file(storagePath).delete();
+        const storageInstance = getAdminStorage();
+        if (storageInstance) {
+          await storageInstance.bucket().file(storagePath).delete();
+        }
       } catch {}
       const errMsg = 'Falha ao vincular o vídeo gerado aos conteúdos da sua conta. Seus créditos foram estornados.';
       await rollbackReservation(job.userId, job.reservationId, errMsg);
