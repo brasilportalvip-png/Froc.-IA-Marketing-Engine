@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { resetMemoryDb, firestore, COLLECTIONS } from '../server/production/store.js';
 import { getPlanEntitlements } from '../server/production/plans.js';
 import { getEffectiveWallet, resolveEffectivePlan } from '../server/production/credits.js';
+import { config } from '../server/config/index.js';
 
 test('Routes & Entitlements: Restrição de limite de empresas por plano', async () => {
   resetMemoryDb();
@@ -428,6 +429,102 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
     assert.equal(resProStart.status, 200, 'PRO comum deve ter acesso permitido (200) em /social/oauth/:provider/start');
     const dataProStart = await resProStart.json();
     assert.ok(dataProStart.authUrl || dataProStart.url, 'PRO comum deve receber authUrl');
+
+    // -------------------------------------------------------------------------
+    // TESTE 4: Rota /api/cron/health protegida por CRON_SECRET
+    // -------------------------------------------------------------------------
+    const resCronNoAuth = await fetch(`${baseUrl}/api/cron/health`);
+    assert.equal(resCronNoAuth.status, 401, 'Cron sem Bearer token deve retornar 401');
+
+    const resCronBadAuth = await fetch(`${baseUrl}/api/cron/health`, {
+      headers: { Authorization: 'Bearer token_invalido_cron' }
+    });
+    assert.equal(resCronBadAuth.status, 401, 'Cron com token incorreto deve retornar 401');
+
+    const resCronValid = await fetch(`${baseUrl}/api/cron/health`, {
+      headers: { Authorization: `Bearer ${config.cronSecret}` }
+    });
+    assert.equal(resCronValid.status, 200, 'Cron com CRON_SECRET válido deve retornar 200');
+    const cronData = await resCronValid.json();
+    assert.equal(cronData.status, 'ok');
+    assert.ok(cronData.queueStats);
+
+    // -------------------------------------------------------------------------
+    // TESTE 5: Rota /api/content/schedule com validação de plano e rede conectada
+    // -------------------------------------------------------------------------
+    // Conteúdo de teste
+    await db.collection(COLLECTIONS.contentItems).doc('item_route_test').set({
+      id: 'item_route_test',
+      userId: proUserId,
+      companyId: proCompanyId,
+      headline: 'Post para Agendar',
+      body: 'Texto completo do post',
+      status: 'draft'
+    });
+
+    // 5.1 Free user tenta agendar -> 403
+    const resSchedFree = await fetch(`${baseUrl}/api/content/schedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token_free_user',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        companyId: freeCompanyId,
+        contentItemId: 'item_route_test',
+        platforms: ['Facebook'],
+        scheduledFor: new Date(Date.now() + 3600_000).toISOString()
+      })
+    });
+    assert.equal(resSchedFree.status, 403, 'Usuário Free deve receber 403 ao agendar');
+
+    // 5.2 Pro user tenta agendar sem rede conectada -> 400
+    const resSchedNoConn = await fetch(`${baseUrl}/api/content/schedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token_pro_user',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        companyId: proCompanyId,
+        contentItemId: 'item_route_test',
+        platforms: ['Facebook'],
+        scheduledFor: new Date(Date.now() + 3600_000).toISOString()
+      })
+    });
+    assert.equal(resSchedNoConn.status, 400, 'Agendar sem rede conectada deve retornar 400');
+    const noConnData = await resSchedNoConn.json();
+    assert.match(noConnData.error, /não está conectada/);
+
+    // Conectar Facebook para Pro User
+    await db.collection(COLLECTIONS.socialConnections).doc('conn_pro_fb').set({
+      id: 'conn_pro_fb',
+      userId: proUserId,
+      companyId: proCompanyId,
+      provider: 'facebook',
+      pageId: '1234567890',
+      accessToken: 'encrypted_token',
+      status: 'connected'
+    });
+
+    // 5.3 Pro user agenda com sucesso -> 201
+    const resSchedSuccess = await fetch(`${baseUrl}/api/content/schedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token_pro_user',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        companyId: proCompanyId,
+        contentItemId: 'item_route_test',
+        platforms: ['Facebook'],
+        scheduledFor: new Date(Date.now() + 3600_000).toISOString()
+      })
+    });
+    assert.equal(resSchedSuccess.status, 201, 'Agendamento válido deve retornar 201');
+    const schedData = await resSchedSuccess.json();
+    assert.equal(schedData.scheduled.status, 'scheduled');
+    assert.equal(schedData.scheduled.contentItemId, 'item_route_test');
   } finally {
     server.close();
     firebaseAdminProvider.setAdminAuthForTesting(undefined);

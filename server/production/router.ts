@@ -8,8 +8,8 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, sanitizeOAuthPublicError, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
-import { processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
+import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
 
@@ -629,15 +629,64 @@ router.post('/content/schedule', requireAuth, asyncRoute(async (req: Authenticat
   const scheduledFor = safeString(req.body?.scheduledFor, 100);
   const companyId = safeString(req.body?.companyId, 200);
   if (!contentItemId || !scheduledFor || !companyId) return res.status(400).json({ error: 'Empresa, conteúdo e data são obrigatórios.' });
+
+  // 1. Entitlement check: Plano pago (socialConnections) ou admin
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  const isAdmin = req.user?.role === 'admin';
+  if (!entitlements.socialConnections && !isAdmin) {
+    return res.status(403).json({ error: 'O seu plano atual não inclui agendamento e publicação automática em redes sociais. Faça upgrade para o plano PRO ou superior.' });
+  }
+
+  // 2. Ownership da empresa
   await requireOwnedCompany(req.user!.id, companyId);
+
+  // 3. Validação do conteúdo
   const itemSnap = await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).get();
   if (!itemSnap.exists || itemSnap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Conteúdo não encontrado.' });
+  const itemData = itemSnap.data() as any;
+  if (itemData.companyId !== companyId && itemData.companyId !== 'default') {
+    return res.status(400).json({ error: 'O conteúdo selecionado pertence a outra empresa.' });
+  }
+
+  const contentText = [itemData.headline, itemData.body, itemData.cta].filter(Boolean).join(' ').trim();
+  if (!contentText) {
+    return res.status(400).json({ error: 'O conteúdo selecionado não possui texto para publicação.' });
+  }
+
+  // 4. Validação da data
   if (Number.isNaN(new Date(scheduledFor).getTime())) return res.status(400).json({ error: 'Data de agendamento inválida.' });
+
+  // 5. Validação das plataformas e conexões ativas
+  const rawPlatforms = stringArray(req.body?.platforms, 10);
+  if (!rawPlatforms.length) return res.status(400).json({ error: 'Selecione ao menos uma rede social para o agendamento.' });
+
+  for (const plat of rawPlatforms) {
+    const provider = normalizeProvider(plat);
+    if (!provider) return res.status(400).json({ error: `Rede social "${plat}" não reconhecida.` });
+
+    const connSnap = await firestore().collection(COLLECTIONS.socialConnections)
+      .where('userId', '==', req.user!.id)
+      .where('companyId', '==', companyId)
+      .where('provider', '==', provider)
+      .limit(1)
+      .get();
+
+    if (connSnap.empty) {
+      return res.status(400).json({ error: `A conta de ${plat} não está conectada para esta empresa. Conecte-a em Redes Sociais antes de agendar.` });
+    }
+
+    const conn = connSnap.docs[0].data() as any;
+    if (conn.status === 'token_expired' || (conn.expiresAt && new Date(conn.expiresAt).getTime() < Date.now())) {
+      return res.status(400).json({ error: `A autenticação com ${plat} expirou. Reconecte a conta em Redes Sociais antes de agendar.` });
+    }
+  }
+
   const id = newId('sched');
-  const scheduled = { id, userId: req.user!.id, companyId, contentItemId, platforms: stringArray(req.body?.platforms, 10), scheduledFor: new Date(scheduledFor).toISOString(), status: 'scheduled', autopilotGenerated: Boolean(req.body?.autopilotGenerated), createdAt: nowIso() };
+  const scheduled = { id, userId: req.user!.id, companyId, contentItemId, platforms: rawPlatforms, scheduledFor: new Date(scheduledFor).toISOString(), status: 'scheduled', autopilotGenerated: Boolean(req.body?.autopilotGenerated), createdAt: nowIso() };
   await firestore().collection(COLLECTIONS.scheduledPosts).doc(id).set(scheduled);
   await itemSnap.ref.set({ status: 'scheduled', updatedAt: nowIso() }, { merge: true });
-  res.status(201).json({ message: 'Publicação agendada.', scheduled });
+  res.status(201).json({ message: 'Publicação agendada com sucesso.', scheduled });
 }));
 
 async function scheduledForUser(userId: string, companyId?: string) {
@@ -1165,6 +1214,12 @@ router.delete('/admin/blog/:id', requireAdmin, asyncRoute(async (req: Authentica
 }));
 
 // Scheduler. No secret in query string.
+router.get('/cron/health', asyncRoute(async (req, res) => {
+  const auth = String(req.headers.authorization || '');
+  if (!config.cronSecret || auth !== `Bearer ${config.cronSecret}`) return res.status(401).json({ error: 'Cron não autorizado.' });
+  res.json(await getSchedulerHealth());
+}));
+
 router.get('/cron/process', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
   if (!config.cronSecret || auth !== `Bearer ${config.cronSecret}`) return res.status(401).json({ error: 'Cron não autorizado.' });

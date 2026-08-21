@@ -124,6 +124,47 @@ async function releaseLock(): Promise<void> {
   await firestore().collection(COLLECTIONS.schedulerLocks).doc('process').set({ lockedUntil: 0, releasedAt: Date.now() }, { merge: true });
 }
 
+export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): Promise<number> {
+  const db = firestore();
+  const snap = await db.collection(COLLECTIONS.scheduledPosts)
+    .where('status', '==', 'publishing')
+    .limit(50)
+    .get();
+
+  let recovered = 0;
+  const cutoffMs = Date.now() - staleThresholdMinutes * 60 * 1000;
+
+  for (const doc of snap.docs) {
+    const post = doc.data() as any;
+    const timeIso = post.processingAt || post.publishedAt || post.updatedAt || post.createdAt;
+    const processingTime = timeIso ? new Date(timeIso).getTime() : 0;
+
+    if (processingTime < cutoffMs) {
+      const publicationResults = Array.isArray(post.publicationResults) ? post.publicationResults : [];
+      const hasSuccessfulPublish = publicationResults.some((r: any) => r?.success && r?.externalId);
+
+      if (hasSuccessfulPublish) {
+        await doc.ref.update({
+          status: 'published',
+          publishedAt: post.publishedAt || nowIso(),
+          errorMessage: null,
+          recoveredAt: nowIso(),
+          updatedAt: nowIso()
+        });
+      } else {
+        await doc.ref.update({
+          status: 'failed',
+          errorMessage: 'Processamento interrompido ou tempo limite de publicação excedido. Verifique o status antes de reagendar.',
+          recoveredAt: nowIso(),
+          updatedAt: nowIso()
+        });
+      }
+      recovered += 1;
+    }
+  }
+  return recovered;
+}
+
 export async function processScheduledPosts(): Promise<number> {
   const db = firestore();
   const snap = await db.collection(COLLECTIONS.scheduledPosts)
@@ -149,8 +190,17 @@ export async function processScheduledPosts(): Promise<number> {
       if (!userSnap.exists) {
         throw new Error('Inconsistência de segurança: Usuário associado ao agendamento não encontrado.');
       }
+      const userData = userSnap.data() as any;
 
-      // 2. Revalidação de empresa e titularidade multi-tenant
+      // 2. Revalidação de plano e entitlements
+      const wallet = await getWallet(post.userId);
+      const entitlements = getPlanEntitlements(wallet.planId);
+      const isAdmin = userData?.role === 'admin';
+      if (!entitlements.socialConnections && !isAdmin) {
+        throw new Error('O plano atual do usuário não permite publicação automática em redes sociais. Faça upgrade para o plano PRO ou superior.');
+      }
+
+      // 3. Revalidação de empresa e titularidade multi-tenant
       const companySnap = await db.collection(COLLECTIONS.companies).doc(post.companyId).get();
       if (!companySnap.exists) {
         throw new Error('Inconsistência de segurança: Empresa associada ao agendamento não encontrada.');
@@ -160,7 +210,7 @@ export async function processScheduledPosts(): Promise<number> {
         throw new Error('Violação de isolamento multi-tenant: Empresa não pertence ao usuário do agendamento.');
       }
 
-      // 3. Revalidação de conteúdo e titularidade
+      // 4. Revalidação de conteúdo e titularidade
       const contentSnap = await db.collection(COLLECTIONS.contentItems).doc(post.contentItemId).get();
       if (!contentSnap.exists) {
         throw new Error('Inconsistência de segurança: Conteúdo associado não encontrado.');
@@ -173,13 +223,23 @@ export async function processScheduledPosts(): Promise<number> {
       const platforms = Array.isArray(post.platforms) ? post.platforms : [];
       if (!platforms.length) throw new Error('Nenhuma rede social selecionada para publicação.');
 
+      const existingResults = Array.isArray(post.publicationResults) ? post.publicationResults : [];
       const publicationResults: any[] = [];
+
       for (const platform of platforms) {
         const provider = normalizeProvider(String(platform));
         if (!provider) {
           publicationResults.push({ platform, success: false, error: 'Plataforma não reconhecida.' });
           continue;
         }
+
+        // Idempotência: Se já foi publicado com sucesso nesta plataforma anteriormente (ex: retry parcial), reaproveita o resultado
+        const prevSuccess = existingResults.find((r: any) => (r?.platform === platform || normalizeProvider(r?.platform) === provider) && r?.success && r?.externalId);
+        if (prevSuccess) {
+          publicationResults.push(prevSuccess);
+          continue;
+        }
+
         try {
           const text = [content.headline, content.body, content.cta, ...(content.hashtags || [])].filter(Boolean).join('\n\n');
           const result = await publishText({ userId: post.userId, companyId: post.companyId, provider, text });
@@ -193,8 +253,9 @@ export async function processScheduledPosts(): Promise<number> {
       const allSucceeded = successful.length === publicationResults.length && publicationResults.length > 0;
       const anySucceeded = successful.length > 0;
       const status = allSucceeded ? 'published' : 'failed';
+      const lastExternalId = successful.map((s: any) => s.externalId).filter(Boolean).pop() || null;
       const errorMessage = allSucceeded ? null : anySucceeded ? 'Publicação parcial: uma ou mais plataformas falharam.' : publicationResults.map((item) => item.error).filter(Boolean).join(' | ').slice(0, 1000);
-      await doc.ref.update({ status, publishedAt: allSucceeded ? nowIso() : null, publicationResults, errorMessage, processedAt: nowIso() });
+      await doc.ref.update({ status, publishedAt: allSucceeded ? (post.publishedAt || nowIso()) : null, lastExternalId, publicationResults, errorMessage, processedAt: nowIso() });
       if (allSucceeded) await contentSnap.ref.update({ status: 'published', updatedAt: nowIso() });
       await createNotification({
         userId: post.userId,
@@ -508,15 +569,123 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
 
 export async function processSchedulerTick() {
   if (!(await acquireLock())) return { skipped: true, reason: 'Outro ciclo já está em execução.' };
+
+  const errors: Record<string, string> = {};
+  let releasedReservations = 0;
+  let videoJobs: { checked: number; completed: number; failed: number } | number = 0;
+  let recoveredPublishing = 0;
+  let scheduledPosts = 0;
+  let autopilot = 0;
+  let autoBlog = 0;
+
   try {
-    const releasedReservations = await cleanupStaleReservations(30);
-    const videoJobs = await processPendingVideoJobs();
-    const scheduledPosts = await processScheduledPosts();
-    const autopilot = await processAutopilot();
-    const autoBlog = await processAutoBlog();
-    return { skipped: false, releasedReservations, videoJobs, scheduledPosts, autopilot, autoBlog, processedAt: nowIso() };
+    // Step 1: Cleanup stale reservations
+    try {
+      releasedReservations = await cleanupStaleReservations(30);
+    } catch (err: any) {
+      errors.cleanupReservations = err?.message || String(err);
+      console.error('[Scheduler] Erro em cleanupStaleReservations:', err);
+    }
+
+    // Step 2: Process pending video jobs
+    try {
+      videoJobs = await processPendingVideoJobs();
+    } catch (err: any) {
+      errors.videoJobs = err?.message || String(err);
+      console.error('[Scheduler] Erro em processPendingVideoJobs:', err);
+    }
+
+    // Step 3: Recover stale publishing posts
+    try {
+      recoveredPublishing = await recoverStalePublishingPosts(15);
+    } catch (err: any) {
+      errors.recoverPublishing = err?.message || String(err);
+      console.error('[Scheduler] Erro em recoverStalePublishingPosts:', err);
+    }
+
+    // Step 4: Process scheduled posts
+    try {
+      scheduledPosts = await processScheduledPosts();
+    } catch (err: any) {
+      errors.scheduledPosts = err?.message || String(err);
+      console.error('[Scheduler] Erro em processScheduledPosts:', err);
+    }
+
+    // Step 5: Process autopilot
+    try {
+      autopilot = await processAutopilot();
+    } catch (err: any) {
+      errors.autopilot = err?.message || String(err);
+      console.error('[Scheduler] Erro em processAutopilot:', err);
+    }
+
+    // Step 6: Process auto blog
+    try {
+      autoBlog = await processAutoBlog();
+    } catch (err: any) {
+      errors.autoBlog = err?.message || String(err);
+      console.error('[Scheduler] Erro em processAutoBlog:', err);
+    }
+
+    return {
+      skipped: false,
+      releasedReservations,
+      videoJobs,
+      recoveredPublishing,
+      scheduledPosts,
+      autopilot,
+      autoBlog,
+      errors: Object.keys(errors).length > 0 ? errors : undefined,
+      processedAt: nowIso()
+    };
   } finally {
     await releaseLock();
   }
+}
+
+export async function getSchedulerHealth(): Promise<{
+  status: 'ok' | 'degraded';
+  environment: string;
+  cronConfigured: boolean;
+  metaConfigured: boolean;
+  lock: { isLocked: boolean; lockedAt: number | null; lockedUntil: number | null; owner: string | null };
+  queueStats: { scheduledPending: number; publishingCount: number };
+  checkedAt: string;
+}> {
+  const db = firestore();
+  const now = Date.now();
+
+  const lockSnap = await db.collection(COLLECTIONS.schedulerLocks).doc('process').get();
+  const lockData = lockSnap.data() as any;
+  const lockedUntil = lockData?.lockedUntil ? Number(lockData.lockedUntil) : 0;
+  const isLocked = lockedUntil > now;
+
+  const [pendingSnap, publishingSnap] = await Promise.all([
+    db.collection(COLLECTIONS.scheduledPosts)
+      .where('status', '==', 'scheduled')
+      .where('scheduledFor', '<=', nowIso())
+      .get(),
+    db.collection(COLLECTIONS.scheduledPosts)
+      .where('status', '==', 'publishing')
+      .get()
+  ]);
+
+  return {
+    status: 'ok',
+    environment: config.nodeEnv,
+    cronConfigured: Boolean(config.cronSecret),
+    metaConfigured: Boolean(config.social.meta.clientId && config.social.meta.clientSecret),
+    lock: {
+      isLocked,
+      lockedAt: lockData?.lockedAt || null,
+      lockedUntil: lockData?.lockedUntil || null,
+      owner: lockData?.owner || null
+    },
+    queueStats: {
+      scheduledPending: pendingSnap.size,
+      publishingCount: publishingSnap.size
+    },
+    checkedAt: nowIso()
+  };
 }
 

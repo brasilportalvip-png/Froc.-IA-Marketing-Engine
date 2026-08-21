@@ -12,7 +12,12 @@ export interface PlanEntitlements {
 }
 
 export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
-  const pid = planId || 'plan_free';
+  let pid = planId || 'plan_free';
+  if (pid === 'pro') pid = 'plan_pro';
+  if (pid === 'start') pid = 'plan_start';
+  if (pid === 'business') pid = 'plan_business';
+  if (pid === 'agency') pid = 'plan_agency';
+  if (pid === 'free') pid = 'plan_free';
   switch (pid) {
     case 'plan_agency':
       return {

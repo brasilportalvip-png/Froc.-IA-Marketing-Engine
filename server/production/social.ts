@@ -4,6 +4,18 @@ import { COLLECTIONS, firestore, nowIso, stableId } from './store.js';
 
 export type SocialProvider = 'instagram' | 'facebook' | 'tiktok' | 'youtube' | 'linkedin' | 'pinterest' | 'x';
 
+export function normalizeProvider(value: string): SocialProvider | null {
+  const v = String(value || '').toLowerCase().trim();
+  if (v.includes('instagram')) return 'instagram';
+  if (v.includes('facebook')) return 'facebook';
+  if (v.includes('tiktok')) return 'tiktok';
+  if (v.includes('youtube')) return 'youtube';
+  if (v.includes('linkedin')) return 'linkedin';
+  if (v === 'x' || v.includes('twitter')) return 'x';
+  if (v.includes('pinterest')) return 'pinterest';
+  return null;
+}
+
 function key(): Buffer {
   if (!config.encryptionKey) throw new Error('TOKEN_ENCRYPTION_KEY não configurada.');
   return crypto.createHash('sha256').update(config.encryptionKey).digest();
@@ -447,6 +459,9 @@ export async function disconnectSocial(userId: string, companyId: string, provid
 }
 
 export async function publishText(data: { userId: string; companyId: string; provider: SocialProvider; text: string }) {
+  const trimmedText = (data.text || '').trim();
+  if (!trimmedText) throw new Error(`O texto para publicação em ${data.provider} não pode estar vazio.`);
+
   const snap = await firestore().collection(COLLECTIONS.socialConnections).where('userId', '==', data.userId).where('companyId', '==', data.companyId).where('provider', '==', data.provider).limit(1).get();
   if (snap.empty) throw new Error(`Conta ${data.provider} não conectada.`);
   const connection = snap.docs[0].data() as any;
@@ -455,21 +470,24 @@ export async function publishText(data: { userId: string; companyId: string; pro
     throw new Error(`A autenticação com ${data.provider} expirou. Reconecte a conta nas configurações para autorizar novas publicações.`);
   }
 
-  const token = decrypt(connection.encryptedAccessToken);
+  const tokenEncrypted = connection.encryptedAccessToken || connection.accessToken || '';
+  const token = decrypt(tokenEncrypted);
+  const targetAccountId = connection.accountId || connection.pageId;
 
   if (data.provider === 'x') {
-    const response = await fetch('https://api.x.com/2/tweets', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: data.text.slice(0, 280) }) });
+    const response = await fetch('https://api.x.com/2/tweets', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: trimmedText.slice(0, 280) }) });
     const json = await response.json().catch(() => ({} as any));
     if (!response.ok) throw new Error(json.detail || json.title || 'Falha ao publicar no X.');
     return { provider: 'x', externalId: json.data?.id || null };
   }
 
   if (data.provider === 'facebook') {
-    const endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(connection.accountId)}/feed`;
+    if (!targetAccountId) throw new Error('Identificador da Página do Facebook (accountId / pageId) não encontrado na conexão.');
+    const endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(targetAccountId)}/feed`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ message: data.text, access_token: token }).toString()
+      body: new URLSearchParams({ message: trimmedText, access_token: token }).toString()
     });
     const json = await response.json().catch(() => ({} as any));
     if (!response.ok || !json.id) throw new Error(json.error?.message || 'Falha ao publicar na Página do Facebook.');
@@ -488,7 +506,7 @@ export async function publishText(data: { userId: string; companyId: string; pro
       },
       body: JSON.stringify({
         author: `urn:li:person:${connection.accountId}`,
-        commentary: data.text,
+        commentary: trimmedText,
         visibility: 'PUBLIC',
         distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
         lifecycleState: 'PUBLISHED',

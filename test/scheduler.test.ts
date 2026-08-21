@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import {
   triggerUserAutopilot,
   processScheduledPosts,
+  recoverStalePublishingPosts,
+  getSchedulerHealth,
   isAutopilotDue,
   getLocalDateAndHour,
   type AutopilotScheduleConfig
 } from '../server/production/scheduler.js';
 import { resetMemoryDb, firestore, COLLECTIONS } from '../server/production/store.js';
 import { addCredits } from '../server/production/credits.js';
+import { encrypt } from '../server/production/social.js';
+import { config } from '../server/config/index.js';
 
 test('Scheduler: Isolamento de trigger do Autopilot para a empresa do próprio usuário', async () => {
   resetMemoryDb();
@@ -55,8 +59,10 @@ test('Scheduler: Revalidação estrita de ownership antes da publicação de sch
   const userB = 'usr_attacker_beta';
 
   // Registra perfis
-  await db.collection(COLLECTIONS.users).doc(userA).set({ id: userA, email: 'alpha@empresa.com' });
-  await db.collection(COLLECTIONS.users).doc(userB).set({ id: userB, email: 'beta@empresa.com' });
+  await db.collection(COLLECTIONS.users).doc(userA).set({ id: userA, email: 'alpha@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.users).doc(userB).set({ id: userB, email: 'beta@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.wallets).doc(userA).set({ userId: userA, planId: 'plan_pro', balance: 50 });
+  await db.collection(COLLECTIONS.wallets).doc(userB).set({ userId: userB, planId: 'plan_pro', balance: 50 });
 
   // Empresa de User A
   const compA = 'comp_alpha_1';
@@ -131,6 +137,7 @@ test('Scheduler: Processamento de scheduledPosts vencidos versus futuros', async
   const company = 'comp_timer_1';
 
   await db.collection(COLLECTIONS.users).doc(user).set({ id: user, email: 'timer@empresa.com' });
+  await db.collection(COLLECTIONS.wallets).doc(user).set({ userId: user, planId: 'pro', balance: 50 });
   await db.collection(COLLECTIONS.companies).doc(company).set({ id: company, userId: user, name: 'Timer Empresa' });
 
   const contentDue = 'cnt_due_1';
@@ -234,4 +241,228 @@ test('Scheduler: Autopilot isAutopilotDue validação determinística de janelas
   assert.equal(spLocal.dayOfWeek, 1);
   assert.equal(spLocal.dateStr, '2026-08-17');
 });
+
+test('Scheduler: recoverStalePublishingPosts recupera posts travados em publishing por mais de 15 minutos', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const user = 'usr_stale_test';
+  const company = 'comp_stale_test';
+
+  // 1. Post travado há 20 minutos em status 'publishing'
+  const stalePostId = 'sched_stale_20min';
+  await db.collection(COLLECTIONS.scheduledPosts).doc(stalePostId).set({
+    id: stalePostId,
+    userId: user,
+    companyId: company,
+    status: 'publishing',
+    processingAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    platforms: ['Facebook']
+  });
+
+  // 2. Post em 'publishing' recente (há 2 minutos) -> NÃO deve ser afetado
+  const freshPostId = 'sched_fresh_2min';
+  await db.collection(COLLECTIONS.scheduledPosts).doc(freshPostId).set({
+    id: freshPostId,
+    userId: user,
+    companyId: company,
+    status: 'publishing',
+    processingAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    platforms: ['Facebook']
+  });
+
+  const recovered = await recoverStalePublishingPosts();
+  assert.equal(recovered, 1);
+
+  const staleSnap = await db.collection(COLLECTIONS.scheduledPosts).doc(stalePostId).get();
+  assert.equal(staleSnap.data()?.status, 'failed');
+  assert.match(staleSnap.data()?.errorMessage, /tempo limite de publicação excedido/i);
+
+  const freshSnap = await db.collection(COLLECTIONS.scheduledPosts).doc(freshPostId).get();
+  assert.equal(freshSnap.data()?.status, 'publishing');
+});
+
+test('Scheduler: getSchedulerHealth retorna métricas e status do lock', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  await db.collection(COLLECTIONS.scheduledPosts).doc('p1').set({ status: 'scheduled', scheduledFor: new Date(Date.now() - 10000).toISOString() });
+  await db.collection(COLLECTIONS.scheduledPosts).doc('p2').set({ status: 'publishing' });
+  await db.collection(COLLECTIONS.scheduledPosts).doc('p3').set({ status: 'failed', errorMessage: 'Erro teste' });
+  await db.collection(COLLECTIONS.scheduledPosts).doc('p4').set({ status: 'published' });
+
+  const health = await getSchedulerHealth();
+  assert.equal(health.status, 'ok');
+  assert.equal(health.queueStats.scheduledPending, 1);
+  assert.equal(health.queueStats.publishingCount, 1);
+});
+
+test('Scheduler: Publicação direta Facebook Page com sucesso grava externalId e status published', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_fb_publisher';
+  const companyId = 'comp_fb_publisher';
+  const contentId = 'content_fb_123';
+  const schedId = 'sched_fb_123';
+
+  // Configura Plano PRO para ter direito a socialConnections
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({
+    userId,
+    planId: 'pro',
+    creditsBalance: 50
+  });
+
+  await db.collection(COLLECTIONS.users).doc(userId).set({ id: userId, email: 'fb@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({ id: companyId, userId, name: 'Empresa Teste Facebook' });
+
+  // Cria item de conteúdo com texto
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set({
+    id: contentId,
+    userId,
+    companyId,
+    headline: 'Novidade Imperdível',
+    body: 'Venha conferir nossos lançamentos especiais desta semana!',
+    cta: 'Saiba mais no link da bio.',
+    status: 'scheduled'
+  });
+
+  // Conexão social Facebook ativa com Page Access Token criptografado
+  const rawPageToken = 'EAABmockPageAccessToken123';
+  await db.collection(COLLECTIONS.socialConnections).doc('conn_fb_test').set({
+    id: 'conn_fb_test',
+    userId,
+    companyId,
+    provider: 'facebook',
+    pageId: '10987654321',
+    accountId: '10987654321',
+    accountName: 'Página Oficial Facebook',
+    encryptedAccessToken: encrypt(rawPageToken),
+    status: 'connected',
+    updatedAt: new Date().toISOString()
+  });
+
+  // Agendamento vencido para Facebook
+  await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).set({
+    id: schedId,
+    userId,
+    companyId,
+    contentItemId: contentId,
+    platforms: ['Facebook'],
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    status: 'scheduled'
+  });
+
+  // Mock global fetch para simular API do Meta Graph POST /{pageId}/feed
+  const originalFetch = globalThis.fetch;
+  let interceptedUrl = '';
+  let interceptedBody = '';
+
+  globalThis.fetch = async (input: any, init?: any) => {
+    interceptedUrl = String(input);
+    if (interceptedUrl.includes('10987654321/feed')) {
+      interceptedBody = String(init?.body || '');
+      return new Response(JSON.stringify({ id: '10987654321_9988776655' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response('Not found', { status: 404 });
+  };
+
+  try {
+    const processed = await processScheduledPosts();
+    assert.equal(processed, 1);
+
+    // Verifica chamada Meta
+    assert.ok(interceptedUrl.includes(`graph.facebook.com/${config.social.meta.graphVersion}/10987654321/feed`));
+    const parsedParams = new URLSearchParams(interceptedBody);
+    const messageParam = parsedParams.get('message') || '';
+    assert.ok(messageParam.includes('Novidade Imperdível'));
+    assert.ok(messageParam.includes('lançamentos especiais'));
+
+    // Verifica status no banco
+    const snap = await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).get();
+    const data = snap.data() as any;
+    assert.equal(data.status, 'published');
+    assert.equal(data.lastExternalId, '10987654321_9988776655');
+    assert.equal(data.publicationResults?.length, 1);
+    assert.equal(data.publicationResults[0].platform, 'Facebook');
+    assert.equal(data.publicationResults[0].success, true);
+    assert.equal(data.publicationResults[0].externalId, '10987654321_9988776655');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Scheduler: Idempotência de publicação caso externalId já exista', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_idemp';
+  const companyId = 'comp_idemp';
+  const contentId = 'content_idemp';
+  const schedId = 'sched_idemp';
+
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({
+    userId,
+    planId: 'pro',
+    creditsBalance: 50
+  });
+  await db.collection(COLLECTIONS.users).doc(userId).set({ id: userId, email: 'idemp@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({ id: companyId, userId, name: 'Empresa Idempotente' });
+
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set({
+    id: contentId,
+    userId,
+    companyId,
+    headline: 'Post já publicado no Facebook',
+    body: 'Conteúdo repetido',
+    status: 'scheduled'
+  });
+
+  await db.collection(COLLECTIONS.socialConnections).doc('conn_idemp').set({
+    id: 'conn_idemp',
+    userId,
+    companyId,
+    provider: 'facebook',
+    pageId: '10987654321',
+    accessToken: encrypt('tok_idemp'),
+    status: 'connected'
+  });
+
+  // Post já possui resultado de sucesso para Facebook com externalId
+  await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).set({
+    id: schedId,
+    userId,
+    companyId,
+    contentItemId: contentId,
+    platforms: ['Facebook'],
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    status: 'scheduled',
+    publicationResults: [
+      { platform: 'facebook', success: true, externalId: 'fb_existing_123', publishedAt: new Date().toISOString() }
+    ]
+  });
+
+  let fetchCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return new Response(JSON.stringify({ id: 'fb_should_not_be_called' }), { status: 200 });
+  };
+
+  try {
+    const processed = await processScheduledPosts();
+    assert.equal(processed, 1);
+    assert.equal(fetchCalled, false, 'Fetch não deve ser chamado para plataforma que já possui externalId');
+
+    const snap = await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).get();
+    assert.equal(snap.data()?.status, 'published');
+    assert.equal(snap.data()?.lastExternalId, 'fb_existing_123');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 

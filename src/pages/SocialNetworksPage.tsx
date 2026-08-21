@@ -47,8 +47,18 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
   useEffect(()=>{
     const p=new URLSearchParams(window.location.search);
     const connected=p.get('connected'), oauthError=p.get('error');
-    if(connected){setMessage(`${connected} conectado com sucesso.`);void fetchConnections();}
-    if(oauthError)setError(oauthError);
+    if(connected){
+      setMessage(`${connected} conectado com sucesso.`);
+      void fetchConnections();
+    }
+    if(oauthError) setError(oauthError);
+    if(connected || oauthError){
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch {
+        // Safe fallback
+      }
+    }
   },[fetchConnections]);
 
   const byProvider=useMemo(()=>new Map(connections.map(c=>[c.provider,c])),[connections]);
