@@ -4,6 +4,32 @@ import { COLLECTIONS, firestore, nowIso, stableId } from './store.js';
 
 export type SocialProvider = 'instagram' | 'facebook' | 'tiktok' | 'youtube' | 'linkedin' | 'pinterest' | 'x';
 
+export const TEXT_AUTO_PUBLISH_PROVIDERS: readonly SocialProvider[] = ['facebook', 'linkedin', 'x'] as const;
+
+export function isTextAutoPublishSupported(provider: string): boolean {
+  const norm = normalizeProvider(provider);
+  if (!norm) return false;
+  return (TEXT_AUTO_PUBLISH_PROVIDERS as readonly string[]).includes(norm);
+}
+
+export function getProviderAutoPublishReason(provider: string): string | null {
+  const norm = normalizeProvider(provider);
+  if (!norm) return 'Rede social não reconhecida.';
+  if (isTextAutoPublishSupported(norm)) return null;
+  switch (norm) {
+    case 'instagram':
+      return 'O Instagram exige mídia visual obrigatória (imagem ou vídeo) via Graph API e não suporta publicação automática puramente textual.';
+    case 'tiktok':
+      return 'O TikTok suporta exclusivamente postagem de vídeos via API Direct Post/Draft Inbox.';
+    case 'youtube':
+      return 'O YouTube exige arquivo de vídeo ou Short para publicação.';
+    case 'pinterest':
+      return 'O Pinterest exige envio de imagem e URL de destino para criação de Pins.';
+    default:
+      return `A rede social "${provider}" não suporta publicação automática textual direta neste pipeline.`;
+  }
+}
+
 export function normalizeProvider(value: string): SocialProvider | null {
   const v = String(value || '').toLowerCase().trim();
   if (v.includes('instagram')) return 'instagram';

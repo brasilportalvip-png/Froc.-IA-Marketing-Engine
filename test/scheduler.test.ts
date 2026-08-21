@@ -242,14 +242,14 @@ test('Scheduler: Autopilot isAutopilotDue validação determinística de janelas
   assert.equal(spLocal.dateStr, '2026-08-17');
 });
 
-test('Scheduler: recoverStalePublishingPosts recupera posts travados em publishing por mais de 15 minutos', async () => {
+test('Scheduler: recoverStalePublishingPosts recupera posts travados em publishing por mais de 15 minutos e marca requires_review se não houver externalId', async () => {
   resetMemoryDb();
   const db = firestore();
 
   const user = 'usr_stale_test';
   const company = 'comp_stale_test';
 
-  // 1. Post travado há 20 minutos em status 'publishing'
+  // 1. Post travado há 20 minutos em status 'publishing' sem confirmação externa
   const stalePostId = 'sched_stale_20min';
   await db.collection(COLLECTIONS.scheduledPosts).doc(stalePostId).set({
     id: stalePostId,
@@ -271,12 +271,30 @@ test('Scheduler: recoverStalePublishingPosts recupera posts travados em publishi
     platforms: ['Facebook']
   });
 
+  // 3. Post travado há 20 minutos mas com confirmação externa para todas as plataformas -> deve marcar published
+  const staleConfirmedId = 'sched_stale_confirmed';
+  await db.collection(COLLECTIONS.scheduledPosts).doc(staleConfirmedId).set({
+    id: staleConfirmedId,
+    userId: user,
+    companyId: company,
+    status: 'publishing',
+    processingAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    platforms: ['Facebook'],
+    publicationResults: [
+      { platform: 'Facebook', success: true, externalId: 'fb_recovered_123' }
+    ]
+  });
+
   const recovered = await recoverStalePublishingPosts();
-  assert.equal(recovered, 1);
+  assert.equal(recovered, 2);
 
   const staleSnap = await db.collection(COLLECTIONS.scheduledPosts).doc(stalePostId).get();
-  assert.equal(staleSnap.data()?.status, 'failed');
-  assert.match(staleSnap.data()?.errorMessage, /tempo limite de publicação excedido/i);
+  assert.equal(staleSnap.data()?.status, 'requires_review');
+  assert.match(staleSnap.data()?.errorMessage, /Verificação manual necessária/i);
+
+  const confirmedSnap = await db.collection(COLLECTIONS.scheduledPosts).doc(staleConfirmedId).get();
+  assert.equal(confirmedSnap.data()?.status, 'published');
+  assert.equal(confirmedSnap.data()?.lastExternalId, 'fb_recovered_123');
 
   const freshSnap = await db.collection(COLLECTIONS.scheduledPosts).doc(freshPostId).get();
   assert.equal(freshSnap.data()?.status, 'publishing');

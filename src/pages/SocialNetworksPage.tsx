@@ -45,16 +45,22 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
 
   useEffect(()=>{void fetchConnections()},[fetchConnections]);
   useEffect(()=>{
-    const p=new URLSearchParams(window.location.search);
-    const connected=p.get('connected'), oauthError=p.get('error');
-    if(connected){
+    const p = new URLSearchParams(window.location.search);
+    const connected = p.get('connected');
+    const oauthError = p.get('error');
+    if (connected) {
       setMessage(`${connected} conectado com sucesso.`);
       void fetchConnections();
     }
-    if(oauthError) setError(oauthError);
-    if(connected || oauthError){
+    if (oauthError) setError(oauthError);
+    if (connected || oauthError || p.has('companyId')) {
       try {
-        window.history.replaceState({}, document.title, window.location.pathname);
+        p.delete('connected');
+        p.delete('error');
+        p.delete('companyId');
+        const newSearch = p.toString();
+        const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
+        window.history.replaceState({}, document.title, newUrl);
       } catch {
         // Safe fallback
       }

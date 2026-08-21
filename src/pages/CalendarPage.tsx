@@ -12,13 +12,13 @@ interface Props {
 }
 
 const PLATFORM_OPTIONS = [
-  { id: 'Facebook', label: 'Facebook Page', icon: '📘', autoPublish: true, note: 'Publicação direta de texto' },
-  { id: 'LinkedIn', label: 'LinkedIn', icon: '💼', autoPublish: true, note: 'Publicação de texto' },
-  { id: 'X', label: 'X', icon: '𝕏', autoPublish: true, note: 'Publicação de texto (até 280 caracteres)' },
-  { id: 'Instagram', label: 'Instagram', icon: '📸', autoPublish: false, note: 'Requer container de mídia' },
-  { id: 'TikTok', label: 'TikTok', icon: '🎵', autoPublish: false, note: 'Rascunho via Inbox (vídeo MP4)' },
-  { id: 'YouTube', label: 'YouTube', icon: '▶️', autoPublish: false, note: 'Requer arquivo de vídeo' },
-  { id: 'Pinterest', label: 'Pinterest', icon: '📌', autoPublish: false, note: 'Requer imagem/mídia' },
+  { id: 'Facebook', label: 'Facebook Page', icon: '📘', autoPublish: true, note: 'Publicação direta de texto via API Graph' },
+  { id: 'LinkedIn', label: 'LinkedIn', icon: '💼', autoPublish: true, note: 'Publicação direta de texto' },
+  { id: 'X', label: 'X', icon: '𝕏', autoPublish: true, note: 'Publicação direta de texto (até 280 caracteres)' },
+  { id: 'Instagram', label: 'Instagram', icon: '📸', autoPublish: false, note: 'Exige mídia visual obrigatória (imagem/vídeo) via Meta Graph' },
+  { id: 'TikTok', label: 'TikTok', icon: '🎵', autoPublish: false, note: 'Envio exclusivo de vídeo MP4 via aba Redes Sociais' },
+  { id: 'YouTube', label: 'YouTube', icon: '▶️', autoPublish: false, note: 'Exige arquivo de vídeo para publicação' },
+  { id: 'Pinterest', label: 'Pinterest', icon: '📌', autoPublish: false, note: 'Exige imagem e URL de destino para Pins' },
 ];
 
 export const CalendarPage: React.FC<Props> = ({
@@ -30,6 +30,7 @@ export const CalendarPage: React.FC<Props> = ({
 }) => {
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [modal, setModal] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<'auto' | 'planning'>('auto');
   const [contentId, setContentId] = useState('');
   const [dateTime, setDateTime] = useState('');
   const [platforms, setPlatforms] = useState<string[]>(['Facebook']);
@@ -103,7 +104,8 @@ export const CalendarPage: React.FC<Props> = ({
           companyId: selectedCompany.id,
           contentItemId: contentId,
           platforms,
-          scheduledFor: new Date(dateTime).toISOString()
+          scheduledFor: new Date(dateTime).toISOString(),
+          isPlanning: scheduleMode === 'planning'
         }
       });
       setModal(false);
@@ -154,6 +156,18 @@ export const CalendarPage: React.FC<Props> = ({
         return (
           <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-300 animate-pulse">
             <Loader2 size={11} className="animate-spin" /> Publicando…
+          </span>
+        );
+      case 'requires_review':
+        return (
+          <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+            <AlertCircle size={11} /> Verificação manual necessária
+          </span>
+        );
+      case 'planned':
+        return (
+          <span className="inline-flex items-center gap-1 rounded-lg bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 text-[10px] font-bold text-sky-300">
+            <CalendarIcon size={11} /> Planejamento Editorial
           </span>
         );
       case 'failed':
@@ -322,7 +336,22 @@ export const CalendarPage: React.FC<Props> = ({
                       </div>
                     )}
 
-                    {p.errorMessage && <div className="mt-2 text-[10px] text-rose-300 rounded-lg bg-rose-500/10 p-2 border border-rose-500/20">{p.errorMessage}</div>}
+                    {/* Banner de Verificação Manual para resultado incerto */}
+                    {p.status === 'requires_review' && (
+                      <div className="mt-2 text-[11px] text-amber-200 rounded-lg bg-amber-500/15 p-2.5 border border-amber-500/30 flex items-start gap-2">
+                        <AlertCircle size={14} className="shrink-0 text-amber-400 mt-0.5" />
+                        <div>
+                          <div className="font-bold">Verificação manual necessária — a rede pode ter recebido esta publicação.</div>
+                          <div className="text-[10px] text-amber-300/80 mt-0.5">
+                            O processamento foi interrompido sem confirmação externa. Para evitar duplicidade nas redes sociais, não realizamos reenvio automático.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {p.errorMessage && p.status !== 'requires_review' && (
+                      <div className="mt-2 text-[10px] text-rose-300 rounded-lg bg-rose-500/10 p-2 border border-rose-500/20">{p.errorMessage}</div>
+                    )}
                   </div>
 
                   <div className="flex gap-2 shrink-0">
@@ -331,7 +360,7 @@ export const CalendarPage: React.FC<Props> = ({
                         Tentar novamente
                       </button>
                     )}
-                    {(p.status === 'scheduled' || p.status === 'failed') && (
+                    {(p.status === 'scheduled' || p.status === 'failed' || p.status === 'planned') && (
                       <button onClick={() => cancel(p.id)} className="min-h-9 rounded-xl border border-rose-500/20 px-3 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/10">
                         Cancelar
                       </button>
@@ -353,9 +382,47 @@ export const CalendarPage: React.FC<Props> = ({
         <div className="fixed inset-0 z-[90] grid place-items-center bg-black/80 p-3 backdrop-blur-sm animate-fadeIn">
           <form onSubmit={submit} className="max-h-[calc(100dvh-24px)] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-700 bg-[#0F172A] p-5 sm:p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-black text-white">Agendar publicação</h3>
+              <div>
+                <h3 className="text-base font-black text-white">Agendamento & Planejamento</h3>
+                <p className="text-[11px] text-slate-400">Configure a publicação para execução automática ou registro editorial.</p>
+              </div>
               <button type="button" onClick={() => setModal(false)} className="rounded-xl p-2 text-slate-400 hover:text-white">
                 <X size={18} />
+              </button>
+            </div>
+
+            {/* Seletor de Modo: Auto-Publicação vs Planejamento Editorial */}
+            <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-950/60 p-1 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setScheduleMode('auto');
+                  // Remove unsupported auto publish platforms
+                  setPlatforms((prev) => {
+                    const filtered = prev.filter((p) => ['Facebook', 'LinkedIn', 'X'].includes(p));
+                    return filtered.length ? filtered : ['Facebook'];
+                  });
+                }}
+                className={`flex flex-col items-center justify-center py-2 px-3 rounded-xl text-xs font-bold transition ${
+                  scheduleMode === 'auto'
+                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>⚡ Auto-Publicação</span>
+                <span className="text-[9px] font-normal opacity-80">PRO / Business / Agency</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setScheduleMode('planning')}
+                className={`flex flex-col items-center justify-center py-2 px-3 rounded-xl text-xs font-bold transition ${
+                  scheduleMode === 'planning'
+                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>📅 Planejamento Editorial</span>
+                <span className="text-[9px] font-normal opacity-80">Todos os planos (incluindo START)</span>
               </button>
             </div>
 
@@ -402,24 +469,42 @@ export const CalendarPage: React.FC<Props> = ({
               </label>
 
               <div>
-                <div className="text-xs font-semibold text-slate-300 mb-1.5">Redes Sociais de Destino *</div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-xs font-semibold text-slate-300">Redes Sociais de Destino *</div>
+                  {scheduleMode === 'auto' && (
+                    <span className="text-[10px] text-cyan-300">Auto-publicação textual direta: Facebook, LinkedIn e X</span>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {PLATFORM_OPTIONS.map((p) => {
+                    const isSupportedForMode = scheduleMode === 'planning' || p.autoPublish;
                     const selected = platforms.includes(p.id);
                     return (
                       <button
                         type="button"
                         key={p.id}
-                        onClick={() => togglePlatform(p.id)}
+                        disabled={!isSupportedForMode}
+                        onClick={() => {
+                          if (isSupportedForMode) togglePlatform(p.id);
+                        }}
                         className={`flex items-start gap-2.5 rounded-xl border p-3 text-left transition ${
-                          selected ? 'border-cyan-400 bg-cyan-500/10 text-cyan-200' : 'border-slate-800 bg-slate-950/40 text-slate-400 hover:border-slate-700'
+                          !isSupportedForMode
+                            ? 'opacity-40 border-slate-900 bg-slate-950/20 cursor-not-allowed text-slate-600'
+                            : selected
+                            ? 'border-cyan-400 bg-cyan-500/10 text-cyan-200'
+                            : 'border-slate-800 bg-slate-950/40 text-slate-400 hover:border-slate-700'
                         }`}
                       >
                         <span className="text-lg">{p.icon}</span>
                         <div className="min-w-0">
                           <div className="text-xs font-bold text-white flex items-center gap-1.5">
                             {p.label}
-                            {p.autoPublish && <span className="rounded bg-emerald-500/20 px-1 text-[8px] text-emerald-300 font-normal">Auto</span>}
+                            {p.autoPublish && scheduleMode === 'auto' && (
+                              <span className="rounded bg-emerald-500/20 px-1 text-[8px] text-emerald-300 font-normal">Auto</span>
+                            )}
+                            {!p.autoPublish && scheduleMode === 'auto' && (
+                              <span className="rounded bg-amber-500/20 px-1 text-[8px] text-amber-300 font-normal">Mídia exigida</span>
+                            )}
                           </div>
                           <div className="text-[10px] text-slate-400 leading-tight mt-0.5">{p.note}</div>
                         </div>
@@ -434,7 +519,7 @@ export const CalendarPage: React.FC<Props> = ({
                   Cancelar
                 </button>
                 <button disabled={loading} className="froc-primary flex-1">
-                  {loading ? 'Agendando…' : 'Confirmar agendamento'}
+                  {loading ? 'Salvando…' : scheduleMode === 'planning' ? 'Salvar Planejamento Editorial' : 'Confirmar Auto-Publicação'}
                 </button>
               </div>
             </div>

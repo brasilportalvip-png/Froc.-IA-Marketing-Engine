@@ -8,7 +8,7 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { createOAuthUrl, disconnectSocial, getProviderAutoPublishReason, getTikTokUploadStatus, handleOAuthCallback, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
@@ -628,20 +628,13 @@ router.post('/content/schedule', requireAuth, asyncRoute(async (req: Authenticat
   const contentItemId = safeString(req.body?.contentItemId, 200);
   const scheduledFor = safeString(req.body?.scheduledFor, 100);
   const companyId = safeString(req.body?.companyId, 200);
+  const isPlanning = Boolean(req.body?.isPlanning || req.body?.mode === 'planning');
   if (!contentItemId || !scheduledFor || !companyId) return res.status(400).json({ error: 'Empresa, conteúdo e data são obrigatórios.' });
 
-  // 1. Entitlement check: Plano pago (socialConnections) ou admin
-  const wallet = await getWallet(req.user!.id);
-  const entitlements = getPlanEntitlements(wallet.planId);
-  const isAdmin = req.user?.role === 'admin';
-  if (!entitlements.socialConnections && !isAdmin) {
-    return res.status(403).json({ error: 'O seu plano atual não inclui agendamento e publicação automática em redes sociais. Faça upgrade para o plano PRO ou superior.' });
-  }
-
-  // 2. Ownership da empresa
+  // 1. Ownership da empresa
   await requireOwnedCompany(req.user!.id, companyId);
 
-  // 3. Validação do conteúdo
+  // 2. Validação do conteúdo
   const itemSnap = await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).get();
   if (!itemSnap.exists || itemSnap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Conteúdo não encontrado.' });
   const itemData = itemSnap.data() as any;
@@ -654,16 +647,52 @@ router.post('/content/schedule', requireAuth, asyncRoute(async (req: Authenticat
     return res.status(400).json({ error: 'O conteúdo selecionado não possui texto para publicação.' });
   }
 
-  // 4. Validação da data
+  // 3. Validação da data
   if (Number.isNaN(new Date(scheduledFor).getTime())) return res.status(400).json({ error: 'Data de agendamento inválida.' });
 
-  // 5. Validação das plataformas e conexões ativas
+  // 4. Validação das plataformas
   const rawPlatforms = stringArray(req.body?.platforms, 10);
   if (!rawPlatforms.length) return res.status(400).json({ error: 'Selecione ao menos uma rede social para o agendamento.' });
 
+  // 5. Diferenciação: Planejamento Editorial (Calendário) vs Auto-Publicação
+  if (isPlanning) {
+    // Planejamento editorial: Disponível para todos os planos (START, PRO, BUSINESS, AGENCY, etc.)
+    const id = newId('sched');
+    const scheduled = {
+      id,
+      userId: req.user!.id,
+      companyId,
+      contentItemId,
+      platforms: rawPlatforms,
+      scheduledFor: new Date(scheduledFor).toISOString(),
+      status: 'planned',
+      isPlanning: true,
+      autopilotGenerated: false,
+      createdAt: nowIso()
+    };
+    await firestore().collection(COLLECTIONS.scheduledPosts).doc(id).set(scheduled);
+    return res.status(201).json({ message: 'Planejamento editorial salvo no calendário com sucesso.', scheduled });
+  }
+
+  // Auto-Publicação Executável: Exige plano com socialConnections ou admin
+  const wallet = await getWallet(req.user!.id);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  const isAdmin = req.user?.role === 'admin';
+  if (!entitlements.socialConnections && !isAdmin) {
+    return res.status(403).json({
+      error: 'O agendamento com auto-publicação automática em redes sociais exige o plano PRO ou superior. No plano START, você pode registrar o conteúdo como Planejamento Editorial no Calendário.'
+    });
+  }
+
+  // Validação estrita de suporte dos providers para texto direto
   for (const plat of rawPlatforms) {
     const provider = normalizeProvider(plat);
     if (!provider) return res.status(400).json({ error: `Rede social "${plat}" não reconhecida.` });
+
+    if (!isTextAutoPublishSupported(provider)) {
+      const reason = getProviderAutoPublishReason(provider) || `A rede "${plat}" não suporta publicação automática puramente textual.`;
+      return res.status(400).json({ error: reason });
+    }
 
     const connSnap = await firestore().collection(COLLECTIONS.socialConnections)
       .where('userId', '==', req.user!.id)
@@ -683,7 +712,18 @@ router.post('/content/schedule', requireAuth, asyncRoute(async (req: Authenticat
   }
 
   const id = newId('sched');
-  const scheduled = { id, userId: req.user!.id, companyId, contentItemId, platforms: rawPlatforms, scheduledFor: new Date(scheduledFor).toISOString(), status: 'scheduled', autopilotGenerated: Boolean(req.body?.autopilotGenerated), createdAt: nowIso() };
+  const scheduled = {
+    id,
+    userId: req.user!.id,
+    companyId,
+    contentItemId,
+    platforms: rawPlatforms,
+    scheduledFor: new Date(scheduledFor).toISOString(),
+    status: 'scheduled',
+    isPlanning: false,
+    autopilotGenerated: Boolean(req.body?.autopilotGenerated),
+    createdAt: nowIso()
+  };
   await firestore().collection(COLLECTIONS.scheduledPosts).doc(id).set(scheduled);
   await itemSnap.ref.set({ status: 'scheduled', updatedAt: nowIso() }, { merge: true });
   res.status(201).json({ message: 'Publicação agendada com sucesso.', scheduled });
@@ -714,20 +754,66 @@ router.post('/content/scheduled/:id/retry', requireAuth, asyncRoute(async (req: 
   const snap = await ref.get();
   if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Agendamento não encontrado.' });
   const current = snap.data() as any;
-  if (!['failed', 'cancelled'].includes(current.status)) return res.status(409).json({ error: 'Somente publicações com falha ou canceladas podem ser reenviadas.' });
+
+  if (current.status === 'requires_review') {
+    return res.status(409).json({
+      error: 'Publicações em estado de verificação manual não podem ser reagendadas automaticamente devido ao risco de duplicação externa.'
+    });
+  }
+
+  if (current.status !== 'failed') {
+    return res.status(409).json({ error: 'Somente publicações com falha comprovada podem ser reenviadas.' });
+  }
+
+  const existingResults = Array.isArray(current.publicationResults) ? current.publicationResults : [];
+  const successfulResults = existingResults.filter((r: any) => r?.success && r?.externalId);
+  const requestedPlatforms = Array.isArray(current.platforms) ? current.platforms : [];
+
+  // Se todas as plataformas solicitadas já possuem confirmação externa de sucesso, rejeita retry
+  const allAlreadySucceeded = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
+    successfulResults.some((s: any) => s.platform === plat || normalizeProvider(s.platform) === normalizeProvider(plat))
+  );
+  if (allAlreadySucceeded) {
+    return res.status(409).json({ error: 'Todas as redes sociais deste agendamento já foram publicadas com sucesso.' });
+  }
+
   const when = req.body?.scheduledFor ? new Date(String(req.body.scheduledFor)) : new Date(Date.now() + 60_000);
   if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Data de reenvio inválida.' });
-  await ref.set({ status: 'scheduled', scheduledFor: when.toISOString(), errorMessage: null, publicationResults: [], retryCount: Number(current.retryCount || 0) + 1, updatedAt: nowIso() }, { merge: true });
-  res.json({ message: 'Publicação reagendada para nova tentativa.' });
+
+  // Preserva estritamente resultados bem-sucedidos anteriores com seus externalIds
+  await ref.set({
+    status: 'scheduled',
+    scheduledFor: when.toISOString(),
+    errorMessage: null,
+    publicationResults: successfulResults,
+    retryCount: Number(current.retryCount || 0) + 1,
+    updatedAt: nowIso()
+  }, { merge: true });
+
+  res.json({
+    message: 'Publicação reagendada para nova tentativa segura.',
+    successfulPreserved: successfulResults.length
+  });
 }));
 
 router.post('/content/scheduled/:id/cancel', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const ref = firestore().collection(COLLECTIONS.scheduledPosts).doc(req.params.id);
   const snap = await ref.get();
   if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-  if (!['scheduled', 'failed'].includes(String(snap.data()?.status))) return res.status(409).json({ error: 'Este agendamento não pode mais ser cancelado.' });
+  const current = snap.data() as any;
+
+  if (current.status === 'requires_review') {
+    return res.status(409).json({
+      error: 'Agendamentos com verificação manual pendente não podem ser cancelados para reuso ou republicação automática.'
+    });
+  }
+
+  if (!['scheduled', 'failed', 'planned'].includes(String(current.status))) {
+    return res.status(409).json({ error: 'Este agendamento não pode mais ser cancelado.' });
+  }
+
   await ref.set({ status: 'cancelled', cancelledAt: nowIso(), updatedAt: nowIso() }, { merge: true });
-  res.json({ message: 'Agendamento cancelado.' });
+  res.json({ message: 'Agendamento cancelado com sucesso.' });
 }));
 
 router.delete('/content/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {

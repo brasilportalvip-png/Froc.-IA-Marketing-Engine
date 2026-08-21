@@ -525,6 +525,119 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
     const schedData = await resSchedSuccess.json();
     assert.equal(schedData.scheduled.status, 'scheduled');
     assert.equal(schedData.scheduled.contentItemId, 'item_route_test');
+
+    // 5.4 Rejeição de rede sem suporte a texto direto (Instagram) em auto-publicação
+    const resSchedInstagram = await fetch(`${baseUrl}/api/content/schedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token_pro_user',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        companyId: proCompanyId,
+        contentItemId: 'item_route_test',
+        platforms: ['Instagram'],
+        scheduledFor: new Date(Date.now() + 3600_000).toISOString()
+      })
+    });
+    assert.equal(resSchedInstagram.status, 400, 'Instagram sem mídia deve ser rejeitado no agendamento textual');
+    const instaData = await resSchedInstagram.json();
+    assert.match(instaData.error, /mídia visual|Graph API/i);
+
+    // 5.5 Planejamento editorial (isPlanning: true) liberado para usuário FREE/START
+    const resSchedPlanning = await fetch(`${baseUrl}/api/content/schedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token_free_user',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        companyId: freeCompanyId,
+        contentItemId: 'item_route_test',
+        platforms: ['Instagram'],
+        scheduledFor: new Date(Date.now() + 3600_000).toISOString(),
+        isPlanning: true
+      })
+    });
+    // item_route_test pertence a proCompanyId, logo deve validar tenant
+    assert.equal(resSchedPlanning.status, 400, 'Validação de tenant deve ocorrer também no modo de planejamento');
+
+    // Cria item para freeCompanyId
+    await db.collection(COLLECTIONS.contentItems).doc('item_free_test').set({
+      id: 'item_free_test',
+      userId: freeUserId,
+      companyId: freeCompanyId,
+      headline: 'Post Editorial Free',
+      body: 'Planejamento de conteúdo',
+      status: 'draft'
+    });
+
+    const resSchedPlanningSuccess = await fetch(`${baseUrl}/api/content/schedule`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token_free_user',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        companyId: freeCompanyId,
+        contentItemId: 'item_free_test',
+        platforms: ['Instagram'],
+        scheduledFor: new Date(Date.now() + 3600_000).toISOString(),
+        isPlanning: true
+      })
+    });
+    assert.equal(resSchedPlanningSuccess.status, 201, 'Planejamento editorial deve ser 201 para plano FREE');
+    const planningData = await resSchedPlanningSuccess.json();
+    assert.equal(planningData.scheduled.status, 'planned');
+    assert.equal(planningData.scheduled.isPlanning, true);
+
+    // 5.6 Retry Safety: Rejeita requires_review
+    await db.collection(COLLECTIONS.scheduledPosts).doc('sched_review_test').set({
+      id: 'sched_review_test',
+      userId: proUserId,
+      companyId: proCompanyId,
+      contentItemId: 'item_route_test',
+      platforms: ['Facebook'],
+      scheduledFor: new Date(Date.now() - 3600_000).toISOString(),
+      status: 'requires_review'
+    });
+    const resRetryReview = await fetch(`${baseUrl}/api/content/scheduled/sched_review_test/retry`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token_pro_user' }
+    });
+    assert.equal(resRetryReview.status, 409, 'Retry em status requires_review deve retornar 409');
+
+    // 5.7 Retry Safety: Preserva publicationResults com externalId
+    await db.collection(COLLECTIONS.scheduledPosts).doc('sched_partial_failed').set({
+      id: 'sched_partial_failed',
+      userId: proUserId,
+      companyId: proCompanyId,
+      contentItemId: 'item_route_test',
+      platforms: ['Facebook', 'LinkedIn'],
+      scheduledFor: new Date(Date.now() - 3600_000).toISOString(),
+      status: 'failed',
+      publicationResults: [
+        { platform: 'Facebook', success: true, externalId: 'fb_confirmed_999' },
+        { platform: 'LinkedIn', success: false, error: 'Token expired' }
+      ]
+    });
+    const resRetryPartial = await fetch(`${baseUrl}/api/content/scheduled/sched_partial_failed/retry`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token_pro_user' }
+    });
+    assert.equal(resRetryPartial.status, 200, 'Retry de post com falha deve ser 200');
+    const partialSnap = await db.collection(COLLECTIONS.scheduledPosts).doc('sched_partial_failed').get();
+    const partialData = partialSnap.data() as any;
+    assert.equal(partialData.status, 'scheduled');
+    assert.equal(partialData.publicationResults.length, 1);
+    assert.equal(partialData.publicationResults[0].externalId, 'fb_confirmed_999');
+
+    // 5.8 Cancel Safety: Rejeita cancelamento de requires_review
+    const resCancelReview = await fetch(`${baseUrl}/api/content/scheduled/sched_review_test/cancel`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token_pro_user' }
+    });
+    assert.equal(resCancelReview.status, 409, 'Cancelamento em status requires_review deve retornar 409');
   } finally {
     server.close();
     firebaseAdminProvider.setAdminAuthForTesting(undefined);

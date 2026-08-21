@@ -153,8 +153,8 @@ export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): P
         });
       } else {
         await doc.ref.update({
-          status: 'failed',
-          errorMessage: 'Processamento interrompido ou tempo limite de publicação excedido. Verifique o status antes de reagendar.',
+          status: 'requires_review',
+          errorMessage: 'Verificação manual necessária — o processamento foi interrompido e a rede social pode ter recebido a publicação.',
           recoveredAt: nowIso(),
           updatedAt: nowIso()
         });
@@ -572,9 +572,9 @@ export async function processSchedulerTick() {
 
   const errors: Record<string, string> = {};
   let releasedReservations = 0;
-  let videoJobs: { checked: number; completed: number; failed: number } | number = 0;
   let recoveredPublishing = 0;
   let scheduledPosts = 0;
+  let videoJobs: { checked: number; completed: number; failed: number } | number = 0;
   let autopilot = 0;
   let autoBlog = 0;
 
@@ -587,15 +587,7 @@ export async function processSchedulerTick() {
       console.error('[Scheduler] Erro em cleanupStaleReservations:', err);
     }
 
-    // Step 2: Process pending video jobs
-    try {
-      videoJobs = await processPendingVideoJobs();
-    } catch (err: any) {
-      errors.videoJobs = err?.message || String(err);
-      console.error('[Scheduler] Erro em processPendingVideoJobs:', err);
-    }
-
-    // Step 3: Recover stale publishing posts
+    // Step 2: Recover stale publishing posts (prioritizes unblocking social publications)
     try {
       recoveredPublishing = await recoverStalePublishingPosts(15);
     } catch (err: any) {
@@ -603,12 +595,20 @@ export async function processSchedulerTick() {
       console.error('[Scheduler] Erro em recoverStalePublishingPosts:', err);
     }
 
-    // Step 4: Process scheduled posts
+    // Step 3: Process scheduled social posts (high priority - execute before heavy background tasks)
     try {
       scheduledPosts = await processScheduledPosts();
     } catch (err: any) {
       errors.scheduledPosts = err?.message || String(err);
       console.error('[Scheduler] Erro em processScheduledPosts:', err);
+    }
+
+    // Step 4: Process pending video jobs (async AI/Veo processing)
+    try {
+      videoJobs = await processPendingVideoJobs();
+    } catch (err: any) {
+      errors.videoJobs = err?.message || String(err);
+      console.error('[Scheduler] Erro em processPendingVideoJobs:', err);
     }
 
     // Step 5: Process autopilot
@@ -630,9 +630,9 @@ export async function processSchedulerTick() {
     return {
       skipped: false,
       releasedReservations,
-      videoJobs,
       recoveredPublishing,
       scheduledPosts,
+      videoJobs,
       autopilot,
       autoBlog,
       errors: Object.keys(errors).length > 0 ? errors : undefined,
@@ -648,44 +648,56 @@ export async function getSchedulerHealth(): Promise<{
   environment: string;
   cronConfigured: boolean;
   metaConfigured: boolean;
-  lock: { isLocked: boolean; lockedAt: number | null; lockedUntil: number | null; owner: string | null };
-  queueStats: { scheduledPending: number; publishingCount: number };
+  lock?: { isLocked: boolean; lockedAt: number | null; lockedUntil: number | null; owner: string | null };
+  queueStats?: { scheduledPending: number; publishingCount: number };
+  error?: string;
   checkedAt: string;
 }> {
   const db = firestore();
   const now = Date.now();
 
-  const lockSnap = await db.collection(COLLECTIONS.schedulerLocks).doc('process').get();
-  const lockData = lockSnap.data() as any;
-  const lockedUntil = lockData?.lockedUntil ? Number(lockData.lockedUntil) : 0;
-  const isLocked = lockedUntil > now;
+  try {
+    const lockSnap = await db.collection(COLLECTIONS.schedulerLocks).doc('process').get();
+    const lockData = lockSnap.data() as any;
+    const lockedUntil = lockData?.lockedUntil ? Number(lockData.lockedUntil) : 0;
+    const isLocked = lockedUntil > now;
 
-  const [pendingSnap, publishingSnap] = await Promise.all([
-    db.collection(COLLECTIONS.scheduledPosts)
-      .where('status', '==', 'scheduled')
-      .where('scheduledFor', '<=', nowIso())
-      .get(),
-    db.collection(COLLECTIONS.scheduledPosts)
-      .where('status', '==', 'publishing')
-      .get()
-  ]);
+    const [pendingSnap, publishingSnap] = await Promise.all([
+      db.collection(COLLECTIONS.scheduledPosts)
+        .where('status', '==', 'scheduled')
+        .where('scheduledFor', '<=', nowIso())
+        .get(),
+      db.collection(COLLECTIONS.scheduledPosts)
+        .where('status', '==', 'publishing')
+        .get()
+    ]);
 
-  return {
-    status: 'ok',
-    environment: config.nodeEnv,
-    cronConfigured: Boolean(config.cronSecret),
-    metaConfigured: Boolean(config.social.meta.clientId && config.social.meta.clientSecret),
-    lock: {
-      isLocked,
-      lockedAt: lockData?.lockedAt || null,
-      lockedUntil: lockData?.lockedUntil || null,
-      owner: lockData?.owner || null
-    },
-    queueStats: {
-      scheduledPending: pendingSnap.size,
-      publishingCount: publishingSnap.size
-    },
-    checkedAt: nowIso()
-  };
+    return {
+      status: 'ok',
+      environment: config.nodeEnv,
+      cronConfigured: Boolean(config.cronSecret),
+      metaConfigured: Boolean(config.social.meta.clientId && config.social.meta.clientSecret),
+      lock: {
+        isLocked,
+        lockedAt: lockData?.lockedAt || null,
+        lockedUntil: lockData?.lockedUntil || null,
+        owner: lockData?.owner || null
+      },
+      queueStats: {
+        scheduledPending: pendingSnap.size,
+        publishingCount: publishingSnap.size
+      },
+      checkedAt: nowIso()
+    };
+  } catch (err: any) {
+    return {
+      status: 'degraded',
+      environment: config.nodeEnv,
+      cronConfigured: Boolean(config.cronSecret),
+      metaConfigured: Boolean(config.social.meta.clientId && config.social.meta.clientSecret),
+      error: 'Falha ao consultar estado das filas no Firestore: ' + (err?.message ? String(err.message).slice(0, 200) : 'Erro desconhecido'),
+      checkedAt: nowIso()
+    };
+  }
 }
 
