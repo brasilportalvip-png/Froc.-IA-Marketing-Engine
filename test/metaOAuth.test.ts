@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOAuthUrl, handleOAuthCallback, resolveMetaAccount, SocialProvider } from '../server/production/social.js';
+import { createOAuthUrl, handleOAuthCallback, resolveMetaAccount, sanitizeOAuthPublicError, SocialProvider } from '../server/production/social.js';
 import { resetMemoryDb, firestore, COLLECTIONS, stableId } from '../server/production/store.js';
 import { config } from '../server/config/index.js';
 import { router } from '../server/production/router.js';
@@ -95,7 +95,7 @@ test('2. Meta OAuth Instagram: Escopos cirúrgicos de Instagram Professional (se
   assert.ok(!scopes.includes('business_management'), 'NÃO deve conter business_management');
 });
 
-test('3. Facebook Page: Descoberta primária via /me/accounts com Page Access Token e tarefas de publicação', async () => {
+test('3. Facebook Page: Descoberta primária via /me/accounts com Page Access Token real e tarefas de publicação', async () => {
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -128,10 +128,10 @@ test('3. Facebook Page: Descoberta primária via /me/accounts com Page Access To
   }
 });
 
-test('4. Facebook Page: Fallback para Business Manager (/me/assigned_pages) quando /me/accounts está vazio', async () => {
+test('4. Facebook Page: /me/accounts vazio chama /me/businesses e owned_pages retorna Página com token', async () => {
   const originalFetch = globalThis.fetch;
-  let assignedPagesCalled = false;
-  let pageNodeCalled = false;
+  let businessesCalled = false;
+  let ownedPagesCalled = false;
 
   try {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -140,95 +140,96 @@ test('4. Facebook Page: Fallback para Business Manager (/me/assigned_pages) quan
         return new Response(JSON.stringify({ access_token: 'long_lived_user_token_mock' }), { status: 200 });
       }
       if (url.includes('/me/accounts')) {
-        // /me/accounts vazio (Página gerenciada via Portfólio Empresarial)
         return new Response(JSON.stringify({ data: [] }), { status: 200 });
       }
-      if (url.includes('/me/assigned_pages')) {
-        assignedPagesCalled = true;
+      if (url.includes('/me/businesses')) {
+        businessesCalled = true;
         return new Response(JSON.stringify({
           data: [
-            {
-              id: 'bm_assigned_page_999',
-              name: 'Página Portfólio Empresarial',
-              tasks: ['MANAGE', 'CREATE_CONTENT']
-            }
+            { id: 'biz_123', name: 'Portfólio Empresarial Alpha' }
           ]
         }), { status: 200 });
       }
-      if (url.includes('/bm_assigned_page_999')) {
-        pageNodeCalled = true;
+      if (url.includes('/biz_123/owned_pages')) {
+        ownedPagesCalled = true;
         return new Response(JSON.stringify({
-          id: 'bm_assigned_page_999',
-          name: 'Página Portfólio Empresarial',
-          access_token: 'EAAB_bm_page_access_token_mock',
-          tasks: ['MANAGE', 'CREATE_CONTENT']
+          data: [
+            {
+              id: 'page_owned_789',
+              name: 'Página Owned BM',
+              access_token: 'EAAB_owned_page_token_real',
+              tasks: ['MANAGE', 'CREATE_CONTENT']
+            }
+          ]
         }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }) as typeof fetch;
 
     const resolved = await resolveMetaAccount('facebook', 'short_user_token_mock');
-    assert.ok(assignedPagesCalled, 'Deve ter chamado /me/assigned_pages como fallback');
-    assert.ok(pageNodeCalled, 'Deve ter consultado o nó da página para obter o Page Access Token');
-    assert.equal(resolved.id, 'bm_assigned_page_999');
-    assert.equal(resolved.name, 'Página Portfólio Empresarial');
-    assert.equal(resolved.accessToken, 'EAAB_bm_page_access_token_mock');
-    assert.equal(resolved.pageId, 'bm_assigned_page_999');
+    assert.ok(businessesCalled, 'Deve ter consultado /me/businesses quando /me/accounts estava vazio');
+    assert.ok(ownedPagesCalled, 'Deve ter consultado /biz_123/owned_pages');
+    assert.equal(resolved.id, 'page_owned_789');
+    assert.equal(resolved.name, 'Página Owned BM');
+    assert.equal(resolved.accessToken, 'EAAB_owned_page_token_real');
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('5. Facebook Page: Rejeição quando Página não tem capacidade de publicação', async () => {
+test('5. Facebook Page: Página não encontrada em owned_pages testa client_pages e conecta com token real', async () => {
   const originalFetch = globalThis.fetch;
+  let clientPagesCalled = false;
+
   try {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/oauth/access_token')) {
-        return new Response(JSON.stringify({ access_token: 'long_lived_token' }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: 'long_lived_user_token_mock' }), { status: 200 });
       }
       if (url.includes('/me/accounts')) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (url.includes('/me/businesses')) {
         return new Response(JSON.stringify({
           data: [
-            {
-              id: 'page_readonly',
-              name: 'Página Somente Analítica',
-              access_token: 'token_readonly',
-              tasks: ['ANALYZE'] // Sem permissão de postar/criar conteúdo
-            }
+            { id: 'biz_agency_456', name: 'Agência Digital BM' }
           ]
         }), { status: 200 });
       }
-      if (url.includes('/me/assigned_pages')) {
+      if (url.includes('/biz_agency_456/owned_pages')) {
         return new Response(JSON.stringify({ data: [] }), { status: 200 });
       }
-      if (url.includes('/me/permissions')) {
+      if (url.includes('/biz_agency_456/client_pages')) {
+        clientPagesCalled = true;
         return new Response(JSON.stringify({
           data: [
-            { permission: 'public_profile', status: 'granted' },
-            { permission: 'pages_show_list', status: 'granted' },
-            { permission: 'pages_read_engagement', status: 'granted' },
-            { permission: 'pages_manage_posts', status: 'granted' },
-            { permission: 'business_management', status: 'granted' }
+            {
+              id: 'page_client_999',
+              name: 'Página Cliente BM',
+              access_token: 'EAAB_client_page_token_real',
+              tasks: ['CREATE_CONTENT', 'MODERATE']
+            }
           ]
         }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }) as typeof fetch;
 
-    await assert.rejects(
-      async () => {
-        await resolveMetaAccount('facebook', 'short_token');
-      },
-      /A Página do Facebook encontrada não possui permissão de criação\/publicação de conteúdo/
-    );
+    const resolved = await resolveMetaAccount('facebook', 'short_user_token_mock');
+    assert.ok(clientPagesCalled, 'Deve ter consultado client_pages quando owned_pages estava vazio');
+    assert.equal(resolved.id, 'page_client_999');
+    assert.equal(resolved.name, 'Página Cliente BM');
+    assert.equal(resolved.accessToken, 'EAAB_client_page_token_real');
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('6. Facebook Page: Diagnóstico seguro quando permissão essencial (ex: pages_manage_posts) é negada', async () => {
+test('6. Facebook Page: Não depender de /me/assigned_pages e gerar diagnóstico seguro quando nenhuma Página for encontrada', async () => {
   const originalFetch = globalThis.fetch;
+  let assignedPagesCalled = false;
+
   try {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -238,8 +239,12 @@ test('6. Facebook Page: Diagnóstico seguro quando permissão essencial (ex: pag
       if (url.includes('/me/accounts')) {
         return new Response(JSON.stringify({ data: [] }), { status: 200 });
       }
-      if (url.includes('/me/assigned_pages')) {
+      if (url.includes('/me/businesses')) {
         return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (url.includes('/me/assigned_pages')) {
+        assignedPagesCalled = true;
+        return new Response(JSON.stringify({ error: { message: 'Unknown path', code: 3 } }), { status: 400 });
       }
       if (url.includes('/me/permissions')) {
         return new Response(JSON.stringify({
@@ -255,6 +260,8 @@ test('6. Facebook Page: Diagnóstico seguro quando permissão essencial (ex: pag
       return new Response(JSON.stringify({}), { status: 404 });
     }) as typeof fetch;
 
+    assert.equal(assignedPagesCalled, false, 'Não deve chamar /me/assigned_pages');
+
     await assert.rejects(
       async () => {
         await resolveMetaAccount('facebook', 'short_token');
@@ -266,10 +273,28 @@ test('6. Facebook Page: Diagnóstico seguro quando permissão essencial (ex: pag
   }
 });
 
-test('7. Callback Social HTTP: Erro esperado de OAuth redireciona para /redes-sociais?error=... e NÃO gera JSON 500', async () => {
+test('7. Sanitização de Erros: Nenhuma mensagem pública contém access_token, OAuth code ou secret', () => {
+  // Erros com tokens ou secrets vazados
+  const dirtyError = new Error('Graph API failure with access_token=EAAB123456789&client_secret=secret_xyz999&code=auth_code_secret');
+  const safeMsg = sanitizeOAuthPublicError(dirtyError, 'facebook');
+
+  assert.ok(!safeMsg.includes('EAAB123456789'), 'Não deve conter access_token');
+  assert.ok(!safeMsg.includes('secret_xyz999'), 'Não deve conter client_secret');
+  assert.ok(!safeMsg.includes('auth_code_secret'), 'Não deve conter oauth code');
+  assert.equal(safeMsg, 'Não foi possível concluir a conexão com o Facebook.');
+
+  // Erro amigável de permissão deve ser mantido
+  const permError = new Error("Permissão 'pages_manage_posts' não foi concedida na autorização da Meta.");
+  assert.equal(sanitizeOAuthPublicError(permError, 'facebook'), "Permissão 'pages_manage_posts' não foi concedida na autorização da Meta.");
+
+  // Erro de cancelamento
+  const cancelError = new Error('User access_denied');
+  assert.equal(sanitizeOAuthPublicError(cancelError, 'facebook'), 'Autorização cancelada pelo usuário.');
+});
+
+test('8. Callback Social HTTP: Erro de autorização redireciona para /redes-sociais?error=... e NÃO gera JSON 500', async () => {
   resetMemoryDb();
 
-  // Simular requisição ao Express mockando req/res
   let redirectedUrl = '';
   let statusCode = 200;
   let jsonBody: any = null;
@@ -298,7 +323,6 @@ test('7. Callback Social HTTP: Erro esperado de OAuth redireciona para /redes-so
     }
   };
 
-  // Localizar a rota /social/:provider/callback
   const callbackLayer = (router as any).stack.find((layer: any) =>
     layer.route && layer.route.path === '/social/:provider/callback'
   );
@@ -310,10 +334,10 @@ test('7. Callback Social HTTP: Erro esperado de OAuth redireciona para /redes-so
   assert.equal(statusCode, 200, 'Não deve setar status 500');
   assert.equal(jsonBody, null, 'Não deve retornar payload JSON');
   assert.ok(redirectedUrl.startsWith(`${config.appUrl}/redes-sociais?error=`), 'Deve redirecionar para a página com query param de erro');
-  assert.ok(redirectedUrl.includes('Estado%20OAuth%20inv%C3%A1lido') || redirectedUrl.includes('inv%C3%A1lido'), 'Erro deve estar codificado na URL de redirecionamento');
+  assert.ok(redirectedUrl.includes('Estado%20OAuth%20inv%C3%A1lido') || redirectedUrl.includes('inv%C3%A1lido'), 'Erro seguro deve estar codificado na URL');
 });
 
-test('8. Callback Social HTTP: Sucesso redireciona para /redes-sociais?connected=facebook&companyId=...', async () => {
+test('9. Callback Social HTTP: Sucesso redireciona para /redes-sociais?connected=facebook&companyId=...', async () => {
   resetMemoryDb();
   const userId = 'usr_success_test';
   const companyId = 'comp_success_test';
@@ -384,7 +408,7 @@ test('8. Callback Social HTTP: Sucesso redireciona para /redes-sociais?connected
   }
 });
 
-test('9. OAuth State Management: Anti-replay, expiração e integridade de sessão', async () => {
+test('10. OAuth State Management: Anti-replay, expiração e integridade de sessão', async () => {
   resetMemoryDb();
   const userId = 'usr_state_test';
   const companyId = 'comp_state_test';
@@ -428,7 +452,7 @@ test('9. OAuth State Management: Anti-replay, expiração e integridade de sess�
   );
 });
 
-test('10. OAuth Outros Provedores: LinkedIn, YouTube, TikTok, Pinterest e X permanecem inalterados', async () => {
+test('11. OAuth Outros Provedores: LinkedIn, YouTube, TikTok, Pinterest e X permanecem inalterados', async () => {
   resetMemoryDb();
   const userId = 'usr_other_test';
   const companyId = 'comp_other_test';

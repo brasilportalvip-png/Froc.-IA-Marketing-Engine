@@ -8,7 +8,7 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, sanitizeOAuthPublicError, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
@@ -898,7 +898,12 @@ router.get('/social/:provider/connect', requireAuth, asyncRoute(async (req: Auth
 router.get('/social/:provider/callback', asyncRoute(async (req, res) => {
   const provider = req.params.provider as SocialProvider;
   const errorParam = safeString(req.query.error, 500) || safeString(req.query.error_description, 500);
-  if (errorParam) return res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent(errorParam)}`);
+  if (errorParam) {
+    const safeError = errorParam.includes('access_denied')
+      ? 'Autorização cancelada pelo usuário.'
+      : sanitizeOAuthPublicError(errorParam, provider);
+    return res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent(safeError)}`);
+  }
   const code = safeString(req.query.code, 3000);
   const state = safeString(req.query.state, 3000);
   if (!code || !state) return res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent('Autorização OAuth incompleta')}`);
@@ -906,9 +911,17 @@ router.get('/social/:provider/callback', asyncRoute(async (req, res) => {
     const result = await handleOAuthCallback({ provider, code, state });
     res.redirect(`${config.appUrl}/redes-sociais?connected=${encodeURIComponent(provider)}&companyId=${encodeURIComponent(result.companyId)}`);
   } catch (err: any) {
-    const safeError = err?.message || 'Falha ao processar autorização social.';
-    console.error(`[Social OAuth Callback Error] [${provider}]:`, safeError);
-    res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent(safeError)}`);
+    const publicError = sanitizeOAuthPublicError(err, provider);
+    const rawMsg = String(err?.message || err || 'Falha ao processar autorização social.');
+    // Sanitização de logs: mascarar tokens, códigos e secrets
+    const sanitizedLog = rawMsg
+      .replace(/EAAB\w+/g, '[REDACTED_PAGE_TOKEN]')
+      .replace(/EAA\w+/g, '[REDACTED_USER_TOKEN]')
+      .replace(/access_token=[^&\s]+/g, 'access_token=[REDACTED]')
+      .replace(/code=[^&\s]+/g, 'code=[REDACTED]')
+      .replace(/client_secret=[^&\s]+/g, 'client_secret=[REDACTED]');
+    console.error(`[Social OAuth Callback Error] [${provider}]:`, sanitizedLog);
+    res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent(publicError)}`);
   }
 }));
 router.delete('/social/:provider/disconnect', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {

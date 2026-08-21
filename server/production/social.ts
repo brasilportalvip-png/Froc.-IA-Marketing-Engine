@@ -175,6 +175,52 @@ export function hasPagePublishTask(tasks?: string[]): boolean {
   );
 }
 
+export function sanitizeOAuthPublicError(err: any, provider: SocialProvider): string {
+  const msg = String(err?.message || err || '').trim();
+
+  // Erros de diagnóstico e permissão conhecidos
+  if (msg.startsWith("Permissão '") && msg.includes('não foi concedida')) {
+    return msg;
+  }
+  if (
+    msg.includes('Nenhuma Página do Facebook') ||
+    msg.includes('não possui permissão de criação/publicação') ||
+    msg.includes('Page Access Token')
+  ) {
+    return msg;
+  }
+  if (msg.includes('Nenhuma conta profissional do Instagram')) {
+    return msg;
+  }
+  if (
+    msg.includes('Estado OAuth inválido') ||
+    msg.includes('Sessão OAuth expirada') ||
+    msg.includes('Autorização OAuth incompleta')
+  ) {
+    return msg;
+  }
+  if (
+    msg.includes('access_denied') ||
+    msg.includes('cancelou') ||
+    msg.includes('cancelada') ||
+    msg.includes('Cancelado')
+  ) {
+    return 'Autorização cancelada pelo usuário.';
+  }
+
+  const providerNames: Record<SocialProvider, string> = {
+    facebook: 'o Facebook',
+    instagram: 'o Instagram',
+    tiktok: 'o TikTok',
+    youtube: 'o YouTube',
+    linkedin: 'o LinkedIn',
+    pinterest: 'o Pinterest',
+    x: 'o X (Twitter)'
+  };
+  const target = providerNames[provider] || provider;
+  return `Não foi possível concluir a conexão com ${target}.`;
+}
+
 async function diagnoseMetaPermissions(userToken: string, requiredPermissions: string[]): Promise<string | null> {
   try {
     const url = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/permissions`);
@@ -227,40 +273,49 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
     const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
     let eligiblePage = pages.find((item: any) => item?.id && item?.access_token && hasPagePublishTask(item?.tasks));
+    let candidatePages = [...pages];
 
-    // 2. Fallback para Business Manager: /me/assigned_pages
+    // 2. Fallback para Business Manager: /me/businesses -> /{business-id}/owned_pages e /{business-id}/client_pages
     if (!eligiblePage) {
-      const assignedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/assigned_pages`);
-      assignedUrl.search = new URLSearchParams({
-        fields: 'id,name,tasks,category',
+      const businessesUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/businesses`);
+      businessesUrl.search = new URLSearchParams({
+        fields: 'id,name',
         access_token: userToken
       }).toString();
-      const assignedResponse = await fetch(assignedUrl);
-      const assignedJson = await assignedResponse.json().catch(() => ({} as any));
-      const assignedPages = Array.isArray(assignedJson.data) ? assignedJson.data : [];
+      const businessesResponse = await fetch(businessesUrl);
+      const businessesJson = await businessesResponse.json().catch(() => ({} as any));
+      const businesses = Array.isArray(businessesJson.data) ? businessesJson.data : [];
 
-      for (const assigned of assignedPages) {
-        if (!assigned?.id) continue;
-        if (assigned?.tasks && !hasPagePublishTask(assigned.tasks)) continue;
+      for (const biz of businesses) {
+        if (!biz?.id) continue;
 
-        // Obter Page Access Token legítimo via nó da Página com o User Access Token
-        const pageDetailUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${assigned.id}`);
-        pageDetailUrl.search = new URLSearchParams({
+        // 2a. /{business-id}/owned_pages
+        const ownedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/owned_pages`);
+        ownedUrl.search = new URLSearchParams({
           fields: 'id,name,access_token,tasks,category',
           access_token: userToken
         }).toString();
-        const pageDetailResponse = await fetch(pageDetailUrl);
-        const pageDetailJson = await pageDetailResponse.json().catch(() => ({} as any));
+        const ownedRes = await fetch(ownedUrl);
+        const ownedJson = await ownedRes.json().catch(() => ({} as any));
+        const ownedPages = Array.isArray(ownedJson.data) ? ownedJson.data : [];
+        candidatePages.push(...ownedPages);
 
-        if (pageDetailResponse.ok && pageDetailJson?.id && pageDetailJson?.access_token && hasPagePublishTask(pageDetailJson?.tasks)) {
-          eligiblePage = {
-            id: String(pageDetailJson.id),
-            name: String(pageDetailJson.name || assigned.name || 'Facebook Page'),
-            access_token: String(pageDetailJson.access_token),
-            tasks: pageDetailJson.tasks || assigned.tasks
-          };
-          break;
-        }
+        eligiblePage = ownedPages.find((p: any) => p?.id && p?.access_token && hasPagePublishTask(p?.tasks));
+        if (eligiblePage) break;
+
+        // 2b. /{business-id}/client_pages
+        const clientUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/client_pages`);
+        clientUrl.search = new URLSearchParams({
+          fields: 'id,name,access_token,tasks,category',
+          access_token: userToken
+        }).toString();
+        const clientRes = await fetch(clientUrl);
+        const clientJson = await clientRes.json().catch(() => ({} as any));
+        const clientPages = Array.isArray(clientJson.data) ? clientJson.data : [];
+        candidatePages.push(...clientPages);
+
+        eligiblePage = clientPages.find((p: any) => p?.id && p?.access_token && hasPagePublishTask(p?.tasks));
+        if (eligiblePage) break;
       }
     }
 
@@ -285,8 +340,8 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
       throw new Error(permDiag);
     }
 
-    if (pages.length > 0) {
-      const pageWithoutTask = pages.find((p: any) => p?.id && p?.tasks && !hasPagePublishTask(p.tasks));
+    if (candidatePages.length > 0) {
+      const pageWithoutTask = candidatePages.find((p: any) => p?.id && p?.tasks && !hasPagePublishTask(p.tasks));
       if (pageWithoutTask) {
         throw new Error('A Página do Facebook encontrada não possui permissão de criação/publicação de conteúdo.');
       }
@@ -309,29 +364,39 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
   let page = pages.find((item: any) => item?.instagram_business_account?.id && item?.access_token);
 
   if (!page) {
-    // Fallback: tentar /me/assigned_pages para encontrar a página vinculada
-    const assignedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/assigned_pages`);
-    assignedUrl.search = new URLSearchParams({
-      fields: 'id,name,instagram_business_account{id,username,name}',
+    // Fallback: tentar /me/businesses para encontrar a página com instagram_business_account
+    const businessesUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/businesses`);
+    businessesUrl.search = new URLSearchParams({
+      fields: 'id,name',
       access_token: userToken
     }).toString();
-    const assignedResponse = await fetch(assignedUrl);
-    const assignedJson = await assignedResponse.json().catch(() => ({} as any));
-    const assignedPages = Array.isArray(assignedJson.data) ? assignedJson.data : [];
+    const businessesResponse = await fetch(businessesUrl);
+    const businessesJson = await businessesResponse.json().catch(() => ({} as any));
+    const businesses = Array.isArray(businessesJson.data) ? businessesJson.data : [];
 
-    for (const assigned of assignedPages) {
-      if (!assigned?.id) continue;
-      const pageDetailUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${assigned.id}`);
-      pageDetailUrl.search = new URLSearchParams({
+    for (const biz of businesses) {
+      if (!biz?.id) continue;
+      const ownedUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/owned_pages`);
+      ownedUrl.search = new URLSearchParams({
         fields: 'id,name,access_token,instagram_business_account{id,username,name}',
         access_token: userToken
       }).toString();
-      const pageDetailResponse = await fetch(pageDetailUrl);
-      const pageDetailJson = await pageDetailResponse.json().catch(() => ({} as any));
-      if (pageDetailResponse.ok && pageDetailJson?.instagram_business_account?.id && pageDetailJson?.access_token) {
-        page = pageDetailJson;
-        break;
-      }
+      const ownedRes = await fetch(ownedUrl);
+      const ownedJson = await ownedRes.json().catch(() => ({} as any));
+      const ownedPages = Array.isArray(ownedJson.data) ? ownedJson.data : [];
+      page = ownedPages.find((p: any) => p?.instagram_business_account?.id && p?.access_token);
+      if (page) break;
+
+      const clientUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/client_pages`);
+      clientUrl.search = new URLSearchParams({
+        fields: 'id,name,access_token,instagram_business_account{id,username,name}',
+        access_token: userToken
+      }).toString();
+      const clientRes = await fetch(clientUrl);
+      const clientJson = await clientRes.json().catch(() => ({} as any));
+      const clientPages = Array.isArray(clientJson.data) ? clientJson.data : [];
+      page = clientPages.find((p: any) => p?.instagram_business_account?.id && p?.access_token);
+      if (page) break;
     }
   }
 
