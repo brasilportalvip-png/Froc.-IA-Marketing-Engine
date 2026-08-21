@@ -3,7 +3,7 @@ export interface Wallet { id:string; userId:string; balance:number; bonusBalance
 export interface CreditTransaction { id:string; userId:string; companyId?:string; type:'purchase'|'subscription'|'bonus'|'usage'|'refund'|'admin_adjustment'|'reversal'|'reservation'; source:string; amount:number; balanceBefore:number; balanceAfter:number; referenceId?:string; idempotencyKey?:string; timestamp:string; metadata?:Record<string,any>; }
 export interface MarketingProfile { niche:string; targetAudience:string; persona:string; toneOfVoice:string; brandIdentitySummary:string; goals:string; keyDifferentials:string; forbiddenWords:string[]; preferredCtas:string[]; topKeywords:string[]; lastUpdated:string; }
 export interface Company { id:string; userId:string; name:string; slug:string; logoUrl?:string; logoStoragePath?:string; description:string; businessType?:'online'|'physical'|'hybrid'; onlineChannels?:string[]; website?:string; androidApp?:string; iosApp?:string; phone?:string; whatsapp?:string; email?:string; address?:string; city?:string; state?:string; country?:string; category:string; segment?:string; products:string[]; services:string[]; targetAudience?:string; coverageRegion?:string; differentials?:string; brandTone?:string; goals?:string; competitors?:string[]; keywords:string[]; socialLinks?:{instagram?:string;facebook?:string;tiktok?:string;youtube?:string;linkedin?:string;pinterest?:string;x?:string}; isPublicInVitrine:boolean; marketingProfile?:MarketingProfile; createdAt:string; updatedAt:string; }
-export interface ContentItem { id:string; userId:string; companyId:string; type:'post'|'image'|'video_script'|'article'|'cta'|'headline'|'carousel'|'email'; title:string; headline?:string; body:string; cta?:string; hashtags:string[]; keywords:string[]; visualPrompt?:string; imageUrl?:string; videoScript?:string; carouselSlides?:{title:string;text:string;visualDesc?:string}[]; targetPlatform?:string; tone?:string; creditsUsed:number; status:'draft'|'saved'|'scheduled'|'published'; createdAt:string; updatedAt:string; metadata?:Record<string,any>; }
+export interface ContentItem { id:string; userId:string; companyId:string; type:'post'|'image'|'video'|'video_script'|'article'|'cta'|'headline'|'carousel'|'email'; title:string; headline?:string; body:string; cta?:string; hashtags:string[]; keywords:string[]; visualPrompt?:string; imageUrl?:string; videoUrl?:string; videoScript?:string; carouselSlides?:{title:string;text:string;visualDesc?:string}[]; targetPlatform?:string; tone?:string; creditsUsed:number; status:'draft'|'saved'|'scheduled'|'published'; createdAt:string; updatedAt:string; metadata?:Record<string,any>; }
 export interface Campaign { id:string; userId:string; companyId:string; name:string; objective:string; targetPlatforms:string[]; targetAudience?:string; budgetCredits?:number; startDate:string; endDate?:string; status:'draft'|'pending'|'scheduled'|'active'|'paused'|'completed'|'failed'; contentItemIds:string[]; metrics:{reach:number;clicks:number;leads:number;conversions:number;shares:number;comments:number}; createdAt:string; updatedAt:string; }
 export interface ScheduledPost { id:string; userId:string; companyId:string; contentItemId:string; platforms:string[]; scheduledFor:string; status:'scheduled'|'publishing'|'published'|'failed'|'cancelled'; publishedAt?:string; errorMessage?:string; autopilotGenerated?:boolean; retryCount?:number; publicationResults?:Array<{platform:string;success:boolean;externalId?:string;error?:string}>; createdAt:string; updatedAt?:string; }
 export interface SocialConnection { id:string; userId:string; companyId:string; provider:'instagram'|'facebook'|'tiktok'|'youtube'|'linkedin'|'pinterest'|'x'; accountName:string; accountId:string; scopes:string[]; expiresAt?:string; connectedAt:string; status:'connected'|'expired'|'error'; }
@@ -11,6 +11,26 @@ export interface SeoReport { id:string; userId:string; companyId:string; url:str
 export interface BlogPost { id:string; title:string; slug:string; summary:string; content:string; featuredImageUrl?:string; author:string; category:string; tags:string[]; companyId?:string; isFrocMagazineSponsored?:boolean; seoTitle?:string; seoDescription?:string; status:'published'|'draft'|'archived'; publishedAt?:string; createdAt:string; updatedAt?:string; }
 export interface AutopilotConfig { id:string; userId:string; companyId:string; enabled:boolean; mode:'manual_approval'|'automatic'; frequency:'daily'|'3_times_week'|'weekly'; preferredDays:number[]; preferredHours:number[]; targetPlatforms:string[]; primaryGoal:string; maxMonthlyCredits:number; usedCreditsThisMonth:number; lastRunAt?:string; nextRunAt?:string; usageMonth?:string; }
 export interface Plan { id:string; name:string; price:number; period:string; credits:number; bonusCredits:number; totalCredits:number; popular:boolean; features:string[]; }
+
+export interface VideoJob {
+  id: string;
+  userId: string;
+  companyId: string;
+  title: string;
+  prompt: string;
+  preset: 'demo_720p' | 'pro_1080p' | 'cinema_4k';
+  aspectRatio: '9:16' | '16:9';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progressPct: number;
+  creditsReserved: number;
+  creditsCommitted?: number;
+  videoUrl?: string;
+  storagePath?: string;
+  contentItemId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export { CREDIT_COSTS } from './lib/creditCosts';
 export type { CreditOperation } from './lib/creditCosts';

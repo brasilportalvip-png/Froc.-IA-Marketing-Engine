@@ -259,7 +259,8 @@ export const COLLECTIONS = {
   systemSettings: 'systemSettings',
   bonusClaims: 'bonusClaims',
   securityEvents: 'securityEvents',
-  deviceRegistrations: 'deviceRegistrations'
+  deviceRegistrations: 'deviceRegistrations',
+  mediaGenerationJobs: 'mediaGenerationJobs'
 } as const;
 
 export function nowIso(): string {

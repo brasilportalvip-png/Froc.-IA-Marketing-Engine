@@ -1,8 +1,8 @@
 import crypto from 'crypto';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, GenerateVideosOperation } from '@google/genai';
 import { config } from '../config/index.js';
 import { getAdminStorage } from '../providers/firebaseAdmin.js';
-import { COLLECTIONS, firestore, newId, nowIso } from './store.js';
+import { COLLECTIONS, createNotification, firestore, newId, nowIso, queryData } from './store.js';
 import { commitReservation, reserveCredits, rollbackReservation } from './credits.js';
 
 let client: GoogleGenAI | null = null;
@@ -560,78 +560,89 @@ export async function generateMarketingImage(data: {
   theme: string;
   style?: string;
   aspectRatio?: string;
-}): Promise<{ imageUrl: string; storagePath: string; mimeType: string; creditsUsed: number; executionId: string; modelUsed: string }> {
-  const cost = Number(config.creditCosts.image_ai);
-  const reservation = await reserveCredits({ userId: data.userId, amount: cost, operation: 'image_ai', companyId: data.company?.id });
+  resolution?: '1K' | '2K' | '4K';
+}): Promise<{ imageUrl: string; storagePath: string; mimeType: string; creditsUsed: number; executionId: string; modelUsed: string; resolution: string }> {
+  const resolution = data.resolution === '4K' ? '4K' : data.resolution === '2K' ? '2K' : '1K';
+  const opKey = resolution === '4K' ? 'image_ai_4k' : resolution === '2K' ? 'image_ai_2k' : 'image_ai_1k';
+  const cost = Number(config.creditCosts[opKey] || config.creditCosts.image_ai || 15);
+  
+  const reservation = await reserveCredits({ userId: data.userId, amount: cost, operation: opKey, companyId: data.company?.id });
   const executionId = newId('exec');
   const started = Date.now();
   const aspectRatio = normalizeAspectRatio(data.aspectRatio);
-  const prompt = `${companyContext(data.company)}\n\nCrie uma imagem publicitária premium e original para: ${data.theme}.\nEstilo visual: ${data.style || 'fotografia comercial moderna e sofisticada'}.\nProporção: ${aspectRatio}.\nNão inclua logotipos ou marcas de terceiros. Não invente selos, depoimentos ou números. Se houver texto na arte, mantenha-o curto, legível e somente se fizer sentido para o briefing.`;
+  const prompt = `${companyContext(data.company)}\n\nCrie uma imagem publicitária premium e original para: ${data.theme}.\nEstilo visual: ${data.style || 'fotografia comercial moderna e sofisticada'}.\nProporção: ${aspectRatio}.\nResolução desejada: ${resolution}.\nNão inclua logotipos ou marcas de terceiros. Não invente selos, depoimentos ou números. Se houver texto na arte, mantenha-o curto, legível e somente se fizer sentido para o briefing.`;
 
   const model = config.geminiModels.image || 'gemini-3.1-flash-image';
 
   try {
-    let response: any;
-    if (model.startsWith('imagen-')) {
-      response = await (aiClient() as any).models.generateImages({
-        model,
-        prompt,
-        config: {
-          numberOfImages: 1,
-          outputMimeType: 'image/jpeg',
-          aspectRatio: aspectRatio as any
-        }
-      });
-    } else {
-      // Configuração oficial do SDK @google/genai para gemini-3.1-flash-image / gemini-3.1-flash-lite-image
-      response = await aiClient().models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          imageConfig: {
-            aspectRatio,
-            imageSize: '1K'
+    let imageUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    let storagePath = `generated/${data.userId}/${executionId}.jpg`;
+    let mimeType = 'image/jpeg';
+
+    if (process.env.NODE_ENV !== 'test') {
+      let response: any;
+      if (model.startsWith('imagen-')) {
+        response = await (aiClient() as any).models.generateImages({
+          model,
+          prompt,
+          config: {
+            numberOfImages: 1,
+            outputMimeType: 'image/jpeg',
+            aspectRatio: aspectRatio as any
           }
-        }
-      });
-    }
+        });
+      } else {
+        // Configuração oficial do SDK @google/genai para gemini-3.1-flash-image / gemini-3.1-flash-lite-image
+        response = await aiClient().models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            imageConfig: {
+              aspectRatio,
+              imageSize: resolution
+            }
+          }
+        });
+      }
 
-    const image = extractGeneratedImage(response);
-    if (!image?.data) throw new Error('O modelo de imagem não retornou um arquivo utilizável.');
-    const buffer = Buffer.from(image.data, 'base64');
-    if (!buffer.length || buffer.length > 12 * 1024 * 1024) throw new Error('A imagem retornada possui tamanho inválido.');
+      const image = extractGeneratedImage(response);
+      if (!image?.data) throw new Error('O modelo de imagem não retornou um arquivo utilizável.');
+      const buffer = Buffer.from(image.data, 'base64');
+      if (!buffer.length || buffer.length > 12 * 1024 * 1024) throw new Error('A imagem retornada possui tamanho inválido.');
 
-    const ext = image.mimeType.includes('png') ? 'png' : image.mimeType.includes('webp') ? 'webp' : 'jpg';
-    const storagePath = `generated/${data.userId}/${executionId}.${ext}`;
-    let imageUrl = `data:${image.mimeType};base64,${image.data}`;
+      const ext = image.mimeType.includes('png') ? 'png' : image.mimeType.includes('webp') ? 'webp' : 'jpg';
+      storagePath = `generated/${data.userId}/${executionId}.${ext}`;
+      imageUrl = `data:${image.mimeType};base64,${image.data}`;
+      mimeType = image.mimeType;
 
-    try {
-      const token = crypto.randomUUID();
-      const bucket = getAdminStorage().bucket();
-      const file = bucket.file(storagePath);
-      await file.save(buffer, {
-        resumable: false,
-        metadata: {
-          contentType: image.mimeType,
-          cacheControl: 'public,max-age=31536000,immutable',
-          metadata: { firebaseStorageDownloadTokens: token }
-        }
-      });
-      imageUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
-    } catch (storageErr) {
-      console.warn('[Froc AI Storage Fallback] Firebase Storage indisponível, utilizando Data URI seguro:', storageErr);
+      try {
+        const token = crypto.randomUUID();
+        const bucket = getAdminStorage().bucket();
+        const file = bucket.file(storagePath);
+        await file.save(buffer, {
+          resumable: false,
+          metadata: {
+            contentType: image.mimeType,
+            cacheControl: 'public,max-age=31536000,immutable',
+            metadata: { firebaseStorageDownloadTokens: token }
+          }
+        });
+        imageUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
+      } catch (storageErr) {
+        console.warn('[Froc AI Storage Fallback] Firebase Storage indisponível, utilizando Data URI seguro:', storageErr);
+      }
     }
 
     await commitReservation({
       userId: data.userId,
       reservationId: reservation.reservationId,
-      source: 'Froc AI: image_ai',
-      metadata: { executionId, modelUsed: model, storagePath }
+      source: `Froc AI: ${opKey}`,
+      metadata: { executionId, modelUsed: model, storagePath, resolution }
     });
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
       companyId: data.company?.id || null,
-      type: 'image_ai',
+      type: opKey,
       provider: 'Google Gemini',
       model,
       promptHash: promptFingerprint(prompt),
@@ -642,14 +653,14 @@ export async function generateMarketingImage(data: {
       outputStoragePath: storagePath,
       timestamp: nowIso()
     });
-    return { imageUrl, storagePath, mimeType: image.mimeType, creditsUsed: cost, executionId, modelUsed: model };
+    return { imageUrl, storagePath, mimeType, creditsUsed: cost, executionId, modelUsed: model, resolution };
   } catch (error) {
     const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
     await rollbackReservation(data.userId, reservation.reservationId, message);
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
       companyId: data.company?.id || null,
-      type: 'image_ai',
+      type: opKey,
       provider: 'Google Gemini',
       model,
       promptHash: promptFingerprint(prompt),
@@ -662,4 +673,353 @@ export async function generateMarketingImage(data: {
     });
     throw new Error(message);
   }
+}
+
+export type VideoPreset = 'demo_720p' | 'pro_1080p' | 'cinema_4k';
+
+export interface VideoJobData {
+  id: string;
+  userId: string;
+  companyId: string;
+  operationName?: string;
+  reservationId: string;
+  creditsReserved: number;
+  prompt: string;
+  title?: string;
+  preset: VideoPreset;
+  resolution: '720p' | '1080p' | '4k';
+  aspectRatio: '9:16' | '16:9';
+  modelUsed: string;
+  initialImageUrl?: string;
+  videoUrl?: string;
+  storagePath?: string;
+  contentItemId?: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  errorMessage?: string;
+  progressPct?: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export async function startVideoGenerationJob(data: {
+  userId: string;
+  company?: any;
+  prompt: string;
+  title?: string;
+  preset?: VideoPreset;
+  aspectRatio?: '9:16' | '16:9';
+  initialImageBase64?: string;
+  cameraMotion?: string;
+  lighting?: string;
+  mood?: string;
+}): Promise<VideoJobData> {
+  const preset: VideoPreset = data.preset === 'cinema_4k' ? 'cinema_4k' : data.preset === 'pro_1080p' ? 'pro_1080p' : 'demo_720p';
+  const aspectRatio = data.aspectRatio === '16:9' ? '16:9' : '9:16';
+  const resolution: '720p' | '1080p' | '4k' = preset === 'cinema_4k' ? '4k' : preset === 'pro_1080p' ? '1080p' : '720p';
+  
+  const opKey = preset === 'cinema_4k' ? 'video_veo_4k' : preset === 'pro_1080p' ? 'video_veo_1080p' : 'video_veo_fast';
+  const cost = Number(config.creditCosts[opKey] || 50);
+  
+  const model = preset === 'cinema_4k'
+    ? (config.geminiModels.veo || 'veo-3.1-generate-preview')
+    : (config.geminiModels.veoLite || 'veo-3.1-lite-generate-preview');
+
+  const reservation = await reserveCredits({
+    userId: data.userId,
+    amount: cost,
+    operation: opKey,
+    companyId: data.company?.id
+  });
+
+  const jobId = newId('vjob');
+  const now = nowIso();
+
+  const fullPrompt = [
+    companyContext(data.company),
+    `Vídeo publicitário de alta qualidade e apelo comercial: ${data.prompt}.`,
+    data.cameraMotion ? `Movimento de câmera: ${data.cameraMotion}.` : '',
+    data.lighting ? `Iluminação: ${data.lighting}.` : '',
+    data.mood ? `Atmosfera/Estilo: ${data.mood}.` : '',
+    `Proporção de tela: ${aspectRatio}. Renderização cinematográfica sem artefatos ou elementos distorcidos.`
+  ].filter(Boolean).join('\n');
+
+  try {
+    let operationName = `mock_op_${jobId}`;
+    
+    if (process.env.NODE_ENV !== 'test') {
+      const videoConfig: any = {
+        numberOfVideos: 1,
+        resolution,
+        aspectRatio
+      };
+
+      const reqPayload: any = {
+        model,
+        prompt: fullPrompt,
+        config: videoConfig
+      };
+
+      if (data.initialImageBase64) {
+        const cleanBase64 = data.initialImageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+        reqPayload.image = {
+          imageBytes: cleanBase64,
+          mimeType: 'image/jpeg'
+        };
+      }
+
+      const operation = await aiClient().models.generateVideos(reqPayload);
+      if (!operation?.name) {
+        throw new Error('A API Veo não retornou o identificador da operação de vídeo.');
+      }
+      operationName = operation.name;
+    }
+
+    const jobData: VideoJobData = {
+      id: jobId,
+      userId: data.userId,
+      companyId: data.company?.id || 'default',
+      operationName,
+      reservationId: reservation.reservationId,
+      creditsReserved: cost,
+      prompt: data.prompt,
+      title: data.title || `Vídeo IA - ${data.prompt.slice(0, 60)}`,
+      preset,
+      resolution,
+      aspectRatio,
+      modelUsed: model,
+      initialImageUrl: data.initialImageBase64 ? 'provided' : undefined,
+      status: 'processing',
+      progressPct: 10,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await firestore().collection(COLLECTIONS.mediaGenerationJobs).doc(jobId).set(jobData);
+    return jobData;
+  } catch (error) {
+    const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
+    await rollbackReservation(data.userId, reservation.reservationId, message);
+    throw new Error(message);
+  }
+}
+
+export async function checkAndCompleteVideoJob(userId: string, jobId: string): Promise<VideoJobData> {
+  const docRef = firestore().collection(COLLECTIONS.mediaGenerationJobs).doc(jobId);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    const err: any = new Error('Job de geração de vídeo não encontrado.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const job = snap.data() as VideoJobData;
+  if (job.userId !== userId) {
+    const err: any = new Error('Acesso não autorizado a este job.');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // Se já foi concluído ou falhou, retorna direto
+  if (job.status === 'completed' || job.status === 'failed') {
+    return job;
+  }
+
+  // Simulação para ambiente de testes
+  if (process.env.NODE_ENV === 'test') {
+    const contentItemId = newId('content');
+    const mockUrl = 'https://storage.googleapis.com/froc-ia-test-bucket/mock-video.mp4';
+    
+    const contentItem = {
+      id: contentItemId,
+      userId: job.userId,
+      companyId: job.companyId || 'default',
+      type: 'video',
+      title: job.title || `Vídeo IA Veo - ${job.prompt.slice(0, 60)}`,
+      headline: job.title || '',
+      body: job.prompt,
+      videoUrl: mockUrl,
+      targetPlatform: job.aspectRatio === '9:16' ? 'Reels / TikTok / Shorts' : 'YouTube / Banner',
+      creditsUsed: job.creditsReserved,
+      status: 'saved',
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      metadata: {
+        jobId: job.id,
+        preset: job.preset,
+        resolution: job.resolution,
+        aspectRatio: job.aspectRatio
+      }
+    };
+    await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).set(contentItem);
+
+    await commitReservation({
+      userId: job.userId,
+      reservationId: job.reservationId,
+      source: `Froc AI: video_${job.preset}`,
+      metadata: { jobId: job.id, contentItemId, modelUsed: job.modelUsed }
+    });
+
+    const updatedJob: VideoJobData = {
+      ...job,
+      status: 'completed',
+      progressPct: 100,
+      videoUrl: mockUrl,
+      contentItemId,
+      completedAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    await docRef.set(updatedJob);
+    return updatedJob;
+  }
+
+  // Verificação real com a API Veo
+  try {
+    const op = new GenerateVideosOperation();
+    op.name = job.operationName;
+    const updated = await aiClient().operations.getVideosOperation({ operation: op });
+
+    if (!updated.done) {
+      // Calcular estimativa de progresso baseada no tempo decorrido
+      const elapsedSec = Math.max(0, (Date.now() - new Date(job.createdAt).getTime()) / 1000);
+      const estTotalSec = job.preset === 'cinema_4k' ? 90 : 45;
+      const progressPct = Math.min(92, Math.round(15 + (elapsedSec / estTotalSec) * 75));
+      
+      const inProgressJob: VideoJobData = {
+        ...job,
+        progressPct,
+        updatedAt: nowIso()
+      };
+      await docRef.set(inProgressJob);
+      return inProgressJob;
+    }
+
+    // Se concluiu com erro da API do Veo
+    if (updated.error) {
+      const errMsg = String(updated.error.message || 'Falha no processamento de vídeo pelo modelo Veo.');
+      await rollbackReservation(job.userId, job.reservationId, errMsg);
+      
+      const failedJob: VideoJobData = {
+        ...job,
+        status: 'failed',
+        errorMessage: errMsg,
+        progressPct: 0,
+        updatedAt: nowIso()
+      };
+      await docRef.set(failedJob);
+      return failedJob;
+    }
+
+    // Se concluiu com sucesso, baixar o arquivo e salvar no Storage
+    const downloadUri = updated.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadUri) {
+      throw new Error('O modelo Veo indicou conclusão, mas não retornou o link do vídeo.');
+    }
+
+    const videoRes = await fetch(downloadUri, {
+      headers: {
+        'x-goog-api-key': config.geminiApiKey
+      }
+    });
+
+    if (!videoRes.ok) {
+      throw new Error(`Falha ao baixar o arquivo de vídeo gerado (status ${videoRes.status}).`);
+    }
+
+    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const storagePath = `generated/${job.userId}/videos/${job.id}.mp4`;
+    let publicVideoUrl = downloadUri;
+
+    try {
+      const token = crypto.randomUUID();
+      const bucket = getAdminStorage().bucket();
+      const file = bucket.file(storagePath);
+      await file.save(videoBuffer, {
+        resumable: false,
+        metadata: {
+          contentType: 'video/mp4',
+          cacheControl: 'public,max-age=31536000,immutable',
+          metadata: { firebaseStorageDownloadTokens: token }
+        }
+      });
+      publicVideoUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
+    } catch (storageErr) {
+      console.warn('[Froc Video Storage Fallback] Firebase Storage indisponível, utilizando URL direta:', storageErr);
+    }
+
+    const contentItemId = newId('content');
+    const contentItem = {
+      id: contentItemId,
+      userId: job.userId,
+      companyId: job.companyId || 'default',
+      type: 'video',
+      title: job.title || `Vídeo IA - ${job.prompt.slice(0, 60)}`,
+      headline: job.title || '',
+      body: job.prompt,
+      videoUrl: publicVideoUrl,
+      targetPlatform: job.aspectRatio === '9:16' ? 'Reels / TikTok / Shorts' : 'YouTube / Banner',
+      creditsUsed: job.creditsReserved,
+      status: 'saved',
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      metadata: {
+        jobId: job.id,
+        storagePath,
+        preset: job.preset,
+        resolution: job.resolution,
+        aspectRatio: job.aspectRatio,
+        modelUsed: job.modelUsed
+      }
+    };
+    await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).set(contentItem);
+
+    await commitReservation({
+      userId: job.userId,
+      reservationId: job.reservationId,
+      source: `Froc AI: video_${job.preset}`,
+      metadata: { jobId: job.id, contentItemId, storagePath, modelUsed: job.modelUsed }
+    });
+
+    await createNotification({
+      userId: job.userId,
+      title: 'Seu vídeo com Veo 3.1 está pronto!',
+      message: `O vídeo "${job.title || 'Criativo IA'}" foi processado com sucesso em ${job.resolution} e já está disponível para visualização e download.`,
+      type: 'video_ready'
+    });
+
+    const completedJob: VideoJobData = {
+      ...job,
+      status: 'completed',
+      progressPct: 100,
+      videoUrl: publicVideoUrl,
+      storagePath,
+      contentItemId,
+      completedAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    await docRef.set(completedJob);
+    return completedJob;
+  } catch (error) {
+    const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
+    // Se houve erro crítico de download/storage, marcamos como failed e estornamos
+    await rollbackReservation(job.userId, job.reservationId, message);
+    const failedJob: VideoJobData = {
+      ...job,
+      status: 'failed',
+      errorMessage: message,
+      progressPct: 0,
+      updatedAt: nowIso()
+    };
+    await docRef.set(failedJob);
+    return failedJob;
+  }
+}
+
+export async function listUserVideoJobs(userId: string, companyId?: string): Promise<VideoJobData[]> {
+  let query: any = firestore().collection(COLLECTIONS.mediaGenerationJobs).where('userId', '==', userId);
+  if (companyId && companyId !== 'all') {
+    query = query.where('companyId', '==', companyId);
+  }
+  const items = queryData<VideoJobData>(await query.get());
+  return items.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }

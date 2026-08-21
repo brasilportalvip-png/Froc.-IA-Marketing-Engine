@@ -5,7 +5,7 @@ import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, e
 import { addCredits, getWallet, listCreditTransactions } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
-import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript } from './ai.js';
+import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
 import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
@@ -499,24 +499,72 @@ router.post('/ai/generate-image', requireAuth, asyncRoute(async (req: Authentica
   const theme = safeString(req.body?.theme, 5000);
   if (!theme) return res.status(400).json({ error: 'A ideia ou tema da imagem é obrigatório.' });
   const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
+  const resolution = ['1K', '2K', '4K'].includes(req.body?.resolution) ? req.body.resolution : '1K';
   const generated = await generateMarketingImage({
     userId: req.user!.id,
     company,
     theme,
     style: safeString(req.body?.style, 3000),
-    aspectRatio: safeString(req.body?.aspectRatio, 20)
+    aspectRatio: safeString(req.body?.aspectRatio, 20),
+    resolution
   });
   const id = newId('content');
   const item = {
     id, userId: req.user!.id, companyId: company?.id || 'default', type: 'image',
-    title: safeString(req.body?.title, 300) || `Imagem IA - ${theme.slice(0, 80)}`,
+    title: safeString(req.body?.title, 300) || `Imagem IA (${resolution}) - ${theme.slice(0, 80)}`,
     body: theme, hashtags: [], keywords: [], imageUrl: generated.imageUrl,
     visualPrompt: safeString(req.body?.style, 3000), creditsUsed: generated.creditsUsed,
     status: 'saved', createdAt: nowIso(), updatedAt: nowIso(),
-    metadata: { storagePath: generated.storagePath, mimeType: generated.mimeType, modelUsed: generated.modelUsed }
+    metadata: { storagePath: generated.storagePath, mimeType: generated.mimeType, modelUsed: generated.modelUsed, resolution }
   };
   await firestore().collection(COLLECTIONS.contentItems).doc(id).set(cleanObject(item));
   res.json({ image: generated, imageUrl: generated.imageUrl, contentItem: item, creditsUsed: generated.creditsUsed });
+}));
+
+router.post('/ai/generate-video', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const prompt = safeString(req.body?.prompt || req.body?.topic, 5000);
+  if (!prompt) return res.status(400).json({ error: 'O briefing ou descrição do vídeo é obrigatório.' });
+  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
+  
+  const preset = ['demo_720p', 'pro_1080p', 'cinema_4k'].includes(req.body?.preset) ? req.body.preset : 'demo_720p';
+  const aspectRatio = req.body?.aspectRatio === '16:9' ? '16:9' : '9:16';
+  
+  const job = await startVideoGenerationJob({
+    userId: req.user!.id,
+    company,
+    prompt,
+    title: safeString(req.body?.title, 300),
+    preset,
+    aspectRatio,
+    initialImageBase64: typeof req.body?.initialImage === 'string' && req.body.initialImage.length > 50 ? req.body.initialImage : undefined,
+    cameraMotion: safeString(req.body?.cameraMotion, 200),
+    lighting: safeString(req.body?.lighting, 200),
+    mood: safeString(req.body?.mood, 200)
+  });
+
+  res.status(202).json({
+    message: 'Geração de vídeo com Veo 3.1 iniciada em segundo plano.',
+    job,
+    jobId: job.id,
+    status: job.status,
+    creditsReserved: job.creditsReserved
+  });
+}));
+
+router.get('/ai/video-jobs', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = req.query.companyId ? String(req.query.companyId) : undefined;
+  const jobs = await listUserVideoJobs(req.user!.id, companyId);
+  res.json({ jobs });
+}));
+
+router.get('/ai/video-jobs/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const job = await checkAndCompleteVideoJob(req.user!.id, req.params.id);
+  res.json({ job });
+}));
+
+router.post('/ai/video-jobs/:id/check', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const job = await checkAndCompleteVideoJob(req.user!.id, req.params.id);
+  res.json({ job });
 }));
 
 router.post('/ai/generate-article', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {

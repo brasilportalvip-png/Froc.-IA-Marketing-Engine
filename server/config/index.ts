@@ -39,7 +39,10 @@ export const config = {
     text: env('GEMINI_MODEL_TEXT', 'gemini-2.5-flash'),
     pro: env('GEMINI_MODEL_PRO', 'gemini-3.1-pro-preview'),
     fallback: env('GEMINI_MODEL_FALLBACK', 'gemini-3.1-flash-lite'),
-    image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image')
+    image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image'),
+    imageLite: env('GEMINI_MODEL_IMAGE_LITE', 'gemini-3.1-flash-lite-image'),
+    veoLite: env('GEMINI_MODEL_VEO_LITE', 'veo-3.1-lite-generate-preview'),
+    veo: env('GEMINI_MODEL_VEO', 'veo-3.1-generate-preview')
   },
   firebase: {
     projectId: env('FIREBASE_ADMIN_PROJECT_ID', nodeEnv === 'test' ? 'froc-ia-test' : ''),
