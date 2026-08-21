@@ -5,12 +5,13 @@ import { getAdminStorage } from '../providers/firebaseAdmin.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso, queryData } from './store.js';
 import { commitReservation, reserveCredits, rollbackReservation } from './credits.js';
 
-let client: GoogleGenAI | null = null;
+let textClient: GoogleGenAI | null = null;
+let mediaClient: GoogleGenAI | null = null;
 
-function aiClient(): GoogleGenAI {
+export function textAiClient(): GoogleGenAI {
   if (!config.geminiApiKey) throw new Error('GEMINI_API_KEY não configurada no servidor.');
-  if (!client) {
-    client = new GoogleGenAI({
+  if (!textClient) {
+    textClient = new GoogleGenAI({
       apiKey: config.geminiApiKey,
       httpOptions: {
         headers: {
@@ -19,7 +20,27 @@ function aiClient(): GoogleGenAI {
       }
     });
   }
-  return client;
+  return textClient;
+}
+
+export function mediaAiClient(): GoogleGenAI {
+  const mediaKey = config.geminiMediaApiKey || config.geminiApiKey;
+  if (!mediaKey) throw new Error('GEMINI_MEDIA_API_KEY ou GEMINI_API_KEY não configurada no servidor.');
+  if (!mediaClient) {
+    mediaClient = new GoogleGenAI({
+      apiKey: mediaKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+  }
+  return mediaClient;
+}
+
+function aiClient(): GoogleGenAI {
+  return textAiClient();
 }
 
 function sanitizeJsonText(value: string): string {
@@ -55,6 +76,14 @@ export function parseAiJson<T = any>(value: string): T {
     return JSON.parse(sanitizeJsonText(value)) as T;
   } catch {
     throw new Error('A IA retornou conteúdo fora do formato estruturado esperado. Tente novamente.');
+  }
+}
+
+export function safeJsonParse<T = any>(value: string, fallback: T): T {
+  try {
+    return JSON.parse(sanitizeJsonText(value)) as T;
+  } catch {
+    return fallback;
   }
 }
 
@@ -264,7 +293,10 @@ async function generateRaw(data: {
           cta: 'Saiba mais e confira nossa coleção.',
           hashtags: ['#teste', '#autopilot'],
           keywords: ['marketing', 'vendas'],
-          visualPrompt: 'Foto profissional de moda feminina em alta definição'
+          visualPrompt: 'Foto profissional de moda feminina em alta definição',
+          cameraMotion: 'Dynamic cinematic tracking pan',
+          lighting: 'Golden hour dramatic contrast',
+          mood: 'Inspiring and sophisticated'
         })
       : 'Texto de teste gerado pelo modelo Froc AI.';
     return { text, modelUsed: 'test-model', attempts: ['test-model'] };
@@ -582,7 +614,7 @@ export async function generateMarketingImage(data: {
     if (process.env.NODE_ENV !== 'test') {
       let response: any;
       if (model.startsWith('imagen-')) {
-        response = await (aiClient() as any).models.generateImages({
+        response = await (mediaAiClient() as any).models.generateImages({
           model,
           prompt,
           config: {
@@ -593,7 +625,7 @@ export async function generateMarketingImage(data: {
         });
       } else {
         // Configuração oficial do SDK @google/genai para gemini-3.1-flash-image / gemini-3.1-flash-lite-image
-        response = await aiClient().models.generateContent({
+        response = await mediaAiClient().models.generateContent({
           model,
           contents: prompt,
           config: {
@@ -702,6 +734,54 @@ export interface VideoJobData {
   completedAt?: string;
 }
 
+export async function generateVideoDirection(data: {
+  userId: string;
+  company?: any;
+  prompt: string;
+  aspectRatio?: '9:16' | '16:9';
+  mood?: string;
+  cameraMotion?: string;
+  lighting?: string;
+}): Promise<{ visualPrompt: string; cameraMotion: string; lighting: string; mood: string }> {
+  const systemInstruction = `Você é um diretor de fotografia e cinematógrafo publicitário de classe mundial da Froc.IA.
+Sua missão é expandir a ideia bruta do usuário em uma descrição visual cinematográfica de altíssima fidelidade e apelo comercial para o modelo Veo 3.1.
+Retorne um JSON estrito no formato:
+{
+  "visualPrompt": "Descrição visual vívida e detalhada da cena em inglês e português para renderização cinematográfica",
+  "cameraMotion": "Movimento de câmera preciso (ex: Smooth cinematic push-in with low angle track)",
+  "lighting": "Esquema de iluminação refinado (ex: Volumetric golden hour side-lighting with soft fill)",
+  "mood": "Atmosfera e gradação de cor (ex: Premium, sleek commercial aesthetic with high dynamic range)"
+}`;
+
+  const prompt = `${companyContext(data.company)}
+Ideia ou cena do vídeo: ${data.prompt}
+Formato de tela: ${data.aspectRatio || '9:16'}
+Sugestão de clima: ${data.mood || 'Comercial premium'}
+Sugestão de câmera: ${data.cameraMotion || 'Movimento dinâmico e fluido'}
+Sugestão de luz: ${data.lighting || 'Iluminação de estúdio'}`;
+
+  const raw = await generateRaw({
+    prompt,
+    systemInstruction,
+    jsonOutput: true,
+    maxTokens: 1200
+  });
+
+  const parsed = safeJsonParse<any>(raw.text, {
+    visualPrompt: data.prompt,
+    cameraMotion: data.cameraMotion || 'Smooth cinematic pan',
+    lighting: data.lighting || 'Studio lighting',
+    mood: data.mood || 'Premium commercial'
+  });
+
+  return {
+    visualPrompt: String(parsed.visualPrompt || data.prompt),
+    cameraMotion: String(parsed.cameraMotion || data.cameraMotion || 'Smooth cinematic pan'),
+    lighting: String(parsed.lighting || data.lighting || 'Studio lighting'),
+    mood: String(parsed.mood || data.mood || 'Premium commercial')
+  };
+}
+
 export async function startVideoGenerationJob(data: {
   userId: string;
   company?: any;
@@ -722,8 +802,10 @@ export async function startVideoGenerationJob(data: {
   const cost = Number(config.creditCosts[opKey] || 50);
   
   const model = preset === 'cinema_4k'
-    ? (config.geminiModels.veo || 'veo-3.1-generate-preview')
-    : (config.geminiModels.veoLite || 'veo-3.1-lite-generate-preview');
+    ? (config.geminiModels.veoCinema || 'veo-3.1-generate-preview')
+    : preset === 'pro_1080p'
+      ? (config.geminiModels.veoFast || 'veo-3.1-generate-preview')
+      : (config.geminiModels.veoLite || 'veo-3.1-lite-generate-preview');
 
   const reservation = await reserveCredits({
     userId: data.userId,
@@ -750,7 +832,7 @@ export async function startVideoGenerationJob(data: {
     if (process.env.NODE_ENV !== 'test') {
       const videoConfig: any = {
         numberOfVideos: 1,
-        resolution,
+        resolution: resolution === '4k' ? '1080p' : resolution, // Ajuste para suporte seguro da API Veo
         aspectRatio
       };
 
@@ -768,7 +850,7 @@ export async function startVideoGenerationJob(data: {
         };
       }
 
-      const operation = await aiClient().models.generateVideos(reqPayload);
+      const operation = await mediaAiClient().models.generateVideos(reqPayload);
       if (!operation?.name) {
         throw new Error('A API Veo não retornou o identificador da operação de vídeo.');
       }
@@ -820,7 +902,7 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     throw err;
   }
 
-  // Se já foi concluído ou falhou, retorna direto
+  // Idempotência estrita: se já foi concluído ou falhou, retorna direto sem refazer operações
   if (job.status === 'completed' || job.status === 'failed') {
     return job;
   }
@@ -873,11 +955,11 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     return updatedJob;
   }
 
-  // Verificação real com a API Veo
+  // Verificação real com a API Veo via mediaAiClient
   try {
     const op = new GenerateVideosOperation();
     op.name = job.operationName;
-    const updated = await aiClient().operations.getVideosOperation({ operation: op });
+    const updated = await mediaAiClient().operations.getVideosOperation({ operation: op });
 
     if (!updated.done) {
       // Calcular estimativa de progresso baseada no tempo decorrido
@@ -916,9 +998,10 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
       throw new Error('O modelo Veo indicou conclusão, mas não retornou o link do vídeo.');
     }
 
+    const apiKeyForDownload = config.geminiMediaApiKey || config.geminiApiKey;
     const videoRes = await fetch(downloadUri, {
       headers: {
-        'x-goog-api-key': config.geminiApiKey
+        'x-goog-api-key': apiKeyForDownload
       }
     });
 
@@ -927,6 +1010,10 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     }
 
     const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    if (!videoBuffer.length || videoBuffer.length > 150 * 1024 * 1024) {
+      throw new Error('O arquivo de vídeo baixado é inválido ou excede o limite aceito.');
+    }
+
     const storagePath = `generated/${job.userId}/videos/${job.id}.mp4`;
     let publicVideoUrl = downloadUri;
 
@@ -1012,6 +1099,36 @@ export async function checkAndCompleteVideoJob(userId: string, jobId: string): P
     };
     await docRef.set(failedJob);
     return failedJob;
+  }
+}
+
+export async function processPendingVideoJobs(): Promise<{ checked: number; completed: number; failed: number }> {
+  try {
+    const snap = await firestore().collection(COLLECTIONS.mediaGenerationJobs)
+      .where('status', '==', 'processing')
+      .limit(15)
+      .get();
+    
+    let checked = 0;
+    let completed = 0;
+    let failed = 0;
+
+    for (const doc of snap.docs) {
+      const job = doc.data() as VideoJobData;
+      checked++;
+      try {
+        const res = await checkAndCompleteVideoJob(job.userId, job.id);
+        if (res.status === 'completed') completed++;
+        else if (res.status === 'failed') failed++;
+      } catch (err) {
+        console.warn(`[Video Background Worker] Erro ao processar job ${job.id}:`, err);
+      }
+    }
+
+    return { checked, completed, failed };
+  } catch (error) {
+    console.warn('[Video Background Worker] Erro ao consultar jobs pendentes:', error);
+    return { checked: 0, completed: 0, failed: 0 };
   }
 }
 

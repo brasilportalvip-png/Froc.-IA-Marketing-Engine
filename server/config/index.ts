@@ -35,6 +35,7 @@ export const config = {
   appUrl,
   corsOrigins,
   geminiApiKey: env('GEMINI_API_KEY'),
+  geminiMediaApiKey: env('GEMINI_MEDIA_API_KEY') || env('GEMINI_API_KEY'),
   geminiModels: {
     text: env('GEMINI_MODEL_TEXT', 'gemini-2.5-flash'),
     pro: env('GEMINI_MODEL_PRO', 'gemini-3.1-pro-preview'),
@@ -42,6 +43,8 @@ export const config = {
     image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image'),
     imageLite: env('GEMINI_MODEL_IMAGE_LITE', 'gemini-3.1-flash-lite-image'),
     veoLite: env('GEMINI_MODEL_VEO_LITE', 'veo-3.1-lite-generate-preview'),
+    veoFast: env('GEMINI_MODEL_VEO_FAST', 'veo-3.1-generate-preview'),
+    veoCinema: env('GEMINI_MODEL_VEO_CINEMA', 'veo-3.1-generate-preview'),
     veo: env('GEMINI_MODEL_VEO', 'veo-3.1-generate-preview')
   },
   firebase: {

@@ -5,7 +5,7 @@ import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, e
 import { addCredits, getWallet, listCreditTransactions } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
-import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
+import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
 import { createOAuthUrl, disconnectSocial, getTikTokUploadStatus, handleOAuthCallback, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
@@ -519,6 +519,24 @@ router.post('/ai/generate-image', requireAuth, asyncRoute(async (req: Authentica
   };
   await firestore().collection(COLLECTIONS.contentItems).doc(id).set(cleanObject(item));
   res.json({ image: generated, imageUrl: generated.imageUrl, contentItem: item, creditsUsed: generated.creditsUsed });
+}));
+
+router.post('/ai/generate-video-direction', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const prompt = safeString(req.body?.prompt || req.body?.topic, 5000);
+  if (!prompt) return res.status(400).json({ error: 'O briefing ou descrição do vídeo é obrigatório.' });
+  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
+  
+  const direction = await generateVideoDirection({
+    userId: req.user!.id,
+    company,
+    prompt,
+    aspectRatio: req.body?.aspectRatio === '16:9' ? '16:9' : '9:16',
+    mood: safeString(req.body?.mood, 200),
+    cameraMotion: safeString(req.body?.cameraMotion, 200),
+    lighting: safeString(req.body?.lighting, 200)
+  });
+
+  res.json({ direction });
 }));
 
 router.post('/ai/generate-video', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {

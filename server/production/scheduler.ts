@@ -1,5 +1,5 @@
 import { config } from '../config/index.js';
-import { generateAutopilotPost, generatePlatformArticle, generatePost } from './ai.js';
+import { generateAutopilotPost, generatePlatformArticle, generatePost, processPendingVideoJobs } from './ai.js';
 import { cleanupStaleReservations, getEffectiveWallet, getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
@@ -510,10 +510,11 @@ export async function processSchedulerTick() {
   if (!(await acquireLock())) return { skipped: true, reason: 'Outro ciclo já está em execução.' };
   try {
     const releasedReservations = await cleanupStaleReservations(30);
+    const videoJobs = await processPendingVideoJobs();
     const scheduledPosts = await processScheduledPosts();
     const autopilot = await processAutopilot();
     const autoBlog = await processAutoBlog();
-    return { skipped: false, releasedReservations, scheduledPosts, autopilot, autoBlog, processedAt: nowIso() };
+    return { skipped: false, releasedReservations, videoJobs, scheduledPosts, autopilot, autoBlog, processedAt: nowIso() };
   } finally {
     await releaseLock();
   }
