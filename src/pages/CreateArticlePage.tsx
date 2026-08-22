@@ -53,6 +53,13 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
     wordCount?: number;
   } | null>(null);
 
+  // Reset state when selectedCompany changes (E05)
+  React.useEffect(() => {
+    setTargetAudience(selectedCompany?.targetAudience || 'Empreendedores e Clientes');
+    setGeneratedArticle(null);
+    setErrorMessage('');
+  }, [selectedCompany?.id]);
+
   const cleanHeading = (str: string) => String(str || '').replace(/^#+\s*/, '').replace(/^[Hh][1-6][:\s-]+/i, '').trim();
 
   const handleGenerate = async (e: React.FormEvent) => {

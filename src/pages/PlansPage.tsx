@@ -42,12 +42,67 @@ export const PlansPage: React.FC<Props> = ({ wallet, onRefreshWallet, onNavigate
   useEffect(() => { void load(); }, []);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('payment_status')) {
-      onRefreshWallet();
+    const orderId = params.get('order_id') || params.get('external_reference');
+    const paymentStatus = params.get('payment_status') || params.get('status') || params.get('collection_status');
+
+    if (!orderId && !paymentStatus) return;
+
+    let isSubscribed = true;
+    let pollCount = 0;
+    const maxPolls = 8;
+
+    if (paymentStatus === 'failure' || paymentStatus === 'rejected' || paymentStatus === 'null') {
+      setError('O pagamento não foi concluído ou foi recusado pelo emissor.');
       history.replaceState({}, '', location.pathname);
-      setMessage('Checkout concluído. O saldo é atualizado somente após confirmação autenticada do Mercado Pago.');
-      void load();
+      return;
     }
+
+    setMessage('Processando confirmação com o Mercado Pago... Aguarde.');
+
+    const checkOrderStatus = async () => {
+      if (!isSubscribed) return;
+      try {
+        if (orderId) {
+          const res = await apiRequest<{ order: { id: string; status: string; lastPaymentStatus?: string } }>(`/api/payments/orders/${orderId}`);
+          const order = res.order;
+          if (order.status === 'approved' || order.status === 'active' || order.lastPaymentStatus === 'approved') {
+            setMessage('Pagamento aprovado com sucesso! Seus créditos e plano foram atualizados.');
+            onRefreshWallet();
+            void load();
+            history.replaceState({}, '', location.pathname);
+            return;
+          }
+          if (['failed', 'rejected', 'refunded', 'charged_back', 'cancelled'].includes(order.status)) {
+            setError(`O pagamento foi finalizado com status: ${order.status}.`);
+            onRefreshWallet();
+            void load();
+            history.replaceState({}, '', location.pathname);
+            return;
+          }
+        }
+        
+        pollCount++;
+        if (pollCount < maxPolls && isSubscribed) {
+          setTimeout(() => { void checkOrderStatus(); }, 2500);
+        } else if (isSubscribed) {
+          setMessage('Pagamento em processamento. O saldo será creditado automaticamente assim que o Mercado Pago liquidar.');
+          onRefreshWallet();
+          void load();
+          history.replaceState({}, '', location.pathname);
+        }
+      } catch {
+        if (isSubscribed) {
+          onRefreshWallet();
+          void load();
+        }
+      }
+    };
+
+    void checkOrderStatus();
+
+    return () => {
+      isSubscribed = false;
+    };
   }, [onRefreshWallet]);
 
   const activeSubscription = useMemo(() => subscriptions.find((item) =>
@@ -55,16 +110,24 @@ export const PlansPage: React.FC<Props> = ({ wallet, onRefreshWallet, onNavigate
     wallet?.planId && wallet.planId !== 'free' && wallet.planStatus === 'active'
   ), [subscriptions, wallet]);
 
-
   const checkout = async (planId: string) => {
-    setPaying(planId); setError(''); setMessage('');
+    if (paying) return; // Previne clique duplo
+    setPaying(planId);
+    setError('');
+    setMessage('');
     try {
-      const data = await apiRequest<{ initPoint?: string; billingMode?: string }>('/api/payments/checkout', { method: 'POST', body: { planId } });
+      const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      const data = await apiRequest<{ initPoint?: string; billingMode?: string }>('/api/payments/checkout', {
+        method: 'POST',
+        headers: { 'X-Idempotency-Key': idempotencyKey },
+        body: { planId, idempotencyKey }
+      });
       if (!data.initPoint) throw new Error('O Mercado Pago não retornou o checkout.');
       location.href = data.initPoint;
     } catch (e: any) {
       setError(e.message || 'Falha ao iniciar pagamento.');
-    } finally { setPaying(''); }
+      setPaying('');
+    }
   };
 
   const cancelRenewal = async () => {

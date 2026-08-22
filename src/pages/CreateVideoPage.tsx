@@ -82,9 +82,20 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
     return CREDIT_COSTS.video_veo_fast || 50;
   }, [preset]);
 
+  // Reset video script when company changes (E05)
+  useEffect(() => {
+    setGeneratedScript(null);
+    setVideoError('');
+    setScriptError('');
+  }, [selectedCompany?.id]);
+
   // Carregar histórico de jobs recentes
   const loadRecentJobs = async () => {
-    if (!selectedCompany?.id) return;
+    if (!selectedCompany?.id) {
+      setRecentJobs([]);
+      setActiveJob(null);
+      return;
+    }
     try {
       const data = await apiRequest<{ jobs: VideoJob[] }>(`/api/ai/video-jobs?companyId=${selectedCompany.id}`);
       if (Array.isArray(data.jobs)) {
@@ -498,7 +509,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                         </a>
                         <button
                           type="button"
-                          onClick={() => onNavigate('redes')}
+                          onClick={() => onNavigate('redes-sociais')}
                           className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-4 text-xs font-bold text-white hover:opacity-95 transition-all"
                         >
                           <Share2 size={14} /> Publicar no TikTok

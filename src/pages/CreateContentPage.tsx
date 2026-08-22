@@ -81,6 +81,13 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
     ? CREDIT_COSTS.headline
     : CREDIT_COSTS.cta;
 
+  // Invalidate previous saved item reference when parameters or company changes
+  useEffect(() => {
+    setLastSavedContentItem(null);
+    setGeneratedPost(null);
+    setGeneratedCarousel(null);
+  }, [contentType, selectedCompany?.id]);
+
   const handleGenerate = async () => {
     if (!topic.trim()) {
       setErrorMessage('Informe o tema ou assunto do conteúdo.');
@@ -89,6 +96,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
     setErrorMessage('');
     setSuccessMessage('');
     setLoading(true);
+    setLastSavedContentItem(null); // Invalida explicitamente qualquer referência anterior (E01)
 
     try {
       if (contentType === 'post') {

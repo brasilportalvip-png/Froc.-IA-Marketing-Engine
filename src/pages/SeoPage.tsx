@@ -31,6 +31,13 @@ export const SeoPage: React.FC<SeoPageProps> = ({
   const [report, setReport] = useState<SeoReport | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
 
+  // Reset state when company changes to prevent multi-tenant data bleeding (E05)
+  React.useEffect(() => {
+    setUrlInput(selectedCompany?.website || '');
+    setReport(null);
+    setErrorMessage('');
+  }, [selectedCompany?.id, selectedCompany?.website]);
+
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!urlInput.trim()) {

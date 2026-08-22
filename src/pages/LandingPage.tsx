@@ -131,7 +131,7 @@ export const LandingPage: React.FC<Props> = ({ authenticated, onOpenAuth, onNavi
 
               <div className="mt-5 grid grid-cols-2 gap-3">
                 {[
-                  [Sparkles, 'Estratégia & Persona', '99.4% precisão'],
+                  [Sparkles, 'Estratégia & Persona', 'Alinhamento com a marca'],
                   [ImageIcon, 'Criativos Visuais 1K', 'Alta resolução'],
                   [Megaphone, 'Campanhas Multicanal', 'Meta & Google'],
                   [Globe2, 'SEO & Magazine', 'Indexação ativa']
@@ -154,7 +154,7 @@ export const LandingPage: React.FC<Props> = ({ authenticated, onOpenAuth, onNavi
                   <div className="text-[10px] font-extrabold uppercase tracking-widest text-cyan-300 flex items-center gap-1.5">
                     <Cpu size={13} /> Autopilot Froc
                   </div>
-                  <span className="text-[10px] text-emerald-400 font-bold">100% Conectado</span>
+                  <span className="text-[10px] text-cyan-400 font-bold bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">Automação Contínua</span>
                 </div>
                 <div className="mt-2 text-sm font-extrabold text-white">Conteúdo autônomo com calibração contínua</div>
                 <p className="mt-1 text-[11px] leading-relaxed text-slate-300">

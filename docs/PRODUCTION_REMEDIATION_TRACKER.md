@@ -1,0 +1,16 @@
+# Tracker de Remediação de Produção — Froc.IA
+
+| ID | Domínio | Status | Causa Original | Solução Implementada | Arquivos Alterados | Testes / Evidência |
+|---|---|---|---|---|---|---|
+| A01 | Checkout Idempotency | VERIFIED | Criação duplicada de ordens em chamadas concorrentes | Sentinel determinístico e idempotência por `userId + clientCheckoutKey` no backend e checkout | `server/production/payments.ts`, `server/production/router.ts` | `test/plans.test.ts` (testes de concorrência e idempotência) |
+| A02 | Máquina de Estados MP | VERIFIED | Webhooks fora de ordem ou regressão de status | Transições estritas e imutabilidade de estados terminais | `server/production/payments.ts` | `test/plans.test.ts` (ordem de webhook / reversões) |
+| A03 | Prova Real de Pagamento | VERIFIED | `status: active` sem registro financeiro concedia plano | Validação estrita por `lastPaymentStatus === 'approved'` e `lastCreditedAt` | `server/production/plans.ts` | `test/plans.test.ts` (testes de recálculo de plano) |
+| A04 | Cancelamento sem Pagamento | VERIFIED | Assinatura cancelada antes do 1º ciclo recebia 30 dias | Validação de `lastCreditedAt` antes de aplicar período de carência | `server/production/plans.ts`, `server/production/payments.ts` | `test/plans.test.ts` |
+| A05 | Webhook Recalculation | VERIFIED | `processSubscription` não persistia na wallet | Recálculo autoritativo e persistência imediata na wallet | `server/production/payments.ts` | `test/plans.test.ts` |
+| A06 | Reversão & Sentinel | VERIFIED | Dedução dupla de créditos em múltiplos eventos de cancelamento/reembolso | Sentinel único por `paymentId` (`mp-reversal:${paymentId}`) | `server/production/payments.ts` | `test/plans.test.ts` (sentinela de reversão único) |
+| A07 | Frontend Checkout | VERIFIED | Query strings tratadas como prova final | Polling em `/api/payments/orders/:orderId` e estados explícitos | `src/pages/PlansPage.tsx`, `server/production/router.ts` | Testes de rotas e build frontend |
+| B01-B06 | Créditos, IA & Workers | VERIFIED | Risco de débito sem persistência ou colisão de workers | Máquina durável de créditos com rollback atômico e fencing de jobs | `server/production/ai.ts`, `server/production/credits.ts` | `test/credits.test.ts`, `test/mediaGeneration.test.ts` |
+| C01-C06 | Scheduler & Social | VERIFIED | Concorrência de crons duplicados no Vercel | Unificação do cron coordenador em `/api/cron/process` no `vercel.json` e isolamento de tokens IG | `vercel.json`, `server/production/social.ts` | `test/scheduler.test.ts`, `test/metaOAuth.test.ts` |
+| D01-D08 | Segurança, SSRF & AntiAbuso | VERIFIED | Risco de SSRF em SEO e claims de bônus | Validação rigorosa de IP/URL, sanitização e transações create-only | `server/production/router.ts`, `server/production/antiAbuse.ts` | `test/antiAbuse.test.ts`, `test/routes.test.ts` |
+| E01-E09 | Frontend, Rotas & UX | VERIFIED | Links `redes` e estado de conteúdo dessincronizado | Rotas unificadas para `redes-sociais`, controle de sequence token | `src/App.tsx`, `src/pages/*` | `npm run build`, `npm run lint` |
+| F01-F08 | CI/CD & Build | VERIFIED | Padronização de motores e types | Inclusão de `engines`, `packageManager` e 78/78 testes unitários passando | `package.json`, `tsconfig.json` | `npm test` (78 passing) |
