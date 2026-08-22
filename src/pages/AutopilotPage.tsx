@@ -62,6 +62,14 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
       setMessage('O modo automático do Autopilot é exclusivo para os planos BUSINESS e AGENCY.');
       return;
     }
+    if (cfg.mode === 'automatic') {
+      const supported = ['facebook', 'linkedin', 'x'];
+      const hasSupportedChannel = cfg.targetPlatforms.some((p) => supported.includes(p.toLowerCase().trim()));
+      if (!hasSupportedChannel) {
+        setMessage('Para o modo 100% automático, selecione ao menos um canal que suporte publicação direta de texto (Facebook, LinkedIn ou X).');
+        return;
+      }
+    }
     setSaving(true);
     setMessage('');
     try {

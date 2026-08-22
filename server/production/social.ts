@@ -3,6 +3,16 @@ import { config } from '../config/index.js';
 import { COLLECTIONS, firestore, nowIso, stableId } from './store.js';
 
 export type SocialProvider = 'instagram' | 'facebook' | 'tiktok' | 'youtube' | 'linkedin' | 'pinterest' | 'x';
+export type ExternalState = 'confirmed_success' | 'confirmed_failed' | 'unknown';
+
+export interface PublishTextResult {
+  provider: SocialProvider;
+  externalId?: string | null;
+  externalState: ExternalState;
+  retrySafe: boolean;
+  error?: string;
+  statusCode?: number;
+}
 
 export const TEXT_AUTO_PUBLISH_PROVIDERS: readonly SocialProvider[] = ['facebook', 'linkedin', 'x'] as const;
 
@@ -284,8 +294,16 @@ async function diagnoseMetaPermissions(userToken: string, requiredPermissions: s
   return null;
 }
 
-export async function resolveMetaAccount(provider: 'facebook' | 'instagram', shortToken: string): Promise<{ id: string; name: string; accessToken: string; pageId?: string }> {
+export async function resolveMetaAccount(
+  provider: 'facebook' | 'instagram',
+  shortToken: string
+): Promise<
+  | { id: string; name: string; accessToken: string; pageId?: string; expiresIn?: number | null; multiplePages?: false }
+  | { multiplePages: true; pages: Array<{ id: string; name: string; accessToken: string }>; expiresIn?: number | null }
+> {
   let userToken = shortToken;
+  let longLivedExpiresIn: number | null = null;
+
   // Troca o token curto por token de usuário de longa duração quando o app secret está disponível.
   if (config.social.meta.clientSecret) {
     const exchange = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/oauth/access_token`);
@@ -297,7 +315,12 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
     }).toString();
     const response = await fetch(exchange);
     const json = await response.json().catch(() => ({} as any));
-    if (response.ok && json.access_token) userToken = String(json.access_token);
+    if (response.ok && json.access_token) {
+      userToken = String(json.access_token);
+      if (json.expires_in) {
+        longLivedExpiresIn = Number(json.expires_in);
+      }
+    }
   }
 
   if (provider === 'facebook') {
@@ -311,11 +334,11 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
     const pagesJson = await pagesResponse.json().catch(() => ({} as any));
     const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
-    let eligiblePage = pages.find((item: any) => item?.id && item?.access_token && hasPagePublishTask(item?.tasks));
     let candidatePages = [...pages];
 
     // 2. Fallback para Business Manager: /me/businesses -> /{business-id}/owned_pages e /{business-id}/client_pages
-    if (!eligiblePage) {
+    const eligibleInPrimary = pages.filter((item: any) => item?.id && item?.access_token && hasPagePublishTask(item?.tasks));
+    if (eligibleInPrimary.length === 0) {
       const businessesUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/businesses`);
       businessesUrl.search = new URLSearchParams({
         fields: 'id,name',
@@ -339,9 +362,6 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
         const ownedPages = Array.isArray(ownedJson.data) ? ownedJson.data : [];
         candidatePages.push(...ownedPages);
 
-        eligiblePage = ownedPages.find((p: any) => p?.id && p?.access_token && hasPagePublishTask(p?.tasks));
-        if (eligiblePage) break;
-
         // 2b. /{business-id}/client_pages
         const clientUrl = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${biz.id}/client_pages`);
         clientUrl.search = new URLSearchParams({
@@ -352,18 +372,40 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
         const clientJson = await clientRes.json().catch(() => ({} as any));
         const clientPages = Array.isArray(clientJson.data) ? clientJson.data : [];
         candidatePages.push(...clientPages);
-
-        eligiblePage = clientPages.find((p: any) => p?.id && p?.access_token && hasPagePublishTask(p?.tasks));
-        if (eligiblePage) break;
       }
     }
 
-    if (eligiblePage && eligiblePage.id && eligiblePage.access_token) {
+    // Deduplicação de páginas encontradas por ID
+    const uniqueMap = new Map<string, any>();
+    for (const p of candidatePages) {
+      if (p?.id && !uniqueMap.has(String(p.id))) {
+        uniqueMap.set(String(p.id), p);
+      }
+    }
+    const uniqueCandidates = Array.from(uniqueMap.values());
+    const eligiblePages = uniqueCandidates.filter((p: any) => p?.id && p?.access_token && hasPagePublishTask(p?.tasks));
+
+    if (eligiblePages.length === 1) {
+      const page = eligiblePages[0];
       return {
-        id: String(eligiblePage.id),
-        name: String(eligiblePage.name || 'Facebook Page'),
-        accessToken: String(eligiblePage.access_token),
-        pageId: String(eligiblePage.id)
+        id: String(page.id),
+        name: String(page.name || 'Facebook Page'),
+        accessToken: String(page.access_token),
+        pageId: String(page.id),
+        expiresIn: longLivedExpiresIn,
+        multiplePages: false
+      };
+    }
+
+    if (eligiblePages.length > 1) {
+      return {
+        multiplePages: true,
+        pages: eligiblePages.map((p: any) => ({
+          id: String(p.id),
+          name: String(p.name || 'Facebook Page'),
+          accessToken: String(p.access_token)
+        })),
+        expiresIn: longLivedExpiresIn
       };
     }
 
@@ -379,8 +421,8 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
       throw new Error(permDiag);
     }
 
-    if (candidatePages.length > 0) {
-      const pageWithoutTask = candidatePages.find((p: any) => p?.id && p?.tasks && !hasPagePublishTask(p.tasks));
+    if (uniqueCandidates.length > 0) {
+      const pageWithoutTask = uniqueCandidates.find((p: any) => p?.id && p?.tasks && !hasPagePublishTask(p.tasks));
       if (pageWithoutTask) {
         throw new Error('A Página do Facebook encontrada não possui permissão de criação/publicação de conteúdo.');
       }
@@ -419,7 +461,9 @@ export async function resolveMetaAccount(provider: 'facebook' | 'instagram', sho
     id: String(ig.id),
     name: String(ig.username || ig.name || 'Instagram'),
     accessToken: String(page.access_token),
-    pageId: String(page.id)
+    pageId: String(page.id),
+    expiresIn: longLivedExpiresIn,
+    multiplePages: false
   };
 }
 
@@ -435,15 +479,51 @@ export async function handleOAuthCallback(data: { provider: SocialProvider; code
   await stateRef.delete();
   const verifier = state.codeVerifier ? decrypt(state.codeVerifier) : '';
   const token = await exchangeCode(data.provider, data.code, verifier);
-  let account: { id: string; name: string; accessToken?: string; pageId?: string };
+
+  let account: any;
   if (data.provider === 'facebook' || data.provider === 'instagram') {
     account = await resolveMetaAccount(data.provider, token.access_token);
   } else {
     account = await fetchAccount(data.provider, token.access_token);
   }
+
+  if (account.multiplePages) {
+    // Múltiplas páginas: criar sessão temporária one-time com TTL de 10 minutos
+    const pageSelectToken = crypto.randomBytes(32).toString('base64url');
+    await firestore().collection(COLLECTIONS.oauthStates).doc(stableId(pageSelectToken)).set({
+      type: 'facebook_page_selection',
+      userId: state.userId,
+      companyId: state.companyId,
+      provider: 'facebook',
+      pages: account.pages.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        encryptedAccessToken: encrypt(p.accessToken)
+      })),
+      scopes: String(token.scope || '').split(/[ ,]+/).filter(Boolean),
+      expiresIn: account.expiresIn || null,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    return {
+      success: true,
+      selectionRequired: true,
+      pageSelectToken,
+      provider: 'facebook',
+      userId: state.userId,
+      companyId: state.companyId,
+      pages: account.pages.map((p: any) => ({ id: p.id, name: p.name }))
+    };
+  }
+
   const tokenToStore = account.accessToken || token.access_token;
   const connectionId = stableId(`${state.userId}:${state.companyId}:${data.provider}`);
-  const expiresAt = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null;
+  // Se for Meta (Facebook/Instagram), usa exclusivamente o expiresIn do long-lived token (se houver)
+  const expiresAt = (data.provider === 'facebook' || data.provider === 'instagram')
+    ? (account.expiresIn ? new Date(Date.now() + Number(account.expiresIn) * 1000).toISOString() : null)
+    : (token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null);
+
   await firestore().collection(COLLECTIONS.socialConnections).doc(connectionId).set({
     userId: state.userId,
     companyId: state.companyId,
@@ -459,7 +539,91 @@ export async function handleOAuthCallback(data: { provider: SocialProvider; code
     updatedAt: nowIso(),
     status: 'connected'
   }, { merge: true });
-  return { success: true, userId: state.userId, companyId: state.companyId, account: { id: account.id, name: account.name } };
+
+  return { success: true, selectionRequired: false, userId: state.userId, companyId: state.companyId, account: { id: account.id, name: account.name } };
+}
+
+export async function selectFacebookPage(data: {
+  userId: string;
+  companyId?: string;
+  pageSelectToken?: string;
+  selectionToken?: string;
+  selectedPageId?: string;
+  pageId?: string;
+}): Promise<{ id: string; success: boolean; provider: string; pageId: string; pageName: string; account: { id: string; name: string } }> {
+  const token = data.pageSelectToken || data.selectionToken;
+  const targetPageId = data.selectedPageId || data.pageId;
+
+  if (!token || !targetPageId) {
+    throw new Error('Token de seleção e ID da página são obrigatórios.');
+  }
+
+  const docRef = firestore().collection(COLLECTIONS.oauthStates).doc(stableId(token));
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    throw new Error('Token de seleção de página inválido ou expirado (já utilizada).');
+  }
+
+  const stateData = snap.data() as any;
+
+  if (stateData.type !== 'facebook_page_selection') {
+    throw new Error('Tipo de sessão OAuth inválido.');
+  }
+
+  if (stateData.userId !== data.userId) {
+    throw new Error('Permissão negada: sessão de seleção pertence a outro usuário.');
+  }
+
+  const companyId = data.companyId || stateData.companyId;
+  if (stateData.companyId && data.companyId && stateData.companyId !== data.companyId) {
+    throw new Error('Permissão negada: empresa não corresponde à sessão de seleção.');
+  }
+
+  if (Number(stateData.expiresAt) < Date.now()) {
+    throw new Error('Sessão de seleção de página expirada.');
+  }
+
+  const pages = Array.isArray(stateData.pages) ? stateData.pages : [];
+  const chosen = pages.find((p: any) => p.id === targetPageId);
+  if (!chosen) {
+    throw new Error('Página não encontrada na lista autorizada.');
+  }
+
+  const encryptedToken = chosen.encryptedAccessToken || (chosen.accessToken ? encrypt(chosen.accessToken) : null);
+  if (!encryptedToken) {
+    throw new Error('Token de acesso da página não encontrado.');
+  }
+
+  // Anti-replay estrito: deletar sessão de seleção após validação completa
+  await docRef.delete().catch(() => undefined);
+
+  const connectionId = stableId(`${data.userId}:${companyId}:facebook`);
+  const expiresAt = stateData.expiresIn ? new Date(Date.now() + Number(stateData.expiresIn) * 1000).toISOString() : null;
+
+  await firestore().collection(COLLECTIONS.socialConnections).doc(connectionId).set({
+    userId: data.userId,
+    companyId,
+    provider: 'facebook',
+    accountId: chosen.id,
+    accountName: chosen.name,
+    pageId: chosen.id,
+    encryptedAccessToken: encryptedToken,
+    encryptedRefreshToken: null,
+    scopes: stateData.scopes || [],
+    expiresAt,
+    connectedAt: nowIso(),
+    updatedAt: nowIso(),
+    status: 'connected'
+  }, { merge: true });
+
+  return {
+    id: connectionId,
+    success: true,
+    provider: 'facebook',
+    pageId: chosen.id,
+    pageName: chosen.name,
+    account: { id: chosen.id, name: chosen.name }
+  };
 }
 
 export async function listConnections(userId: string, companyId: string) {
@@ -485,67 +649,342 @@ export async function disconnectSocial(userId: string, companyId: string, provid
   return true;
 }
 
-export async function publishText(data: { userId: string; companyId: string; provider: SocialProvider; text: string }) {
+export async function publishText(data: {
+  userId: string;
+  companyId: string;
+  provider: SocialProvider;
+  text: string;
+}): Promise<PublishTextResult> {
   const trimmedText = (data.text || '').trim();
-  if (!trimmedText) throw new Error(`O texto para publicação em ${data.provider} não pode estar vazio.`);
-
-  const snap = await firestore().collection(COLLECTIONS.socialConnections).where('userId', '==', data.userId).where('companyId', '==', data.companyId).where('provider', '==', data.provider).limit(1).get();
-  if (snap.empty) throw new Error(`Conta ${data.provider} não conectada.`);
-  const connection = snap.docs[0].data() as any;
-  if (connection.expiresAt && new Date(connection.expiresAt).getTime() < Date.now()) {
-    await snap.docs[0].ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
-    throw new Error(`A autenticação com ${data.provider} expirou. Reconecte a conta nas configurações para autorizar novas publicações.`);
+  if (!trimmedText) {
+    return {
+      provider: data.provider,
+      externalId: null,
+      externalState: 'confirmed_failed',
+      retrySafe: true,
+      error: `O texto para publicação em ${data.provider} não pode estar vazio.`
+    };
   }
 
-  const tokenEncrypted = connection.encryptedAccessToken || connection.accessToken || '';
-  const token = decrypt(tokenEncrypted);
+  if (!isTextAutoPublishSupported(data.provider)) {
+    return {
+      provider: data.provider,
+      externalId: null,
+      externalState: 'confirmed_failed',
+      retrySafe: false,
+      error: getProviderAutoPublishReason(data.provider) || `Publicação textual não suportada para ${data.provider}.`
+    };
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', data.provider)
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    return {
+      provider: data.provider,
+      externalId: null,
+      externalState: 'confirmed_failed',
+      retrySafe: false,
+      error: `Conta ${data.provider} não conectada para esta empresa.`
+    };
+  }
+
+  const connDoc = snap.docs[0];
+  const connection = connDoc.data() as any;
+
+  if (connection.status !== 'connected' || (!connection.encryptedAccessToken && !connection.accessToken)) {
+    return {
+      provider: data.provider,
+      externalId: null,
+      externalState: 'confirmed_failed',
+      retrySafe: false,
+      error: `Conexão com ${data.provider} inativa ou sem token.`
+    };
+  }
+
+  if (connection.expiresAt && new Date(connection.expiresAt).getTime() < Date.now()) {
+    await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+    return {
+      provider: data.provider,
+      externalId: null,
+      externalState: 'confirmed_failed',
+      retrySafe: false,
+      error: `A autenticação com ${data.provider} expirou. Reconecte a conta nas configurações.`
+    };
+  }
+
+  let token = '';
+  try {
+    const tokenEncrypted = connection.encryptedAccessToken || connection.accessToken || '';
+    token = decrypt(tokenEncrypted);
+  } catch {
+    return {
+      provider: data.provider,
+      externalId: null,
+      externalState: 'confirmed_failed',
+      retrySafe: false,
+      error: `Falha ao descriptografar token de acesso de ${data.provider}.`
+    };
+  }
+
   const targetAccountId = connection.accountId || connection.pageId;
 
-  if (data.provider === 'x') {
-    const response = await fetch('https://api.x.com/2/tweets', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: trimmedText.slice(0, 280) }) });
-    const json = await response.json().catch(() => ({} as any));
-    if (!response.ok) throw new Error(json.detail || json.title || 'Falha ao publicar no X.');
-    return { provider: 'x', externalId: json.data?.id || null };
+  if (data.provider === 'facebook') {
+    if (!targetAccountId) {
+      return {
+        provider: 'facebook',
+        externalId: null,
+        externalState: 'confirmed_failed',
+        retrySafe: false,
+        error: 'Identificador da Página do Facebook (accountId / pageId) não encontrado na conexão.'
+      };
+    }
+
+    try {
+      const endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(targetAccountId)}/feed`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ message: trimmedText, access_token: token }).toString()
+      });
+
+      const json = await response.json().catch(() => ({} as any));
+
+      if (response.status >= 500) {
+        return {
+          provider: 'facebook',
+          externalId: null,
+          externalState: 'unknown',
+          retrySafe: false,
+          statusCode: response.status,
+          error: `Erro interno da Meta (HTTP ${response.status}).`
+        };
+      }
+
+      if (response.status >= 400) {
+        const errorMsg = json.error?.message || `Rejeição da API do Facebook (HTTP ${response.status}).`;
+        return {
+          provider: 'facebook',
+          externalId: null,
+          externalState: 'confirmed_failed',
+          retrySafe: true,
+          statusCode: response.status,
+          error: errorMsg
+        };
+      }
+
+      // HTTP 2xx
+      if (json.id) {
+        return {
+          provider: 'facebook',
+          externalId: String(json.id),
+          externalState: 'confirmed_success',
+          retrySafe: false,
+          statusCode: response.status
+        };
+      }
+
+      // HTTP 2xx sem ID
+      return {
+        provider: 'facebook',
+        externalId: null,
+        externalState: 'unknown',
+        retrySafe: false,
+        statusCode: response.status,
+        error: 'Resposta da Meta retornou HTTP 200, mas sem identificador (id) de publicação.'
+      };
+    } catch {
+      return {
+        provider: 'facebook',
+        externalId: null,
+        externalState: 'unknown',
+        retrySafe: false,
+        error: 'Erro de rede ou timeout durante a comunicação com a API da Meta.'
+      };
+    }
   }
 
-  if (data.provider === 'facebook') {
-    if (!targetAccountId) throw new Error('Identificador da Página do Facebook (accountId / pageId) não encontrado na conexão.');
-    const endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(targetAccountId)}/feed`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ message: trimmedText, access_token: token }).toString()
-    });
-    const json = await response.json().catch(() => ({} as any));
-    if (!response.ok || !json.id) throw new Error(json.error?.message || 'Falha ao publicar na Página do Facebook.');
-    return { provider: 'facebook', externalId: String(json.id) };
+  if (data.provider === 'x') {
+    try {
+      const response = await fetch('https://api.x.com/2/tweets', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text: trimmedText.slice(0, 280) })
+      });
+
+      const json = await response.json().catch(() => ({} as any));
+
+      if (response.status >= 500) {
+        return {
+          provider: 'x',
+          externalId: null,
+          externalState: 'unknown',
+          retrySafe: false,
+          statusCode: response.status,
+          error: `Erro interno do X (HTTP ${response.status}).`
+        };
+      }
+
+      if (response.status >= 400) {
+        const errorMsg = json.detail || json.title || json.error || `Rejeição da API do X (HTTP ${response.status}).`;
+        return {
+          provider: 'x',
+          externalId: null,
+          externalState: 'confirmed_failed',
+          retrySafe: true,
+          statusCode: response.status,
+          error: errorMsg
+        };
+      }
+
+      // HTTP 2xx
+      if (json.data?.id) {
+        return {
+          provider: 'x',
+          externalId: String(json.data.id),
+          externalState: 'confirmed_success',
+          retrySafe: false,
+          statusCode: response.status
+        };
+      }
+
+      // HTTP 2xx sem data.id
+      return {
+        provider: 'x',
+        externalId: null,
+        externalState: 'unknown',
+        retrySafe: false,
+        statusCode: response.status,
+        error: 'Resposta do X retornou HTTP 200, mas sem identificador (data.id) do tweet.'
+      };
+    } catch {
+      return {
+        provider: 'x',
+        externalId: null,
+        externalState: 'unknown',
+        retrySafe: false,
+        error: 'Erro de rede ou timeout durante a comunicação com a API do X.'
+      };
+    }
   }
 
   if (data.provider === 'linkedin') {
-    if (!config.social.linkedin.apiVersion) throw new Error('LINKEDIN_API_VERSION precisa estar configurada para publicação no LinkedIn.');
-    const response = await fetch('https://api.linkedin.com/rest/posts', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'LinkedIn-Version': config.social.linkedin.apiVersion,
-        'X-Restli-Protocol-Version': '2.0.0'
-      },
-      body: JSON.stringify({
-        author: `urn:li:person:${connection.accountId}`,
-        commentary: trimmedText,
-        visibility: 'PUBLIC',
-        distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
-        lifecycleState: 'PUBLISHED',
-        isReshareDisabledByAuthor: false
-      })
-    });
-    const responseText = await response.text();
-    if (!response.ok) throw new Error(`Falha ao publicar no LinkedIn: ${response.status} ${responseText.slice(0, 300)}`);
-    return { provider: 'linkedin', externalId: response.headers.get('x-restli-id') };
+    if (!config.social.linkedin.apiVersion) {
+      return {
+        provider: 'linkedin',
+        externalId: null,
+        externalState: 'confirmed_failed',
+        retrySafe: false,
+        error: 'LINKEDIN_API_VERSION precisa estar configurada para publicação no LinkedIn.'
+      };
+    }
+
+    try {
+      const response = await fetch('https://api.linkedin.com/rest/posts', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'LinkedIn-Version': config.social.linkedin.apiVersion,
+          'X-Restli-Protocol-Version': '2.0.0'
+        },
+        body: JSON.stringify({
+          author: `urn:li:person:${connection.accountId}`,
+          commentary: trimmedText,
+          visibility: 'PUBLIC',
+          distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+          lifecycleState: 'PUBLISHED',
+          isReshareDisabledByAuthor: false
+        })
+      });
+
+      if (response.status >= 500) {
+        return {
+          provider: 'linkedin',
+          externalId: null,
+          externalState: 'unknown',
+          retrySafe: false,
+          statusCode: response.status,
+          error: `Erro interno do LinkedIn (HTTP ${response.status}).`
+        };
+      }
+
+      if (response.status >= 400) {
+        const responseText = await response.text().catch(() => '');
+        let errorMsg = `Rejeição da API do LinkedIn (HTTP ${response.status}).`;
+        try {
+          const parsed = JSON.parse(responseText);
+          errorMsg = parsed.message || parsed.error || errorMsg;
+        } catch {
+          if (responseText) errorMsg = responseText.slice(0, 300);
+        }
+        return {
+          provider: 'linkedin',
+          externalId: null,
+          externalState: 'confirmed_failed',
+          retrySafe: true,
+          statusCode: response.status,
+          error: errorMsg
+        };
+      }
+
+      // HTTP 2xx
+      const headerId = response.headers.get('x-restli-id') || response.headers.get('x-linkedin-id');
+      if (headerId && headerId.trim()) {
+        return {
+          provider: 'linkedin',
+          externalId: headerId.trim(),
+          externalState: 'confirmed_success',
+          retrySafe: false,
+          statusCode: response.status
+        };
+      }
+
+      const json = await response.json().catch(() => ({} as any));
+      if (json.id) {
+        return {
+          provider: 'linkedin',
+          externalId: String(json.id),
+          externalState: 'confirmed_success',
+          retrySafe: false,
+          statusCode: response.status
+        };
+      }
+
+      return {
+        provider: 'linkedin',
+        externalId: null,
+        externalState: 'unknown',
+        retrySafe: false,
+        statusCode: response.status,
+        error: 'LinkedIn retornou HTTP 200/201 sem identificador de post confiável (x-restli-id).'
+      };
+    } catch {
+      return {
+        provider: 'linkedin',
+        externalId: null,
+        externalState: 'unknown',
+        retrySafe: false,
+        error: 'Erro de rede ou timeout durante a comunicação com a API do LinkedIn.'
+      };
+    }
   }
 
-  throw new Error(`Publicação automática de texto para ${data.provider} exige mídia e/ou permissões específicas. Conexão mantida, mas o post não será marcado como publicado sem uma chamada real compatível.`);
+  return {
+    provider: data.provider,
+    externalId: null,
+    externalState: 'confirmed_failed',
+    retrySafe: false,
+    error: `Provedor ${data.provider} não suportado para publicação de texto.`
+  };
 }
 
 export const MAX_TIKTOK_SANDBOX_VIDEO_SIZE = 4 * 1024 * 1024; // 4 MiB

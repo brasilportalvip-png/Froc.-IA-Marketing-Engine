@@ -3,19 +3,13 @@ import { generateAutopilotPost, generatePlatformArticle, generatePost, processPe
 import { cleanupStaleReservations, getEffectiveWallet, getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
-import { publishText, type SocialProvider } from './social.js';
-
-function normalizeProvider(value: string): SocialProvider | null {
-  const v = value.toLowerCase().trim();
-  if (v.includes('instagram')) return 'instagram';
-  if (v.includes('facebook')) return 'facebook';
-  if (v.includes('tiktok')) return 'tiktok';
-  if (v.includes('youtube')) return 'youtube';
-  if (v.includes('linkedin')) return 'linkedin';
-  if (v === 'x' || v.includes('twitter')) return 'x';
-  if (v.includes('pinterest')) return 'pinterest';
-  return null;
-}
+import {
+  getProviderAutoPublishReason,
+  isTextAutoPublishSupported,
+  normalizeProvider,
+  publishText,
+  type SocialProvider
+} from './social.js';
 
 export interface AutopilotScheduleConfig {
   enabled?: boolean;
@@ -142,7 +136,9 @@ export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): P
     if (processingTime < cutoffMs) {
       const publicationResults = Array.isArray(post.publicationResults) ? post.publicationResults : [];
       const requestedPlatforms = Array.isArray(post.platforms) ? post.platforms : [];
-      const successfulResults = publicationResults.filter((r: any) => r?.success && r?.externalId);
+      const successfulResults = publicationResults.filter((r: any) =>
+        r?.success && r?.externalId && (r?.externalState === 'confirmed_success' || !r?.externalState)
+      );
       const allConfirmed = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
         successfulResults.some((s: any) => s.platform === plat || normalizeProvider(s.platform) === normalizeProvider(plat))
       );
@@ -235,44 +231,143 @@ export async function processScheduledPosts(): Promise<number> {
       for (const platform of platforms) {
         const provider = normalizeProvider(String(platform));
         if (!provider) {
-          publicationResults.push({ platform, success: false, error: 'Plataforma não reconhecida.' });
+          publicationResults.push({
+            platform,
+            provider: null,
+            success: false,
+            externalState: 'confirmed_failed',
+            retrySafe: false,
+            error: `Rede social "${platform}" não reconhecida.`
+          });
+          continue;
+        }
+
+        // Bloqueio antes de chamar API se provider textual não for suportado
+        if (!isTextAutoPublishSupported(provider)) {
+          publicationResults.push({
+            platform,
+            provider,
+            success: false,
+            externalState: 'confirmed_failed',
+            retrySafe: false,
+            error: getProviderAutoPublishReason(provider) || `Publicação textual automática não suportada para ${provider}.`
+          });
           continue;
         }
 
         // Idempotência: Se já foi publicado com sucesso nesta plataforma anteriormente (ex: retry parcial), reaproveita o resultado
-        const prevSuccess = existingResults.find((r: any) => (r?.platform === platform || normalizeProvider(r?.platform) === provider) && r?.success && r?.externalId);
+        const prevSuccess = existingResults.find(
+          (r: any) =>
+            (r?.platform === platform || normalizeProvider(r?.platform) === provider) &&
+            r?.success &&
+            r?.externalId &&
+            (r?.externalState === 'confirmed_success' || !r?.externalState)
+        );
         if (prevSuccess) {
-          publicationResults.push(prevSuccess);
+          publicationResults.push({
+            ...prevSuccess,
+            externalState: 'confirmed_success',
+            retrySafe: false
+          });
           continue;
         }
 
-        try {
-          const text = [content.headline, content.body, content.cta, ...(content.hashtags || [])].filter(Boolean).join('\n\n');
-          const result = await publishText({ userId: post.userId, companyId: post.companyId, provider, text });
-          publicationResults.push({ platform, success: true, ...result });
-        } catch (error) {
-          publicationResults.push({ platform, success: false, error: error instanceof Error ? error.message : String(error) });
+        const text = [content.headline, content.body, content.cta, ...(content.hashtags || [])].filter(Boolean).join('\n\n');
+        const result = await publishText({ userId: post.userId, companyId: post.companyId, provider, text });
+
+        if (result.externalState === 'confirmed_success' && result.externalId) {
+          publicationResults.push({
+            platform,
+            provider,
+            success: true,
+            externalId: result.externalId,
+            externalState: 'confirmed_success',
+            retrySafe: false
+          });
+        } else if (result.externalState === 'unknown') {
+          publicationResults.push({
+            platform,
+            provider,
+            success: false,
+            externalId: null,
+            externalState: 'unknown',
+            retrySafe: false,
+            error: result.error || 'Resultado incerto da API externa.'
+          });
+        } else {
+          // confirmed_failed
+          publicationResults.push({
+            platform,
+            provider,
+            success: false,
+            externalId: null,
+            externalState: 'confirmed_failed',
+            retrySafe: result.retrySafe,
+            error: result.error || 'Falha de publicação.'
+          });
         }
       }
 
-      const successful = publicationResults.filter((item) => item.success);
-      const allSucceeded = successful.length === publicationResults.length && publicationResults.length > 0;
-      const anySucceeded = successful.length > 0;
-      const status = allSucceeded ? 'published' : 'failed';
+      const hasUnknown = publicationResults.some((item) => item.externalState === 'unknown');
+      const allConfirmedSuccess =
+        publicationResults.length > 0 &&
+        publicationResults.every((item) => item.success && item.externalId && item.externalState === 'confirmed_success');
+
+      let finalStatus: 'published' | 'requires_review' | 'failed' = 'failed';
+      if (allConfirmedSuccess) {
+        finalStatus = 'published';
+      } else if (hasUnknown) {
+        finalStatus = 'requires_review';
+      } else {
+        finalStatus = 'failed';
+      }
+
+      const successful = publicationResults.filter((item) => item.success && item.externalId);
       const lastExternalId = successful.map((s: any) => s.externalId).filter(Boolean).pop() || null;
-      const errorMessage = allSucceeded ? null : anySucceeded ? 'Publicação parcial: uma ou mais plataformas falharam.' : publicationResults.map((item) => item.error).filter(Boolean).join(' | ').slice(0, 1000);
-      await doc.ref.update({ status, publishedAt: allSucceeded ? (post.publishedAt || nowIso()) : null, lastExternalId, publicationResults, errorMessage, processedAt: nowIso() });
-      if (allSucceeded) await contentSnap.ref.update({ status: 'published', updatedAt: nowIso() });
+      let errorMessage: string | null = null;
+
+      if (finalStatus === 'published') {
+        errorMessage = null;
+      } else if (finalStatus === 'requires_review') {
+        errorMessage = 'Verificação manual necessária: houve timeout ou resposta indefinida da rede social e o post pode ter sido publicado externamente.';
+      } else {
+        errorMessage = publicationResults
+          .filter((item) => !item.success)
+          .map((item) => item.error)
+          .filter(Boolean)
+          .join(' | ')
+          .slice(0, 1000) || 'Falha na publicação social.';
+      }
+
+      await doc.ref.update({
+        status: finalStatus,
+        publishedAt: finalStatus === 'published' ? (post.publishedAt || nowIso()) : null,
+        lastExternalId,
+        publicationResults,
+        errorMessage,
+        processedAt: nowIso(),
+        updatedAt: nowIso()
+      });
+
+      if (finalStatus === 'published') {
+        await contentSnap.ref.update({ status: 'published', updatedAt: nowIso() });
+      }
+
       await createNotification({
         userId: post.userId,
-        title: allSucceeded ? 'Publicação concluída' : 'Publicação requer atenção',
-        message: allSucceeded ? `"${content.title || content.headline}" foi publicado nas redes selecionadas.` : `A publicação de "${content.title || content.headline}" não foi concluída em todas as redes. Consulte o calendário para detalhes.`,
-        type: allSucceeded ? 'publication_success' : 'publication_failed'
+        title: finalStatus === 'published' ? 'Publicação concluída' : finalStatus === 'requires_review' ? 'Publicação requer verificação' : 'Publicação não concluída',
+        message:
+          finalStatus === 'published'
+            ? `"${content.title || content.headline}" foi publicado nas redes com sucesso.`
+            : finalStatus === 'requires_review'
+            ? `A publicação de "${content.title || content.headline}" teve resposta indefinida da rede e requer conferência manual para evitar duplicidade.`
+            : `A publicação de "${content.title || content.headline}" falhou. Consulte o calendário para detalhes.`,
+        type: finalStatus === 'published' ? 'publication_success' : 'publication_failed'
       });
       processed += 1;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await doc.ref.update({ status: 'failed', errorMessage: errorMsg, processedAt: nowIso() });
+      await doc.ref.update({ status: 'failed', errorMessage: errorMsg, processedAt: nowIso(), updatedAt: nowIso() });
       processed += 1;
     }
   }
@@ -324,6 +419,37 @@ export async function processAutopilot(): Promise<number> {
     if (company.userId !== ap.userId) {
       console.warn(`[Froc Autopilot] Isolamento violado para config ${doc.id}: empresa ${ap.companyId} não pertence ao usuário ${ap.userId}`);
       continue;
+    }
+
+    // Pre-flight check para modo automático: verificar se redes suportam publicação direta e se há conexão ativa
+    if (ap.mode === 'automatic') {
+      const targetPlatforms = Array.isArray(ap.targetPlatforms) && ap.targetPlatforms.length > 0
+        ? ap.targetPlatforms
+        : ['facebook'];
+
+      const normalizedTargets = targetPlatforms.map((p: string) => normalizeProvider(p)).filter(Boolean) as SocialProvider[];
+      const supportedTargets = normalizedTargets.filter((p) => isTextAutoPublishSupported(p));
+
+      if (supportedTargets.length === 0) {
+        console.warn(`[Froc Autopilot] Nenhuma plataforma de publicação direta suportada para ${doc.id} (suportadas: facebook, linkedin, x)`);
+        continue;
+      }
+
+      const connsSnap = await db.collection(COLLECTIONS.socialConnections)
+        .where('userId', '==', ap.userId)
+        .where('companyId', '==', ap.companyId)
+        .get();
+
+      const activeProviders = connsSnap.docs
+        .map((d) => d.data() as any)
+        .filter((c) => c.status === 'connected' && (!c.expiresAt || new Date(c.expiresAt).getTime() > Date.now()))
+        .map((c) => c.provider);
+
+      const hasReadyConnection = supportedTargets.some((p) => activeProviders.includes(p));
+      if (!hasReadyConnection) {
+        console.warn(`[Froc Autopilot] Nenhuma conexão social ativa encontrada para os canais automáticos de ${doc.id}`);
+        continue;
+      }
     }
 
     try {
@@ -483,6 +609,35 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     const error: any = new Error('Modo automático do Autopilot exclusivo para os planos BUSINESS e AGENCY. Altere para aprovação manual ou faça upgrade.');
     error.statusCode = 403;
     throw error;
+  }
+
+  // Pre-flight check para modo automático: verificar se redes suportam publicação direta e se há conexão ativa
+  if (ap.mode === 'automatic') {
+    const targetPlatforms = Array.isArray(ap.targetPlatforms) && ap.targetPlatforms.length > 0
+      ? ap.targetPlatforms
+      : ['facebook'];
+
+    const normalizedTargets = targetPlatforms.map((p: string) => normalizeProvider(p)).filter(Boolean) as SocialProvider[];
+    const supportedTargets = normalizedTargets.filter((p) => isTextAutoPublishSupported(p));
+
+    if (supportedTargets.length === 0) {
+      throw new Error('Para utilizar o modo automático do Autopilot, selecione ao menos uma rede social que suporte publicação direta (Facebook, LinkedIn ou X).');
+    }
+
+    const connsSnap = await db.collection(COLLECTIONS.socialConnections)
+      .where('userId', '==', userId)
+      .where('companyId', '==', companyId)
+      .get();
+
+    const activeProviders = connsSnap.docs
+      .map((d) => d.data() as any)
+      .filter((c) => c.status === 'connected' && (!c.expiresAt || new Date(c.expiresAt).getTime() > Date.now()))
+      .map((c) => c.provider);
+
+    const hasReadyConnection = supportedTargets.some((p) => activeProviders.includes(p));
+    if (!hasReadyConnection) {
+      throw new Error('Nenhuma conexão social suportada está ativa para esta empresa. Conecte sua Página do Facebook, LinkedIn ou X antes de acionar o modo automático.');
+    }
   }
 
   const monthKey = new Date().toISOString().slice(0, 7);
@@ -706,4 +861,29 @@ export async function getSchedulerHealth(): Promise<{
     };
   }
 }
+
+export async function processSocialTick(): Promise<{
+  recoveredPublishing: number;
+  scheduledPosts: number;
+  error?: string;
+  processedAt: string;
+}> {
+  try {
+    const recoveredPublishing = await recoverStalePublishingPosts(15);
+    const scheduledPosts = await processScheduledPosts();
+    return {
+      recoveredPublishing,
+      scheduledPosts,
+      processedAt: nowIso()
+    };
+  } catch (err: any) {
+    return {
+      recoveredPublishing: 0,
+      scheduledPosts: 0,
+      error: err instanceof Error ? err.message : String(err),
+      processedAt: nowIso()
+    };
+  }
+}
+
 

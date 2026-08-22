@@ -483,4 +483,191 @@ test('Scheduler: Idempotência de publicação caso externalId já exista', asyn
   }
 });
 
+test('Scheduler: Falha HTTP 5xx / timeout / resposta sem ID marca externalState=unknown e status=requires_review (retrySafe=false)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_unknown_test';
+  const companyId = 'comp_unknown_test';
+  const contentId = 'content_unknown_123';
+  const schedId = 'sched_unknown_123';
+
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({ userId, planId: 'pro', creditsBalance: 50 });
+  await db.collection(COLLECTIONS.users).doc(userId).set({ id: userId, email: 'unknown@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({ id: companyId, userId, name: 'Empresa Unknown' });
+
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set({
+    id: contentId,
+    userId,
+    companyId,
+    headline: 'Post de Teste Incerteza',
+    body: 'Verificando resiliência',
+    status: 'scheduled'
+  });
+
+  await db.collection(COLLECTIONS.socialConnections).doc('conn_fb_unk').set({
+    id: 'conn_fb_unk',
+    userId,
+    companyId,
+    provider: 'facebook',
+    pageId: '10987654321',
+    accessToken: encrypt('mock_fb_token'),
+    status: 'connected'
+  });
+
+  await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).set({
+    id: schedId,
+    userId,
+    companyId,
+    contentItemId: contentId,
+    platforms: ['Facebook'],
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    status: 'scheduled'
+  });
+
+  const originalFetch = globalThis.fetch;
+  // Simula HTTP 500
+  globalThis.fetch = async () => {
+    return new Response(JSON.stringify({ error: { message: 'Internal Meta Graph Error' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const processed = await processScheduledPosts();
+    assert.equal(processed, 1);
+
+    const snap = await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).get();
+    const data = snap.data() as any;
+    assert.equal(data.status, 'requires_review');
+    assert.equal(data.publicationResults[0].externalState, 'unknown');
+    assert.equal(data.publicationResults[0].retrySafe, false);
+    assert.match(data.errorMessage, /Verificação manual necessária/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Scheduler: Falha HTTP 4xx confirmada marca externalState=confirmed_failed e status=failed (retrySafe=true)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_failed_test';
+  const companyId = 'comp_failed_test';
+  const contentId = 'content_failed_123';
+  const schedId = 'sched_failed_123';
+
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({ userId, planId: 'pro', creditsBalance: 50 });
+  await db.collection(COLLECTIONS.users).doc(userId).set({ id: userId, email: 'failed@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({ id: companyId, userId, name: 'Empresa Failed' });
+
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set({
+    id: contentId,
+    userId,
+    companyId,
+    headline: 'Post de Teste 4xx',
+    body: 'Verificando rejeição confirmada',
+    status: 'scheduled'
+  });
+
+  await db.collection(COLLECTIONS.socialConnections).doc('conn_fb_fail').set({
+    id: 'conn_fb_fail',
+    userId,
+    companyId,
+    provider: 'facebook',
+    pageId: '10987654321',
+    accessToken: encrypt('mock_fb_token'),
+    status: 'connected'
+  });
+
+  await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).set({
+    id: schedId,
+    userId,
+    companyId,
+    contentItemId: contentId,
+    platforms: ['Facebook'],
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    status: 'scheduled'
+  });
+
+  const originalFetch = globalThis.fetch;
+  // Simula HTTP 400 OAuthException
+  globalThis.fetch = async () => {
+    return new Response(JSON.stringify({ error: { message: 'Permissions error or expired token', code: 190 } }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const processed = await processScheduledPosts();
+    assert.equal(processed, 1);
+
+    const snap = await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).get();
+    const data = snap.data() as any;
+    assert.equal(data.status, 'failed');
+    assert.equal(data.publicationResults[0].externalState, 'confirmed_failed');
+    assert.equal(data.publicationResults[0].retrySafe, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Scheduler: Bloqueia plataformas que não suportam publicação direta de texto antes de chamar API', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_unsupp_test';
+  const companyId = 'comp_unsupp_test';
+  const contentId = 'content_unsupp_123';
+  const schedId = 'sched_unsupp_123';
+
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({ userId, planId: 'pro', creditsBalance: 50 });
+  await db.collection(COLLECTIONS.users).doc(userId).set({ id: userId, email: 'unsupp@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({ id: companyId, userId, name: 'Empresa Unsupp' });
+
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set({
+    id: contentId,
+    userId,
+    companyId,
+    headline: 'Post para Instagram Textual',
+    body: 'Instagram requer imagem/vídeo',
+    status: 'scheduled'
+  });
+
+  await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).set({
+    id: schedId,
+    userId,
+    companyId,
+    contentItemId: contentId,
+    platforms: ['Instagram'], // Não suporta publicação textual direta
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    status: 'scheduled'
+  });
+
+  let fetchCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return new Response('{}', { status: 200 });
+  };
+
+  try {
+    const processed = await processScheduledPosts();
+    assert.equal(processed, 1);
+    assert.equal(fetchCalled, false, 'API externa não deve ser chamada para plataforma textual não suportada');
+
+    const snap = await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).get();
+    const data = snap.data() as any;
+    assert.equal(data.status, 'failed');
+    assert.equal(data.publicationResults[0].externalState, 'confirmed_failed');
+    assert.equal(data.publicationResults[0].retrySafe, false);
+    assert.match(data.publicationResults[0].error, /mídia visual/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+
 

@@ -8,8 +8,8 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getProviderAutoPublishReason, getTikTokUploadStatus, handleOAuthCallback, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
-import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
+import { createOAuthUrl, disconnectSocial, getProviderAutoPublishReason, getTikTokUploadStatus, handleOAuthCallback, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { getSchedulerHealth, processSchedulerTick, processSocialTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
 
@@ -1068,6 +1068,24 @@ router.delete('/social/:provider/disconnect', requireAuth, asyncRoute(async (req
 }));
 
 // Legacy-compatible social routes used by the existing UI
+router.post('/social/facebook/select-page', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const selectionToken = safeString(req.body?.selectionToken, 1000);
+  const pageId = safeString(req.body?.pageId, 200);
+  if (!selectionToken || !pageId) {
+    return res.status(400).json({ error: 'selectionToken e pageId são obrigatórios.' });
+  }
+  const result = await selectFacebookPage({
+    userId: req.user!.id,
+    selectionToken,
+    pageId
+  });
+  res.json({
+    success: true,
+    message: `Página "${result.pageName}" selecionada e conectada com sucesso.`,
+    connection: result
+  });
+}));
+
 router.get('/social/connections/:companyId', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   await requireOwnedCompany(req.user!.id, req.params.companyId);
   res.json({ connections: await listConnections(req.user!.id, req.params.companyId) });
@@ -1299,17 +1317,37 @@ router.delete('/admin/blog/:id', requireAdmin, asyncRoute(async (req: Authentica
   const ref=firestore().collection(COLLECTIONS.blogPosts).doc(req.params.id); const snap=await ref.get(); if(!snap.exists)return res.status(404).json({error:'Artigo não encontrado.'}); await ref.delete(); await writeAdminLog({operatorId:req.user!.id,operatorEmail:req.user!.email,action:'delete_blog',details:{postId:req.params.id}}); res.json({message:'Artigo removido.'});
 }));
 
-// Scheduler. No secret in query string.
+// Scheduler.
 router.get('/cron/health', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
-  if (!config.cronSecret || auth !== `Bearer ${config.cronSecret}`) return res.status(401).json({ error: 'Cron não autorizado.' });
+  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
+  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
   res.json(await getSchedulerHealth());
 }));
 
 router.get('/cron/process', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
-  if (!config.cronSecret || auth !== `Bearer ${config.cronSecret}`) return res.status(401).json({ error: 'Cron não autorizado.' });
+  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
+  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
   res.json(await processSchedulerTick());
+}));
+
+router.get('/cron/social', asyncRoute(async (req, res) => {
+  const auth = String(req.headers.authorization || '');
+  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
+  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
+  res.json(await processSocialTick());
+}));
+
+router.post('/cron/social', asyncRoute(async (req, res) => {
+  const auth = String(req.headers.authorization || '');
+  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
+  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
+  res.json(await processSocialTick());
 }));
 
 // Plans public catalog alias

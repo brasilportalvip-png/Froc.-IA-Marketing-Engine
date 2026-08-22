@@ -647,6 +647,28 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
       headers: { Authorization: 'Bearer token_pro_user' }
     });
     assert.equal(resCancelReview.status, 409, 'Cancelamento em status requires_review deve retornar 409');
+
+    // 5.9 Cron Social Endpoint Auth (GET e POST)
+    const resCronUnauth = await fetch(`${baseUrl}/api/cron/social`);
+    assert.equal(resCronUnauth.status, 401, 'Cron social sem secret deve retornar 401');
+
+    const resCronWrongSecret = await fetch(`${baseUrl}/api/cron/social?secret=wrong_secret`);
+    assert.equal(resCronWrongSecret.status, 401, 'Cron social com secret incorreto deve retornar 401');
+
+    if (config.cronSecret) {
+      const resCronHeader = await fetch(`${baseUrl}/api/cron/social`, {
+        headers: { Authorization: `Bearer ${config.cronSecret}` }
+      });
+      assert.equal(resCronHeader.status, 200, 'Cron social com Bearer token deve retornar 200');
+      const cronHeaderData = await resCronHeader.json();
+      assert.ok('recoveredPublishing' in cronHeaderData);
+      assert.ok('scheduledPosts' in cronHeaderData);
+
+      const resCronQuery = await fetch(`${baseUrl}/api/cron/social?secret=${config.cronSecret}`, {
+        method: 'POST'
+      });
+      assert.equal(resCronQuery.status, 200, 'Cron social POST com query secret deve retornar 200');
+    }
   } finally {
     server.close();
     firebaseAdminProvider.setAdminAuthForTesting(undefined);

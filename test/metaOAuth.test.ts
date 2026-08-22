@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOAuthUrl, handleOAuthCallback, resolveMetaAccount, sanitizeOAuthPublicError, SocialProvider } from '../server/production/social.js';
+import { createOAuthUrl, handleOAuthCallback, resolveMetaAccount, sanitizeOAuthPublicError, selectFacebookPage, SocialProvider } from '../server/production/social.js';
 import { resetMemoryDb, firestore, COLLECTIONS, stableId } from '../server/production/store.js';
 import { config } from '../server/config/index.js';
 import { router } from '../server/production/router.js';
@@ -516,3 +516,77 @@ test('11. OAuth Outros Provedores: LinkedIn, YouTube, TikTok, Pinterest e X perm
     assert.equal(redirectUri, `${config.appUrl}/api/social/${provider}/callback`, `Callback de ${provider} deve manter rota padrão`);
   }
 });
+
+test('12. Facebook Multi-Page: selectFacebookPage conecta a página escolhida e invalida o selectionToken', async () => {
+  resetMemoryDb();
+  const userId = 'usr_multi_page';
+  const companyId = 'comp_multi_page';
+  const selectionToken = 'sel_tok_abc123';
+
+  // Grava pendência de seleção de múltiplas páginas
+  await firestore().collection(COLLECTIONS.oauthStates).doc(stableId(selectionToken)).set({
+    type: 'facebook_page_selection',
+    userId,
+    companyId,
+    pages: [
+      { id: 'page_1', name: 'Página Alpha', accessToken: 'EAAB_token_alpha' },
+      { id: 'page_2', name: 'Página Beta', accessToken: 'EAAB_token_beta' }
+    ],
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    createdAt: new Date().toISOString()
+  });
+
+  // 1. Tenta conectar com usuário diferente (deve ser rejeitado)
+  await assert.rejects(
+    async () => {
+      await selectFacebookPage({
+        userId: 'usr_impostor',
+        selectionToken,
+        pageId: 'page_1'
+      });
+    },
+    /Permissão negada/
+  );
+
+  // 2. Tenta conectar com pageId inexistente na lista (deve ser rejeitado)
+  await assert.rejects(
+    async () => {
+      await selectFacebookPage({
+        userId,
+        selectionToken,
+        pageId: 'page_inexistente'
+      });
+    },
+    /Página não encontrada/
+  );
+
+  // 3. Conecta com a página correta
+  const result = await selectFacebookPage({
+    userId,
+    selectionToken,
+    pageId: 'page_2'
+  });
+
+  assert.equal(result.pageId, 'page_2');
+  assert.equal(result.pageName, 'Página Beta');
+  assert.equal(result.provider, 'facebook');
+
+  // Verifica conexão no banco
+  const connSnap = await firestore().collection(COLLECTIONS.socialConnections).doc(result.id).get();
+  assert.ok(connSnap.exists);
+  assert.equal(connSnap.data()?.accountId, 'page_2');
+  assert.equal(connSnap.data()?.accountName, 'Página Beta');
+
+  // 4. Token já consumido (anti-replay)
+  await assert.rejects(
+    async () => {
+      await selectFacebookPage({
+        userId,
+        selectionToken,
+        pageId: 'page_2'
+      });
+    },
+    /inválido ou expirado/
+  );
+});
+
