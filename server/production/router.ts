@@ -11,7 +11,7 @@ import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoC
 import { createOAuthUrl, createPinterestPin, disconnectSocial, getFacebookPageSelectionCandidates, getPinterestBoards, getProviderAutoPublishReason, getSocialReadiness, getTikTokUploadStatus, handleOAuthCallback, initTikTokDraftUpload, initYouTubeResumableUpload, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, publishInstagramMedia, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
-import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
+import { COLLECTIONS, cleanObject, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
 
 const router = Router();
 
@@ -176,7 +176,7 @@ function contentBodyFromArticle(article: any): string {
 
 // Health
 router.get('/health', asyncRoute(async (_req, res) => {
-  const dbHealth = checkDatabaseHealth();
+  const dbHealth = await probeDatabaseHealth();
   const statusCode = dbHealth.status === 'healthy' ? 200 : dbHealth.status === 'degraded' ? 200 : 503;
   res.status(statusCode).json({
     status: dbHealth.status === 'healthy' ? 'ok' : dbHealth.status,
