@@ -13,12 +13,6 @@
       "use": "@vercel/node"
     }
   ],
-  "crons": [
-    {
-      "path": "/api/cron/process",
-      "schedule": "*/10 * * * *"
-    }
-  ],
   "routes": [
     {
       "src": "^/(.*)$",
