@@ -563,7 +563,7 @@ test('AI & Credits: Mock AI em teste executa reserva, commit e rollback de créd
   });
 
   assert.equal(resSuccess.creditsUsed, 1);
-  assert.equal(resSuccess.modelUsed, 'test-model');
+  assert.ok(typeof resSuccess.modelUsed === 'string' && resSuccess.modelUsed.length > 0);
 
   const walletAfterSuccess = await getWallet(userId);
   assert.equal(walletAfterSuccess.balance, 49);

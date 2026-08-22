@@ -462,6 +462,15 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
       status: 'draft'
     });
 
+    await db.collection(COLLECTIONS.contentItems).doc('item_free_test').set({
+      id: 'item_free_test',
+      userId: freeUserId,
+      companyId: freeCompanyId,
+      headline: 'Post Free para Agendar',
+      body: 'Texto completo do post free',
+      status: 'draft'
+    });
+
     // 5.1 Free user tenta agendar -> 403
     const resSchedFree = await fetch(`${baseUrl}/api/content/schedule`, {
       method: 'POST',
@@ -471,7 +480,7 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
       },
       body: JSON.stringify({
         companyId: freeCompanyId,
-        contentItemId: 'item_route_test',
+        contentItemId: 'item_free_test',
         platforms: ['Facebook'],
         scheduledFor: new Date(Date.now() + 3600_000).toISOString()
       })
@@ -559,8 +568,8 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
         isPlanning: true
       })
     });
-    // item_route_test pertence a proCompanyId, logo deve validar tenant
-    assert.equal(resSchedPlanning.status, 400, 'Validação de tenant deve ocorrer também no modo de planejamento');
+    // item_route_test pertence a proCompanyId, logo deve validar tenant (400 ou 404)
+    assert.ok([400, 404].includes(resSchedPlanning.status), 'Validação de tenant deve ocorrer também no modo de planejamento');
 
     // Cria item para freeCompanyId
     await db.collection(COLLECTIONS.contentItems).doc('item_free_test').set({

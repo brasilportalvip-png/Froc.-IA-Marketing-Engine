@@ -141,12 +141,18 @@ export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): P
 
     if (processingTime < cutoffMs) {
       const publicationResults = Array.isArray(post.publicationResults) ? post.publicationResults : [];
-      const hasSuccessfulPublish = publicationResults.some((r: any) => r?.success && r?.externalId);
+      const requestedPlatforms = Array.isArray(post.platforms) ? post.platforms : [];
+      const successfulResults = publicationResults.filter((r: any) => r?.success && r?.externalId);
+      const allConfirmed = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
+        successfulResults.some((s: any) => s.platform === plat || normalizeProvider(s.platform) === normalizeProvider(plat))
+      );
 
-      if (hasSuccessfulPublish) {
+      if (allConfirmed) {
+        const firstSuccess = successfulResults[0];
         await doc.ref.update({
           status: 'published',
           publishedAt: post.publishedAt || nowIso(),
+          lastExternalId: post.lastExternalId || firstSuccess?.externalId,
           errorMessage: null,
           recoveredAt: nowIso(),
           updatedAt: nowIso()

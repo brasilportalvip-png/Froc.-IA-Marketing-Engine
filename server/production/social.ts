@@ -43,8 +43,9 @@ export function normalizeProvider(value: string): SocialProvider | null {
 }
 
 function key(): Buffer {
-  if (!config.encryptionKey) throw new Error('TOKEN_ENCRYPTION_KEY não configurada.');
-  return crypto.createHash('sha256').update(config.encryptionKey).digest();
+  const encKey = config.encryptionKey || (process.env.NODE_ENV === 'test' || !config.isProduction ? 'default_test_token_encryption_key_32bytes_long!' : '');
+  if (!encKey) throw new Error('TOKEN_ENCRYPTION_KEY não configurada.');
+  return crypto.createHash('sha256').update(encKey).digest();
 }
 
 export function encrypt(value: string): string {
