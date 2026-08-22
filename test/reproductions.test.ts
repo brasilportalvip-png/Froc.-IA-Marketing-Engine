@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resetMemoryDb, firestore, COLLECTIONS } from '../server/production/store.js';
-import { createCheckout, applyPaymentCycle, processMercadoPagoWebhook } from '../server/production/payments.js';
+
+import {
+  createCheckout,
+  applyPaymentCycle,
+  processMercadoPagoWebhook,
+  createMercadoPagoSignature
+} from '../server/production/payments.js';
 import { recalculateUserPlan } from '../server/production/plans.js';
 import { getWallet } from '../server/production/credits.js';
 
@@ -229,11 +235,21 @@ test('R05 — Cancelamento de preapproval em assinatura não liquidada atualiza 
     };
 
     // Processa webhook de preapproval cancelado
-    await processMercadoPagoWebhook({
-      body: { type: 'subscription_preapproval', data: { id: subId } },
-      query: {},
-      headers: {}
-    });
+    const requestId = 'req-r05-valid';
+const signatureHeader = createMercadoPagoSignature(
+  subId,
+  requestId,
+  'TEST-mock-webhook-secret-123456'
+);
+
+await processMercadoPagoWebhook({
+  body: { type: 'subscription_preapproval', data: { id: subId } },
+  query: {},
+  headers: {
+    'x-signature': signatureHeader,
+    'x-request-id': requestId
+  }
+});
 
     const orderAfter = (await db.collection(COLLECTIONS.payments).doc(orderId).get()).data() as any;
     assert.equal(orderAfter.status, 'cancelled');

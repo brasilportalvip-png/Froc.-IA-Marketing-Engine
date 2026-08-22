@@ -100,22 +100,68 @@ export function isAutopilotDue(config: AutopilotScheduleConfig, referenceDate: D
   return true;
 }
 
-async function acquireLock(): Promise<boolean> {
+interface SchedulerLease {
+  owner: string;
+  fencingToken: number;
+  lockedUntil: number;
+}
+
+async function acquireLock(): Promise<SchedulerLease | null> {
   const db = firestore();
   const ref = db.collection(COLLECTIONS.schedulerLocks).doc('process');
   const now = Date.now();
   const leaseMs = 12 * 60 * 1000;
+  const owner = newId('cron');
+
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const current = snap.data() as any;
-    if (current?.lockedUntil && Number(current.lockedUntil) > now) return false;
-    tx.set(ref, { lockedAt: now, lockedUntil: now + leaseMs, owner: newId('cron') }, { merge: true });
-    return true;
+    if (current?.lockedUntil && Number(current.lockedUntil) > now) return null;
+
+    const currentFence = Number(current?.fencingToken || 0);
+    const fencingToken = Number.isSafeInteger(currentFence) && currentFence >= 0
+      ? currentFence + 1
+      : 1;
+    const lease: SchedulerLease = {
+      owner,
+      fencingToken,
+      lockedUntil: now + leaseMs
+    };
+
+    tx.set(ref, {
+      lockedAt: now,
+      lockedUntil: lease.lockedUntil,
+      owner: lease.owner,
+      fencingToken: lease.fencingToken,
+      releasedAt: null
+    }, { merge: true });
+
+    return lease;
   });
 }
 
-async function releaseLock(): Promise<void> {
-  await firestore().collection(COLLECTIONS.schedulerLocks).doc('process').set({ lockedUntil: 0, releasedAt: Date.now() }, { merge: true });
+async function releaseLock(lease: SchedulerLease): Promise<boolean> {
+  const db = firestore();
+  const ref = db.collection(COLLECTIONS.schedulerLocks).doc('process');
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.data() as any;
+    const stillOwnsLock = Boolean(
+      snap.exists &&
+      current?.owner === lease.owner &&
+      Number(current?.fencingToken) === lease.fencingToken
+    );
+
+    if (!stillOwnsLock) return false;
+
+    tx.set(ref, {
+      lockedUntil: 0,
+      releasedAt: Date.now(),
+      releasedBy: lease.owner
+    }, { merge: true });
+    return true;
+  });
 }
 
 export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): Promise<number> {
@@ -810,7 +856,8 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
 }
 
 export async function processSchedulerTick() {
-  if (!(await acquireLock())) return { skipped: true, reason: 'Outro ciclo já está em execução.' };
+  const lease = await acquireLock();
+  if (!lease) return { skipped: true, reason: 'Outro ciclo já está em execução.' };
 
   const errors: Record<string, string> = {};
   let releasedReservations = 0;
@@ -881,7 +928,7 @@ export async function processSchedulerTick() {
       processedAt: nowIso()
     };
   } finally {
-    await releaseLock();
+    await releaseLock(lease);
   }
 }
 
@@ -890,7 +937,7 @@ export async function getSchedulerHealth(): Promise<{
   environment: string;
   cronSecretConfigured: boolean;
   metaConfigured: boolean;
-  lock?: { isLocked: boolean; lockedAt: number | null; lockedUntil: number | null; owner: string | null };
+  lock?: { isLocked: boolean; lockedAt: number | null; lockedUntil: number | null; owner: string | null; fencingToken: number | null };
   queueStats?: {
     scheduledPending: number;
     scheduledPostsDue: number;
@@ -937,7 +984,10 @@ export async function getSchedulerHealth(): Promise<{
         isLocked,
         lockedAt: lockData?.lockedAt || null,
         lockedUntil: lockData?.lockedUntil || null,
-        owner: lockData?.owner || null
+        owner: lockData?.owner || null,
+        fencingToken: Number.isSafeInteger(Number(lockData?.fencingToken))
+          ? Number(lockData.fencingToken)
+          : null
       },
       queueStats: {
         scheduledPending: dueSnap.size,
@@ -970,7 +1020,8 @@ export async function processSocialTick(): Promise<{
   error?: string;
   processedAt: string;
 }> {
-  if (!(await acquireLock())) {
+  const lease = await acquireLock();
+  if (!lease) {
     return {
       skipped: true,
       reason: 'scheduler_busy',
@@ -998,8 +1049,6 @@ export async function processSocialTick(): Promise<{
       processedAt: nowIso()
     };
   } finally {
-    await releaseLock();
+    await releaseLock(lease);
   }
 }
-
-

@@ -46,9 +46,9 @@ async function mpJson(url: string, init: RequestInit = {}): Promise<any> {
 
 export async function createCheckout(data: { userId: string; userEmail: string; userName: string; planId: string; idempotencyKey?: string }) {
   const rawKey = data.idempotencyKey ? String(data.idempotencyKey).trim() : '';
-  if (!rawKey || rawKey.length < 8) {
-    const error: any = new Error('Header X-Idempotency-Key ou idempotencyKey obrigatório no checkout (mínimo 8 caracteres).');
-    error.statusCode = 400;
+  if (!/^[A-Za-z0-9._:-]{16,128}$/.test(rawKey)) {
+  const error: any = new Error('Chave de idempotência inválida: use entre 16 e 128 caracteres seguros.');
+error.statusCode = 400;
     throw error;
   }
   if (!config.mercadoPago.accessToken) throw new Error('Mercado Pago não configurado no servidor.');
@@ -75,8 +75,42 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
         conflictErr.statusCode = 409;
         throw conflictErr;
       }
-      return { isExisting: true, orderId: stored.orderId, initPoint: stored.initPoint, billingMode: stored.billingMode || billingMode, status: stored.status };
-    }
+      const processingStartedAt = Date.parse(
+  String(stored.processingStartedAt || stored.updatedAt || stored.createdAt || '')
+);
+const leaseExpired =
+  !Number.isFinite(processingStartedAt) ||
+  Date.now() - processingStartedAt > 30_000;
+
+const canRetry =
+  stored.status === 'failed' ||
+  (['processing', 'pending'].includes(String(stored.status)) && leaseExpired);
+
+if (canRetry) {
+  const retryStartedAt = nowIso();
+  const retryOrderRef = db.collection(COLLECTIONS.payments).doc(String(stored.orderId));
+
+  tx.set(retryOrderRef, {
+    status: 'pending',
+    providerError: null,
+    updatedAt: retryStartedAt
+  }, { merge: true });
+
+  tx.set(idemRef, {
+    status: 'processing',
+    processingStartedAt: retryStartedAt,
+    updatedAt: retryStartedAt
+  }, { merge: true });
+
+  return {
+    isExisting: false,
+    orderId: String(stored.orderId),
+    billingMode: stored.billingMode || billingMode
+  };
+}
+
+return { isExisting: true, orderId: stored.orderId, initPoint: stored.initPoint, billingMode: stored.billingMode || billingMode, status: stored.status };
+}
 
     const newOrderId = newId('order');
     const orderData: Record<string, any> = {
@@ -104,8 +138,10 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
       planId: data.planId,
       orderId: newOrderId,
       billingMode,
-      status: 'pending',
-      createdAt: nowIso()
+      status: 'processing',
+processingStartedAt: nowIso(),
+createdAt: nowIso(),
+updatedAt: nowIso()
     });
 
     return { isExisting: false, orderId: newOrderId, orderData };
@@ -124,16 +160,28 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
     for (let attempt = 0; attempt < 300; attempt++) {
       await new Promise((r) => setTimeout(r, 50));
       const idemSnap = await db.collection(COLLECTIONS.idempotency).doc(idemDocId).get();
-      if (idemSnap.exists && idemSnap.data()?.initPoint) {
-        const stored = idemSnap.data() as any;
-        return {
-          order: { id: reservation.orderId, planId: data.planId, status: stored.status, initPoint: stored.initPoint },
-          initPoint: stored.initPoint,
-          billingMode: stored.billingMode || billingMode
-        };
-      }
-      const existingOrderSnap = await db.collection(COLLECTIONS.payments).doc(reservation.orderId).get();
-      if (existingOrderSnap.exists) {
+
+
+if (idemSnap.exists && idemSnap.data()?.initPoint) {
+  const stored = idemSnap.data() as any;
+  return {
+    order: { id: reservation.orderId, planId: data.planId, status: stored.status, initPoint: stored.initPoint },
+    initPoint: stored.initPoint,
+    billingMode: stored.billingMode || billingMode
+  };
+}
+
+if (idemSnap.exists && idemSnap.data()?.status === 'failed') {
+  const error: any = new Error('Não foi possível criar o checkout no Mercado Pago.');
+  error.statusCode = 502;
+  throw error;
+}
+
+const existingOrderSnap = await db.collection(COLLECTIONS.payments).doc(reservation.orderId).get();
+
+
+
+if (existingOrderSnap.exists) {
         const ext = existingOrderSnap.data() as any;
         if (ext.initPoint) {
           return {
@@ -144,11 +192,9 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
         }
       }
     }
-    return {
-      order: { id: reservation.orderId, planId: data.planId, status: 'processing', initPoint: null },
-      initPoint: null,
-      billingMode: reservation.billingMode
-    };
+    const error: any = new Error('Tempo limite aguardando a criação do checkout.');
+error.statusCode = 504;
+throw error;
   } else {
     orderId = reservation.orderId;
   }
@@ -190,10 +236,11 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
         updatedAt: nowIso()
       });
 
-      if (data.idempotencyKey) {
-        const idemDocId = stableId(`checkout:${data.userId}:${data.idempotencyKey}`);
-        await db.collection(COLLECTIONS.idempotency).doc(idemDocId).set({ initPoint, status: String(body.status || 'pending') }, { merge: true });
-      }
+      await idemRef.set({
+  initPoint,
+  status: String(body.status || 'pending'),
+  updatedAt: nowIso()
+}, { merge: true });
 
       return { order: { ...order, providerSubscriptionId: String(body.id), initPoint }, initPoint, billingMode };
     }
@@ -227,16 +274,32 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
     if (!body.id || !initPoint) throw new Error('Mercado Pago não retornou o checkout.');
     await orderRef.update({ providerPreferenceId: body.id, initPoint, idempotencyKey: mpIdemKey, updatedAt: nowIso() });
 
-    if (data.idempotencyKey) {
-      const idemDocId = stableId(`checkout:${data.userId}:${data.idempotencyKey}`);
-      await db.collection(COLLECTIONS.idempotency).doc(idemDocId).set({ initPoint, status: 'pending' }, { merge: true });
-    }
+    await idemRef.set({
+  initPoint,
+  status: 'pending',
+  updatedAt: nowIso()
+}, { merge: true });
 
     return { order: { ...order, providerPreferenceId: body.id, initPoint }, initPoint, billingMode };
   } catch (error: any) {
-    await orderRef.set({ status: 'failed', providerError: String(error?.message || error).slice(0, 500), updatedAt: nowIso() }, { merge: true });
-    throw error;
-  }
+  const failedAt = nowIso();
+  const providerError = String(error?.message || error).slice(0, 500);
+
+  await Promise.all([
+    orderRef.set({
+      status: 'failed',
+      providerError,
+      updatedAt: failedAt
+    }, { merge: true }),
+    idemRef.set({
+      status: 'failed',
+      lastError: providerError,
+      updatedAt: failedAt
+    }, { merge: true })
+  ]);
+
+  throw error;
+}
 }
 
 function parseSignature(header: string): { ts?: string; v1?: string } {
@@ -256,11 +319,11 @@ export function createMercadoPagoSignature(dataId: string, requestId: string, se
   return `ts=${ts},v1=${v1}`;
 }
 
+
+
 export function verifyMercadoPagoSignature(data: { signatureHeader?: string; requestId?: string; dataId?: string }): boolean {
-  if (process.env.NODE_ENV === 'test' && (!data.signatureHeader || !data.requestId)) {
-    return true;
-  }
   if (!config.mercadoPago.webhookSecret || !data.signatureHeader || !data.requestId || !data.dataId) return false;
+if (!config.mercadoPago.webhookSecret || !data.signatureHeader || !data.requestId || !data.dataId) return false;
   const { ts, v1 } = parseSignature(data.signatureHeader);
   if (!ts || !v1) return false;
   const timestamp = Number(ts);
@@ -351,17 +414,21 @@ export async function applyPaymentCycle(data: {
 
     const status = normalizePaymentStatus(data.status);
     const currentPaymentStatus = order.lastPaymentStatus;
-    const finalPaymentStatus = canTransitionPaymentStatus(currentPaymentStatus, status)
-      ? status
-      : (currentPaymentStatus || status);
+    const paymentTransitionAccepted = canTransitionPaymentStatus(currentPaymentStatus, status);
+const finalPaymentStatus = paymentTransitionAccepted
+  ? status
+  : (currentPaymentStatus || status);
 
-    const baseUpdate: Record<string, any> = {
-      lastPaymentStatus: finalPaymentStatus,
-      providerPaymentId: data.paymentId,
-      lastBillingCycleId: data.cycleId,
-      paymentMethod: data.paymentMethod || null,
-      updatedAt: nowIso()
-    };
+const baseUpdate: Record<string, any> = {
+  lastPaymentStatus: finalPaymentStatus,
+  updatedAt: nowIso()
+};
+
+if (paymentTransitionAccepted) {
+  baseUpdate.providerPaymentId = data.paymentId;
+  baseUpdate.lastBillingCycleId = data.cycleId;
+  baseUpdate.paymentMethod = data.paymentMethod || null;
+}
     if (data.subscriptionId) {
       baseUpdate.providerSubscriptionId = data.subscriptionId;
       baseUpdate.providerPreapprovalId = data.subscriptionId;
@@ -420,7 +487,7 @@ export async function applyPaymentCycle(data: {
       if (canTransitionOrderStatus(currentStatus, targetOrderStatus)) {
         baseUpdate.status = targetOrderStatus;
       }
-      const after = before - credits;
+      const after = Math.max(0, before - credits);
       tx.set(walletRef, {
         ...wallet,
         id: order.userId,
@@ -621,7 +688,7 @@ export async function cancelSubscription(userId: string, orderId?: string): Prom
 
   // A04: Se a assinatura nunca teve um ciclo pago liquidado (lastCreditedAt ausente), não concede 30 dias de fallback
   const now = nowIso();
-  const hasSettledCycle = Boolean(target.lastCreditedAt || target.lastPaymentStatus === 'approved');
+  const hasSettledCycle = Boolean(target.lastCreditedAt);
   let currentPeriodEnd: string | null = null;
   let finalStatus = 'cancelled';
 

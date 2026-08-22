@@ -9,7 +9,7 @@ import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, g
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
 import { createOAuthUrl, createPinterestPin, disconnectSocial, getFacebookPageSelectionCandidates, getPinterestBoards, getProviderAutoPublishReason, getSocialReadiness, getTikTokUploadStatus, handleOAuthCallback, initTikTokDraftUpload, initYouTubeResumableUpload, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, publishInstagramMedia, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
-import { getSchedulerHealth, processSchedulerTick, processSocialTick, triggerUserAutopilot } from './scheduler.js';
+import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
 
@@ -20,9 +20,15 @@ const asyncRoute = (handler: AsyncHandler) => async (req: Request, res: Response
   try {
     await handler(req, res);
   } catch (error: any) {
-    const status = Number(error?.statusCode || error?.status || (error instanceof RangeError ? 400 : 500));
+    const requestedStatus = Number(error?.statusCode || error?.status || (error instanceof RangeError ? 400 : 500));
+    const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+      ? requestedStatus
+      : 500;
     if (status >= 500) console.error('[Froc API]', error);
-    res.status(status).json({ error: error?.message || 'Erro interno no Froc.IA.' });
+    const publicMessage = status >= 500
+      ? 'Erro interno no Froc.IA.'
+      : String(error?.message || 'Requisição inválida.').slice(0, 500);
+    res.status(status).json({ error: publicMessage });
   }
 };
 
@@ -132,6 +138,17 @@ async function deleteCompanyData(userId: string, companyId: string): Promise<voi
 
 function planCompanyLimit(planId: string): number {
   return getPlanEntitlements(planId).maxCompanies;
+}
+
+async function requireSocialPublishingAccess(userId: string, role?: string): Promise<void> {
+  if (role === 'admin') return;
+  const wallet = await getWallet(userId);
+  const entitlements = getPlanEntitlements(wallet.planId);
+  if (!entitlements.socialConnections) {
+    const error: any = new Error('Publicações em redes sociais exigem o plano PRO ou superior.');
+    error.statusCode = 403;
+    throw error;
+  }
 }
 
 function cleanHeading(txt: string): string {
@@ -912,7 +929,12 @@ router.get('/payments/plans', (_req, res) => res.json({ plans: config.plans, gat
 router.post('/payments/checkout', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const planId = safeString(req.body?.planId, 100);
   if (!planId) return res.status(400).json({ error: 'Selecione um plano.' });
-  const idempotencyKey = safeString(req.body?.idempotencyKey || req.headers['x-idempotency-key'], 200) || undefined;
+  const bodyIdempotencyKey = safeString(req.body?.idempotencyKey, 200);
+  const headerIdempotencyKey = safeString(req.headers['x-idempotency-key'], 200);
+  if (bodyIdempotencyKey && headerIdempotencyKey && bodyIdempotencyKey !== headerIdempotencyKey) {
+    return res.status(400).json({ error: 'A chave de idempotência do cabeçalho diverge da chave enviada no corpo.' });
+  }
+  const idempotencyKey = headerIdempotencyKey || bodyIdempotencyKey || undefined;
   res.json(await createCheckout({ userId: req.user!.id, userEmail: req.user!.email, userName: req.user!.name, planId, idempotencyKey }));
 }));
 router.get('/payments/orders', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -1222,6 +1244,7 @@ router.post('/social/tiktok/upload-draft', requireAuth, (req, res, next) => {
   const companyId = safeString(req.body?.companyId, 200) || safeString(req.query?.companyId, 200);
   if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
   await requireOwnedCompany(req.user!.id, companyId);
+  await requireSocialPublishingAccess(req.user!.id, req.user?.role);
 
   if (!req.file || !req.file.buffer || req.file.buffer.length === 0) {
     return res.status(400).json({ error: 'Arquivo de vídeo MP4 é obrigatório.' });
@@ -1268,6 +1291,7 @@ router.post('/social/instagram/publish-media', requireAuth, asyncRoute(async (re
   const companyId = safeString(req.body?.companyId, 200);
   if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
   await requireOwnedCompany(req.user!.id, companyId);
+  await requireSocialPublishingAccess(req.user!.id, req.user?.role);
 
   const imageUrl = safeHttpUrl(req.body?.imageUrl, 2000) || undefined;
   const videoUrl = safeHttpUrl(req.body?.videoUrl, 2000) || undefined;
@@ -1296,6 +1320,7 @@ router.post('/social/tiktok/init-upload', requireAuth, asyncRoute(async (req: Au
   if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
   if (videoSize <= 0) return res.status(400).json({ error: 'videoSize deve ser maior que 0.' });
   await requireOwnedCompany(req.user!.id, companyId);
+  await requireSocialPublishingAccess(req.user!.id, req.user?.role);
 
   const result = await initTikTokDraftUpload({
     userId: req.user!.id,
@@ -1312,6 +1337,7 @@ router.post('/social/youtube/init-upload', requireAuth, asyncRoute(async (req: A
   const title = safeString(req.body?.title, 100);
   if (!companyId || !title) return res.status(400).json({ error: 'companyId e title são obrigatórios.' });
   await requireOwnedCompany(req.user!.id, companyId);
+  await requireSocialPublishingAccess(req.user!.id, req.user?.role);
 
   const result = await initYouTubeResumableUpload({
     userId: req.user!.id,
@@ -1349,6 +1375,7 @@ router.post('/social/pinterest/create-pin', requireAuth, asyncRoute(async (req: 
     return res.status(400).json({ error: 'companyId, boardId, title e imageUrl válida são obrigatórios.' });
   }
   await requireOwnedCompany(req.user!.id, companyId);
+  await requireSocialPublishingAccess(req.user!.id, req.user?.role);
 
   const result = await createPinterestPin({
     userId: req.user!.id,
@@ -1536,18 +1563,19 @@ router.get('/cron/process', asyncRoute(async (req, res) => {
   res.json(await processSchedulerTick());
 }));
 
+// Compatibilidade com integrações antigas: ambas as rotas usam o mesmo coordenador e o mesmo lock.
 router.get('/cron/social', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
   const isAuthorized = Boolean(config.cronSecret && auth === `Bearer ${config.cronSecret}`);
   if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
-  res.json(await processSocialTick());
+  res.json(await processSchedulerTick());
 }));
 
 router.post('/cron/social', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
   const isAuthorized = Boolean(config.cronSecret && auth === `Bearer ${config.cronSecret}`);
   if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
-  res.json(await processSocialTick());
+  res.json(await processSchedulerTick());
 }));
 
 // Plans public catalog alias

@@ -1,4 +1,6 @@
 import dns from 'dns/promises';
+import http, { type IncomingHttpHeaders } from 'node:http';
+import https from 'node:https';
 import net from 'net';
 import { COLLECTIONS, firestore, newId, nowIso } from './store.js';
 import { executeAi, parseAiJson } from './ai.js';
@@ -9,59 +11,222 @@ const MAX_REDIRECTS = 5;
 function isPrivateIpv4(ip: string): boolean {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return false;
-  const [a, b] = parts;
-  return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  const [a, b, c] = parts;
+  return a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224;
+}
+
+function ipv6ToBigInt(ip: string): bigint | null {
+  let normalized = ip.toLowerCase().split('%')[0];
+  if (normalized.includes('.')) {
+    const lastColon = normalized.lastIndexOf(':');
+    if (lastColon < 0) return null;
+    const ipv4 = normalized.slice(lastColon + 1);
+    const parts = ipv4.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    const high = ((parts[0] << 8) | parts[1]).toString(16);
+    const low = ((parts[2] << 8) | parts[3]).toString(16);
+    normalized = `${normalized.slice(0, lastColon)}:${high}:${low}`;
+  }
+
+  const sections = normalized.split('::');
+  if (sections.length > 2) return null;
+  const left = sections[0] ? sections[0].split(':').filter(Boolean) : [];
+  const right = sections.length === 2 && sections[1] ? sections[1].split(':').filter(Boolean) : [];
+  const missing = sections.length === 2 ? 8 - left.length - right.length : 0;
+  if (missing < 0 || (sections.length === 1 && left.length !== 8)) return null;
+  const groups = [...left, ...Array(missing).fill('0'), ...right];
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+
+  return groups.reduce((value, group) => (value << 16n) | BigInt(`0x${group}`), 0n);
 }
 
 function isPrivateIpv6(ip: string): boolean {
-  const normalized = ip.toLowerCase();
-  return normalized === '::1' || normalized === '::' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb') || normalized.startsWith('::ffff:127.') || normalized.startsWith('::ffff:10.') || normalized.startsWith('::ffff:192.168.');
+  const value = ipv6ToBigInt(ip);
+  if (value === null) return true;
+  if (value === 0n || value === 1n) return true;
+
+  // IPv4-mapped IPv6 (::ffff:0:0/96)
+  if ((value >> 32n) === 0xffffn) {
+    const ipv4 = Number(value & 0xffffffffn);
+    return isPrivateIpv4([
+      (ipv4 >>> 24) & 255,
+      (ipv4 >>> 16) & 255,
+      (ipv4 >>> 8) & 255,
+      ipv4 & 255
+    ].join('.'));
+  }
+
+  const top8 = Number(value >> 120n);
+  const top10 = Number(value >> 118n);
+  const top7 = Number(value >> 121n);
+  const top32 = Number(value >> 96n);
+  return top7 === 0x7e || // fc00::/7 — unique local
+    top10 === 0x3fa || // fe80::/10 — link local
+    top10 === 0x3fb || // fec0::/10 — site local (legado)
+    top8 === 0xff || // ff00::/8 — multicast
+    top32 === 0x20010db8 || // 2001:db8::/32 — documentação
+    (value >> 64n) === 0x100n; // 100::/64 — discard-only
 }
 
-async function assertPublicHost(url: URL): Promise<void> {
+interface PublicTarget {
+  address: string;
+  family: 4 | 6;
+}
+
+interface PinnedHttpResponse {
+  statusCode: number;
+  headers: IncomingHttpHeaders;
+  body: Buffer;
+}
+
+async function resolvePublicTarget(url: URL): Promise<PublicTarget> {
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Apenas URLs HTTP/HTTPS são permitidas.');
-  const host = url.hostname.toLowerCase();
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) throw new Error('Endereço local bloqueado por segurança.');
-  if (net.isIP(host)) {
-    if ((net.isIP(host) === 4 && isPrivateIpv4(host)) || (net.isIP(host) === 6 && isPrivateIpv6(host))) throw new Error('Endereço privado bloqueado por segurança.');
-    return;
+  if (url.username || url.password) throw new Error('URLs com credenciais embutidas não são permitidas.');
+  const defaultPort = url.protocol === 'https:' ? '443' : '80';
+  const hasForbiddenPort = Boolean(url.port && url.port !== defaultPort);
+
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
+    throw new Error('Endereço local bloqueado por segurança.');
   }
+
+  const literalFamily = net.isIP(host);
+  if (literalFamily) {
+    if ((literalFamily === 4 && isPrivateIpv4(host)) || (literalFamily === 6 && isPrivateIpv6(host))) {
+      throw new Error('Endereço privado bloqueado por segurança.');
+    }
+    if (hasForbiddenPort) throw new Error('Porta não permitida para auditoria SEO.');
+    return { address: host, family: literalFamily as 4 | 6 };
+  }
+
+  if (hasForbiddenPort) throw new Error('Porta não permitida para auditoria SEO.');
   const addresses = await dns.lookup(host, { all: true, verbatim: true });
   if (!addresses.length) throw new Error('Domínio não resolvido.');
   for (const item of addresses) {
-    if ((item.family === 4 && isPrivateIpv4(item.address)) || (item.family === 6 && isPrivateIpv6(item.address))) throw new Error('O domínio resolve para uma rede privada e foi bloqueado.');
+    if ((item.family === 4 && isPrivateIpv4(item.address)) || (item.family === 6 && isPrivateIpv6(item.address))) {
+      throw new Error('O domínio resolve para uma rede privada e foi bloqueado.');
+    }
   }
+
+  const selected = addresses.find((item) => item.family === 4) || addresses[0];
+  return { address: selected.address, family: selected.family as 4 | 6 };
+}
+
+function headerValue(headers: IncomingHttpHeaders, name: string): string {
+  const value = headers[name];
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '');
+}
+
+function requestPinnedHtml(url: URL, target: PublicTarget): Promise<PinnedHttpResponse> {
+  return new Promise((resolve, reject) => {
+    const transport = url.protocol === 'https:' ? https : http;
+    const options: https.RequestOptions = {
+      protocol: url.protocol,
+      hostname: target.address,
+      family: target.family,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      method: 'GET',
+      path: `${url.pathname}${url.search}`,
+      servername: url.protocol === 'https:' ? url.hostname.replace(/^\[|\]$/g, '') : undefined,
+      headers: {
+        Host: url.host,
+        'User-Agent': 'Mozilla/5.0 (compatible; FrocBot/1.1; SEO audit)',
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Encoding': 'identity'
+      }
+    };
+
+    const request = transport.request(options, (response) => {
+      const statusCode = Number(response.statusCode || 0);
+      if ([301, 302, 303, 307, 308].includes(statusCode)) {
+        response.resume();
+        resolve({ statusCode, headers: response.headers, body: Buffer.alloc(0) });
+        return;
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        response.resume();
+        reject(new Error(`Site respondeu HTTP ${statusCode}.`));
+        return;
+      }
+
+      const contentType = headerValue(response.headers, 'content-type').toLowerCase();
+      if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+        response.resume();
+        reject(new Error('A URL não retornou uma página HTML.'));
+        return;
+      }
+
+      const contentEncoding = headerValue(response.headers, 'content-encoding').toLowerCase();
+      if (contentEncoding && contentEncoding !== 'identity') {
+        response.resume();
+        reject(new Error('A página retornou uma codificação de conteúdo não permitida.'));
+        return;
+      }
+
+      const declaredLength = Number(headerValue(response.headers, 'content-length') || 0);
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_HTML_BYTES) {
+        response.resume();
+        reject(new Error('Página muito grande para auditoria segura.'));
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let receivedBytes = 0;
+      let exceededLimit = false;
+
+      response.on('data', (chunk: Buffer | string) => {
+        if (exceededLimit) return;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        receivedBytes += buffer.length;
+        if (receivedBytes > MAX_HTML_BYTES) {
+          exceededLimit = true;
+          response.destroy();
+          reject(new Error('Página excede o limite de 2 MB da auditoria.'));
+          return;
+        }
+        chunks.push(buffer);
+      });
+      response.on('end', () => {
+        if (!exceededLimit) resolve({ statusCode, headers: response.headers, body: Buffer.concat(chunks, receivedBytes) });
+      });
+      response.on('error', (error) => {
+        if (!exceededLimit) reject(error);
+      });
+    });
+
+    request.setTimeout(12_000, () => {
+      request.destroy(new Error('Tempo limite excedido ao acessar o site.'));
+    });
+    request.on('error', reject);
+    request.end();
+  });
 }
 
 export async function safeFetchHtml(rawUrl: string): Promise<{ url: string; html: string }> {
   let current = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    await assertPublicHost(current);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12_000);
-    try {
-      const response = await fetch(current, {
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FrocBot/1.1; SEO audit)', Accept: 'text/html,application/xhtml+xml' }
-      });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get('location');
-        if (!location) throw new Error('Redirecionamento sem destino.');
-        current = new URL(location, current);
-        continue;
-      }
-      if (!response.ok) throw new Error(`Site respondeu HTTP ${response.status}.`);
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) throw new Error('A URL não retornou uma página HTML.');
-      const declaredLength = Number(response.headers.get('content-length') || 0);
-      if (declaredLength > MAX_HTML_BYTES) throw new Error('Página muito grande para auditoria segura.');
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > MAX_HTML_BYTES) throw new Error('Página excede o limite de 2 MB da auditoria.');
-      return { url: current.toString(), html: buffer.toString('utf8') };
-    } finally {
-      clearTimeout(timeout);
+    const target = await resolvePublicTarget(current);
+    const response = await requestPinnedHtml(current, target);
+    if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
+      const location = headerValue(response.headers, 'location');
+      if (!location) throw new Error('Redirecionamento sem destino.');
+      current = new URL(location, current);
+      continue;
     }
+    return { url: current.toString(), html: response.body.toString('utf8') };
   }
   throw new Error('Número máximo de redirecionamentos excedido.');
 }

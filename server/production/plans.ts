@@ -104,10 +104,13 @@ export async function recalculateUserPlan(userId: string): Promise<{
     }
 
     // Regra A03: Pedidos válidos para plano pago devem possuir prova financeira real de liquidação:
-    // lastPaymentStatus === 'approved' OU lastCreditedAt não-nulo com registro de crédito.
-    // Documentos legados com status 'active' ou 'approved' sem lastCreditedAt e sem lastPaymentStatus 'approved' NÃO concedem plano pago.
-    const hasProofOfPayment = o.lastPaymentStatus === 'approved' || Boolean(o.lastCreditedAt);
-    if (!hasProofOfPayment) {
+    // Exige conjuntamente o pagamento aprovado e o registro da concessão dos créditos.
+// Apenas status ou data isolados não são prova suficiente para ativar plano pago.
+const hasProofOfPayment =
+  o.lastPaymentStatus === 'approved' &&
+  Boolean(o.lastCreditedAt);
+
+if (!hasProofOfPayment) {
       return false;
     }
 
@@ -135,9 +138,9 @@ export async function recalculateUserPlan(userId: string): Promise<{
     if (o.status === 'cancel_at_period_end' || o.subscriptionStatus === 'cancelled') {
       return Boolean(o.currentPeriodEnd && o.currentPeriodEnd > now);
     }
-    if (o.status === 'active' || o.status === 'approved' || o.lastPaymentStatus === 'approved') {
-      return true;
-    }
+    if (o.status === 'active' || o.status === 'approved') {
+  return true;
+}
     return false;
   }).sort((a, b) => {
     // 1. Prioriza nível de plano mais alto (Agency > Business > Pro > Start > Free)

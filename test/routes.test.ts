@@ -43,7 +43,7 @@ test('Routes & Entitlements: Restrição de limite de empresas por plano', async
     userId,
     planId: 'plan_start',
     status: 'active',
-    lastPaymentStatus: 'approved',
+    lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(),
     currentPeriodEnd: future,
     createdAt: new Date().toISOString()
   });
@@ -94,7 +94,7 @@ test('Routes & Entitlements: Validação fail-closed de rotas restritas a planos
     userId,
     planId: 'plan_pro',
     status: 'active',
-    lastPaymentStatus: 'approved',
+    lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(),
     currentPeriodEnd: future,
     createdAt: new Date().toISOString()
   });
@@ -110,7 +110,7 @@ test('Routes & Entitlements: Validação fail-closed de rotas restritas a planos
     userId,
     planId: 'plan_business',
     status: 'active',
-    lastPaymentStatus: 'approved',
+    lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(),
     currentPeriodEnd: future,
     createdAt: new Date().toISOString()
   });
@@ -348,7 +348,7 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
     userId: proUserId,
     planId: 'plan_pro',
     status: 'active',
-    lastPaymentStatus: 'approved',
+    lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(),
     currentPeriodEnd: future,
     createdAt: now
   });

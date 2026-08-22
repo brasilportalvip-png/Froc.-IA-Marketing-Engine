@@ -29,6 +29,16 @@ export interface AuthenticatedRequest extends Request {
 export const CURRENT_TERMS_VERSION = '2026.1';
 export const CURRENT_PRIVACY_VERSION = '2026.1';
 
+const VALID_ROLES = new Set<FrocRole>(['user', 'admin', 'support', 'editor']);
+const CONSENT_FLOW_PATHS = new Set([
+  '/auth/sync-profile',
+  '/auth/accept-terms',
+  '/auth/me',
+  '/api/auth/sync-profile',
+  '/api/auth/accept-terms',
+  '/api/auth/me'
+]);
+
 export function hasAcceptedLatestTerms(user?: FrocUser | null): boolean {
   if (!user) return false;
   return Boolean(
@@ -39,118 +49,227 @@ export function hasAcceptedLatestTerms(user?: FrocUser | null): boolean {
   );
 }
 
+function cleanText(value: unknown, maxLength: number): string {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeEmail(value: unknown): string {
+  const email = cleanText(value, 320).toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function normalizeHttpUrl(value: unknown): string | undefined {
+  const raw = cleanText(value, 1000);
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeIsoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function isFrocRole(value: unknown): value is FrocRole {
+  return typeof value === 'string' && VALID_ROLES.has(value as FrocRole);
+}
+
+/**
+ * Custom claims do Firebase são a única fonte autoritativa de privilégios.
+ * Um papel salvo no perfil ou enviado em extras nunca promove o usuário.
+ */
+function roleFromToken(token: DecodedIdToken): FrocRole {
+  const roleClaim = isFrocRole(token.role) ? token.role : undefined;
+  const frocRoleClaim = isFrocRole(token.frocRole) ? token.frocRole : undefined;
+
+  // Claims conflitantes indicam token/configuração inconsistente: falha segura.
+  if (roleClaim && frocRoleClaim && roleClaim !== frocRoleClaim) return 'user';
+  return frocRoleClaim || roleClaim || 'user';
+}
+
 function displayNameFromToken(token: DecodedIdToken): string {
-  if (typeof token.name === 'string' && token.name.trim()) return token.name.trim();
-  if (token.email) return token.email.split('@')[0];
+  const tokenName = cleanText(token.name, 120);
+  if (tokenName) return tokenName;
+  const email = normalizeEmail(token.email);
+  if (email) return cleanText(email.split('@')[0], 120);
   return 'Usuário Froc';
 }
 
+function normalizeRequestPath(value: unknown): string {
+  const withoutQuery = String(value ?? '').split(/[?#]/, 1)[0];
+  const normalized = withoutQuery.replace(/\/{2,}/g, '/').replace(/\/$/, '');
+  return normalized || '/';
+}
+
+function isConsentFlow(req: AuthenticatedRequest): boolean {
+  return CONSENT_FLOW_PATHS.has(normalizeRequestPath(req.path)) ||
+    CONSENT_FLOW_PATHS.has(normalizeRequestPath(req.originalUrl));
+}
+
+/**
+ * Cria ou recupera o perfil de forma transacional e idempotente.
+ * O cliente pode atualizar somente campos comuns; privilégios vêm do token
+ * Firebase verificado e consentimentos aceitam apenas as versões vigentes.
+ */
 export async function ensureUserProfile(token: DecodedIdToken, extras: Partial<FrocUser> = {}): Promise<FrocUser> {
-  const ref = firestore().collection(COLLECTIONS.users).doc(token.uid);
-  const snap = await ref.get();
-  const existing = snap.data() as Partial<FrocUser> | undefined;
-  const claimsRole = (token.role || token.frocRole) as FrocRole | undefined;
-  const role: FrocRole = claimsRole || existing?.role || 'user';
-  const now = nowIso();
+  const uid = cleanText(token.uid, 128);
+  if (!uid || uid !== token.uid || uid.includes('/')) {
+    throw new Error('Identificador autenticado inválido.');
+  }
 
-  // Preservação estrita: não promove silenciosamente versões antigas
-  const newTermsVersion = typeof extras.termsVersion === 'string' && extras.termsVersion.trim() ? extras.termsVersion.trim() : undefined;
-  const newPrivacyVersion = typeof extras.privacyVersion === 'string' && extras.privacyVersion.trim() ? extras.privacyVersion.trim() : undefined;
+  const db = firestore();
+  const ref = db.collection(COLLECTIONS.users).doc(uid);
 
-  const termsAcceptedAt = extras.termsAcceptedAt !== undefined ? extras.termsAcceptedAt : existing?.termsAcceptedAt;
-  const privacyAcceptedAt = extras.privacyAcceptedAt !== undefined ? extras.privacyAcceptedAt : existing?.privacyAcceptedAt;
-  const termsVersion = newTermsVersion !== undefined ? newTermsVersion : existing?.termsVersion;
-  const privacyVersion = newPrivacyVersion !== undefined ? newPrivacyVersion : existing?.privacyVersion;
+  return db.runTransaction(async (transaction: any): Promise<FrocUser> => {
+    const snap = await transaction.get(ref);
+    const existing = (snap.data() || {}) as Partial<FrocUser>;
+    const now = nowIso();
 
-  const profile: FrocUser = {
-    id: token.uid,
-    name: extras.name?.trim() || existing?.name || displayNameFromToken(token),
-    email: token.email || existing?.email || '',
-    role,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    termsAcceptedAt,
-    privacyAcceptedAt,
-    termsVersion,
-    privacyVersion,
-    currentCompanyId: extras.currentCompanyId ?? existing?.currentCompanyId,
-    avatarUrl: extras.avatarUrl ?? existing?.avatarUrl ?? token.picture,
-    emailVerified: token.email_verified ?? existing?.emailVerified ?? false
-  };
+    const requestedTermsVersion = extras.termsVersion === CURRENT_TERMS_VERSION
+      ? CURRENT_TERMS_VERSION
+      : undefined;
+    const requestedPrivacyVersion = extras.privacyVersion === CURRENT_PRIVACY_VERSION
+      ? CURRENT_PRIVACY_VERSION
+      : undefined;
+    const requestedTermsAcceptedAt = requestedTermsVersion
+      ? normalizeIsoTimestamp(extras.termsAcceptedAt)
+      : undefined;
+    const requestedPrivacyAcceptedAt = requestedPrivacyVersion
+      ? normalizeIsoTimestamp(extras.privacyAcceptedAt)
+      : undefined;
 
-  await ref.set(profile, { merge: true });
-  return profile;
+    const requestedName = cleanText(extras.name, 120);
+    const existingName = cleanText(existing.name, 120);
+    const tokenEmail = normalizeEmail(token.email);
+    const existingEmail = normalizeEmail(existing.email);
+    const requestedCompanyId = extras.currentCompanyId === undefined
+      ? undefined
+      : cleanText(extras.currentCompanyId, 200);
+    const requestedAvatarUrl = extras.avatarUrl === undefined
+      ? undefined
+      : normalizeHttpUrl(extras.avatarUrl);
+
+    const profile: FrocUser = {
+      id: uid,
+      name: requestedName || existingName || displayNameFromToken(token),
+      email: tokenEmail || existingEmail,
+      role: roleFromToken(token),
+      createdAt: normalizeIsoTimestamp(existing.createdAt) || now,
+      updatedAt: now,
+      termsAcceptedAt: requestedTermsAcceptedAt || normalizeIsoTimestamp(existing.termsAcceptedAt),
+      privacyAcceptedAt: requestedPrivacyAcceptedAt || normalizeIsoTimestamp(existing.privacyAcceptedAt),
+      termsVersion: requestedTermsAcceptedAt
+        ? CURRENT_TERMS_VERSION
+        : cleanText(existing.termsVersion, 30) || undefined,
+      privacyVersion: requestedPrivacyAcceptedAt
+        ? CURRENT_PRIVACY_VERSION
+        : cleanText(existing.privacyVersion, 30) || undefined,
+      currentCompanyId: requestedCompanyId || cleanText(existing.currentCompanyId, 200) || undefined,
+      avatarUrl: requestedAvatarUrl ||
+        normalizeHttpUrl(existing.avatarUrl) ||
+        normalizeHttpUrl(token.picture),
+      // Nunca preserva um true antigo se o token atual disser false ou omitir o sinal.
+      emailVerified: token.email_verified === true
+    };
+
+    await transaction.set(ref, profile, { merge: true });
+    return profile;
+  });
 }
 
 export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
-  try {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-    if (!token) {
-      res.status(401).json({ error: 'Não autorizado. Faça login novamente.' });
-      return;
-    }
+  const authorization = typeof req.headers.authorization === 'string'
+    ? req.headers.authorization.trim()
+    : '';
+  const match = /^Bearer[\t ]+(\S+)$/i.exec(authorization);
+  const idToken = match?.[1] || '';
 
-    const adminAuth = getAdminAuth();
-    if (!adminAuth) {
-      console.error('[Froc Auth Security] Firebase Admin Auth não está configurado.');
-      res.status(503).json({ error: 'Serviço de autenticação temporariamente indisponível.' });
-      return;
-    }
-
-    let decoded: DecodedIdToken;
-    try {
-      decoded = await adminAuth.verifyIdToken(token, true);
-    } catch (verifyError: any) {
-      console.warn('[Froc Auth Security] Falha na verificação criptográfica do token:', {
-        code: verifyError?.code,
-        message: verifyError?.message
-      });
-      res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
-      return;
-    }
-
-    const profile = await ensureUserProfile(decoded);
-    req.firebaseUser = decoded;
-    req.user = profile;
-    const isConsentFlow = req.path === '/auth/sync-profile' ||
-      req.path === '/auth/accept-terms' ||
-      req.path === '/auth/me' ||
-      req.originalUrl?.includes('/api/auth/sync-profile') ||
-      req.originalUrl?.includes('/api/auth/accept-terms') ||
-      req.originalUrl?.includes('/api/auth/me');
-
-    if (!isConsentFlow && !hasAcceptedLatestTerms(profile)) {
-      res.status(428).json({
-        error: 'Atualização de consentimento necessária: aceite os Termos de Uso e a Política de Privacidade para continuar.',
-        requiresConsent: true,
-        currentTermsVersion: CURRENT_TERMS_VERSION,
-        currentPrivacyVersion: CURRENT_PRIVACY_VERSION
-      });
-      return;
-    }
-    next();
-  } catch (error) {
-    console.warn('[Froc Auth] Erro inesperado de autenticação:', error instanceof Error ? error.message : 'Falha desconhecida');
-    res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
+  if (!idToken || idToken.length > 10_000) {
+    res.status(401).json({ error: 'Não autorizado. Faça login novamente.' });
+    return;
   }
+
+  let adminAuth;
+  try {
+    adminAuth = getAdminAuth();
+  } catch {
+    adminAuth = null;
+  }
+  if (!adminAuth) {
+    console.error('[Froc Auth Security] Firebase Admin Auth não está configurado.');
+    res.status(503).json({ error: 'Serviço de autenticação temporariamente indisponível.' });
+    return;
+  }
+
+  let decoded: DecodedIdToken;
+  try {
+    decoded = await adminAuth.verifyIdToken(idToken, true);
+  } catch (verifyError: any) {
+    console.warn('[Froc Auth Security] Token rejeitado pelo Firebase Admin:', {
+      code: cleanText(verifyError?.code, 100) || 'auth/invalid-token'
+    });
+    res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
+    return;
+  }
+
+  if (!cleanText(decoded.uid, 128) || cleanText(decoded.uid, 128) !== decoded.uid || decoded.uid.includes('/')) {
+    res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
+    return;
+  }
+
+  let profile: FrocUser;
+  try {
+    profile = await ensureUserProfile(decoded);
+  } catch (error) {
+    console.error(
+      '[Froc Auth] Falha ao sincronizar perfil autenticado:',
+      error instanceof Error ? cleanText(error.message, 200) : 'Falha desconhecida'
+    );
+    res.status(503).json({ error: 'Serviço de perfil temporariamente indisponível.' });
+    return;
+  }
+
+  req.firebaseUser = decoded;
+  req.user = profile;
+
+  if (!isConsentFlow(req) && !hasAcceptedLatestTerms(profile)) {
+    res.status(428).json({
+      error: 'Atualização de consentimento necessária: aceite os Termos de Uso e a Política de Privacidade para continuar.',
+      requiresConsent: true,
+      currentTermsVersion: CURRENT_TERMS_VERSION,
+      currentPrivacyVersion: CURRENT_PRIVACY_VERSION
+    });
+    return;
+  }
+
+  next();
 }
 
 export async function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const checkRole = () => {
-    if (!req.user || req.user.role !== 'admin') {
+    const tokenRole = req.firebaseUser ? roleFromToken(req.firebaseUser) : req.user?.role;
+    if (!req.user || req.user.role !== 'admin' || tokenRole !== 'admin') {
       res.status(403).json({ error: 'Acesso restrito a administradores.' });
       return;
     }
     next();
   };
 
+  // req.user só é preenchido por requireAuth no backend. Quando a rota ainda
+  // não foi autenticada, requireAdmin executa toda a validação criptográfica.
   if (req.user) {
     checkRole();
     return;
   }
 
-  await requireAuth(req, res, () => {
-    checkRole();
-  });
+  await requireAuth(req, res, checkRole);
 }

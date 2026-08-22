@@ -43,19 +43,12 @@ export const PlansPage: React.FC<Props> = ({ wallet, onRefreshWallet, onNavigate
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const orderId = params.get('order_id') || params.get('external_reference');
-    const paymentStatus = params.get('payment_status') || params.get('status') || params.get('collection_status');
 
-    if (!orderId && !paymentStatus) return;
+if (!orderId) return;
 
-    let isSubscribed = true;
-    let pollCount = 0;
-    const maxPolls = 8;
-
-    if (paymentStatus === 'failure' || paymentStatus === 'rejected' || paymentStatus === 'null') {
-      setError('O pagamento não foi concluído ou foi recusado pelo emissor.');
-      history.replaceState({}, '', location.pathname);
-      return;
-    }
+let isSubscribed = true;
+let pollCount = 0;
+const maxPolls = 8;
 
     setMessage('Processando confirmação com o Mercado Pago... Aguarde.');
 
@@ -63,10 +56,24 @@ export const PlansPage: React.FC<Props> = ({ wallet, onRefreshWallet, onNavigate
       if (!isSubscribed) return;
       try {
         if (orderId) {
-          const res = await apiRequest<{ order: { id: string; status: string; lastPaymentStatus?: string } }>(`/api/payments/orders/${orderId}`);
-          const order = res.order;
-          if (order.status === 'approved' || order.status === 'active' || order.lastPaymentStatus === 'approved') {
-            setMessage('Pagamento aprovado com sucesso! Seus créditos e plano foram atualizados.');
+   const res = await apiRequest<{
+  order: {
+    id: string;
+    status: string;
+    lastPaymentStatus?: string;
+    lastCreditedAt?: string;
+  };
+}>(`/api/payments/orders/${orderId}`);
+
+const order = res.order;
+const isFinanciallyConfirmed =
+  ['approved', 'active'].includes(order.status) &&
+  order.lastPaymentStatus === 'approved' &&
+  Boolean(order.lastCreditedAt);
+
+if (isFinanciallyConfirmed) {
+
+ setMessage('Pagamento aprovado com sucesso! Seus créditos e plano foram atualizados.');
             onRefreshWallet();
             void load();
             history.replaceState({}, '', location.pathname);
@@ -80,7 +87,7 @@ export const PlansPage: React.FC<Props> = ({ wallet, onRefreshWallet, onNavigate
             return;
           }
         }
-        
+
         pollCount++;
         if (pollCount < maxPolls && isSubscribed) {
           setTimeout(() => { void checkOrderStatus(); }, 2500);

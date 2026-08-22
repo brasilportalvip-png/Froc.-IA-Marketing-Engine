@@ -2,6 +2,34 @@ import crypto from 'crypto';
 import { config } from '../config/index.js';
 import { COLLECTIONS, firestore, nowIso, stableId } from './store.js';
 
+const SOCIAL_REQUEST_TIMEOUT_MS = 20_000;
+const INSTAGRAM_CONTAINER_POLL_DELAYS_MS = [1_000, 2_000, 3_000, 4_000, 5_000, 5_000] as const;
+
+async function socialFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SOCIAL_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: init.signal || controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function sanitizeProviderMessage(value: unknown, fallback: string): string {
+  const raw = String(value || fallback || '').slice(0, 600);
+  const sanitized = raw
+    .replace(/\b(?:EAA|IGQV|EAAB)[A-Za-z0-9_-]{10,}\b/g, '[TOKEN_REMOVIDO]')
+    .replace(/(access_token|refresh_token|client_secret|code)\s*[=:]\s*[^&\s,;]+/gi, '$1=[REMOVIDO]')
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [REMOVIDO]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+  return sanitized.slice(0, 300) || fallback;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type SocialProvider = 'instagram' | 'facebook' | 'tiktok' | 'youtube' | 'linkedin' | 'pinterest' | 'x';
 export type ExternalState = 'confirmed_success' | 'confirmed_failed' | 'unknown';
 
@@ -187,13 +215,13 @@ async function exchangeCode(provider: SocialProvider, code: string, codeVerifier
   } else {
     const url = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/oauth/access_token`);
     url.search = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, code }).toString();
-    const response = await fetch(url);
+    const response = await socialFetch(url);
     const json = await response.json().catch(() => ({} as any));
     if (!response.ok || !json.access_token) throw new Error(json.error?.message || `Falha OAuth ${provider}.`);
     return json;
   }
 
-  const response = await fetch(endpoint, { method: 'POST', headers, body: params.toString() });
+  const response = await socialFetch(endpoint, { method: 'POST', headers, body: params.toString() });
   const json = await response.json().catch(() => ({} as any));
   if (!response.ok || !json.access_token) throw new Error(json.error_description || json.message || json.error || `Falha OAuth ${provider}.`);
   return json;
@@ -206,7 +234,7 @@ async function fetchAccount(provider: SocialProvider, accessToken: string): Prom
   else if (provider === 'youtube') {
     // Obter canal real via YouTube Data API
     try {
-      const ytRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers });
+      const ytRes = await socialFetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers });
       const ytJson = await ytRes.json().catch(() => ({} as any));
       if (ytRes.ok && Array.isArray(ytJson.items) && ytJson.items.length > 0) {
         return {
@@ -223,7 +251,7 @@ async function fetchAccount(provider: SocialProvider, accessToken: string): Prom
   else if (provider === 'x') endpoint = 'https://api.x.com/2/users/me';
   else endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`;
 
-  const response = await fetch(endpoint, { headers });
+  const response = await socialFetch(endpoint, { headers });
   const json = await response.json().catch(() => ({} as any));
   if (!response.ok) throw new Error(json.error?.message || json.message || `Falha ao consultar perfil ${provider}.`);
   const source = provider === 'tiktok' ? json.data?.user : provider === 'x' ? json.data : json;
@@ -290,7 +318,7 @@ async function diagnoseMetaPermissions(userToken: string, requiredPermissions: s
   try {
     const url = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/me/permissions`);
     url.search = new URLSearchParams({ access_token: userToken }).toString();
-    const res = await fetch(url);
+    const res = await socialFetch(url);
     const json = await res.json().catch(() => ({} as any));
     if (res.ok && Array.isArray(json.data)) {
       const granted = new Set(
@@ -329,7 +357,7 @@ export async function resolveMetaAccount(
       client_secret: config.social.meta.clientSecret,
       fb_exchange_token: shortToken
     }).toString();
-    const response = await fetch(exchange);
+    const response = await socialFetch(exchange);
     const json = await response.json().catch(() => ({} as any));
     if (response.ok && json.access_token) {
       userToken = String(json.access_token);
@@ -346,7 +374,7 @@ export async function resolveMetaAccount(
       fields: 'id,name,access_token,tasks,category',
       access_token: userToken
     }).toString();
-    const pagesResponse = await fetch(pagesUrl);
+    const pagesResponse = await socialFetch(pagesUrl);
     const pagesJson = await pagesResponse.json().catch(() => ({} as any));
     const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
@@ -360,7 +388,7 @@ export async function resolveMetaAccount(
         fields: 'id,name',
         access_token: userToken
       }).toString();
-      const businessesResponse = await fetch(businessesUrl);
+      const businessesResponse = await socialFetch(businessesUrl);
       const businessesJson = await businessesResponse.json().catch(() => ({} as any));
       const businesses = Array.isArray(businessesJson.data) ? businessesJson.data : [];
 
@@ -373,7 +401,7 @@ export async function resolveMetaAccount(
           fields: 'id,name,access_token,tasks,category',
           access_token: userToken
         }).toString();
-        const ownedRes = await fetch(ownedUrl);
+        const ownedRes = await socialFetch(ownedUrl);
         const ownedJson = await ownedRes.json().catch(() => ({} as any));
         const ownedPages = Array.isArray(ownedJson.data) ? ownedJson.data : [];
         candidatePages.push(...ownedPages);
@@ -384,7 +412,7 @@ export async function resolveMetaAccount(
           fields: 'id,name,access_token,tasks,category',
           access_token: userToken
         }).toString();
-        const clientRes = await fetch(clientUrl);
+        const clientRes = await socialFetch(clientUrl);
         const clientJson = await clientRes.json().catch(() => ({} as any));
         const clientPages = Array.isArray(clientJson.data) ? clientJson.data : [];
         candidatePages.push(...clientPages);
@@ -454,7 +482,7 @@ export async function resolveMetaAccount(
     fields: 'id,name,access_token,instagram_business_account{id,username,name}',
     access_token: userToken
   }).toString();
-  const pagesResponse = await fetch(pagesUrl);
+  const pagesResponse = await socialFetch(pagesUrl);
   const pagesJson = await pagesResponse.json().catch(() => ({} as any));
   const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
@@ -518,15 +546,20 @@ export async function resolveMetaAccount(
 }
 
 export async function handleOAuthCallback(data: { provider: SocialProvider; code: string; state: string }) {
-  const stateRef = firestore().collection(COLLECTIONS.oauthStates).doc(stableId(data.state));
-  const stateSnap = await stateRef.get();
-  if (!stateSnap.exists) throw new Error('Estado OAuth inválido ou já utilizado.');
-  const state = stateSnap.data() as any;
-  if (state.provider !== data.provider || Number(state.expiresAt) < Date.now()) {
-    await stateRef.delete().catch(() => undefined);
-    throw new Error('Sessão OAuth expirada ou incompatível.');
-  }
-  await stateRef.delete();
+  const db = firestore();
+  const stateRef = db.collection(COLLECTIONS.oauthStates).doc(stableId(data.state));
+  const state = await db.runTransaction(async (tx) => {
+    const stateSnap = await tx.get(stateRef);
+    if (!stateSnap.exists) throw new Error('Estado OAuth inválido ou já utilizado.');
+    const current = stateSnap.data() as any;
+    if (current.provider !== data.provider || Number(current.expiresAt) < Date.now()) {
+      tx.delete(stateRef);
+      throw new Error('Sessão OAuth expirada ou incompatível.');
+    }
+    // Consumo atômico: duas callbacks concorrentes nunca reutilizam o mesmo state.
+    tx.delete(stateRef);
+    return current;
+  });
   const verifier = state.codeVerifier ? decrypt(state.codeVerifier) : '';
   const token = await exchangeCode(data.provider, data.code, verifier);
 
@@ -540,13 +573,14 @@ export async function handleOAuthCallback(data: { provider: SocialProvider; code
   if (account.multiplePages) {
     // Múltiplas páginas: criar sessão temporária one-time com TTL de 10 minutos
     const pageSelectToken = crypto.randomBytes(32).toString('base64url');
-    await firestore().collection(COLLECTIONS.oauthStates).doc(stableId(pageSelectToken)).set({
+    await db.collection(COLLECTIONS.oauthStates).doc(stableId(pageSelectToken)).set({
       type: 'facebook_page_selection',
       userId: state.userId,
       companyId: state.companyId,
-      provider: 'facebook',
+      provider: data.provider,
       pages: account.pages.map((p: any) => ({
         id: p.id,
+        pageId: p.pageId || p.id,
         name: p.name,
         encryptedAccessToken: encrypt(p.accessToken)
       })),
@@ -560,7 +594,7 @@ export async function handleOAuthCallback(data: { provider: SocialProvider; code
       success: true,
       selectionRequired: true,
       pageSelectToken,
-      provider: 'facebook',
+      provider: data.provider,
       userId: state.userId,
       companyId: state.companyId,
       pages: account.pages.map((p: any) => ({ id: p.id, name: p.name }))
@@ -574,7 +608,7 @@ export async function handleOAuthCallback(data: { provider: SocialProvider; code
     ? (account.expiresIn ? new Date(Date.now() + Number(account.expiresIn) * 1000).toISOString() : null)
     : (token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null);
 
-  await firestore().collection(COLLECTIONS.socialConnections).doc(connectionId).set({
+  await db.collection(COLLECTIONS.socialConnections).doc(connectionId).set({
     userId: state.userId,
     companyId: state.companyId,
     provider: data.provider,
@@ -603,86 +637,72 @@ export async function selectFacebookPage(data: {
 }): Promise<{ id: string; success: boolean; provider: string; pageId: string; pageName: string; account: { id: string; name: string } }> {
   const token = data.pageSelectToken || data.selectionToken;
   const targetPageId = data.selectedPageId || data.pageId;
+  if (!token || !targetPageId) throw new Error('Token de seleção e ID da página são obrigatórios.');
 
-  if (!token || !targetPageId) {
-    throw new Error('Token de seleção e ID da página são obrigatórios.');
-  }
-
+  const db = firestore();
   const tokenHash = stableId(token);
-  let docRef = firestore().collection(COLLECTIONS.oauthStates).doc(tokenHash);
-  let snap = await docRef.get();
-  if (!snap.exists) {
-    docRef = firestore().collection(COLLECTIONS.pageSelectTokens).doc(tokenHash);
-    snap = await docRef.get();
-  }
+  const oauthRef = db.collection(COLLECTIONS.oauthStates).doc(tokenHash);
+  const legacyRef = db.collection(COLLECTIONS.pageSelectTokens).doc(tokenHash);
 
-  if (!snap.exists) {
-    throw new Error('Token de seleção de página inválido ou expirado (já utilizada).');
-  }
+  return db.runTransaction(async (tx) => {
+    const [oauthSnap, legacySnap] = await Promise.all([tx.get(oauthRef), tx.get(legacyRef)]);
+    const snap = oauthSnap.exists ? oauthSnap : legacySnap;
+    if (!snap.exists) throw new Error('Token de seleção de página inválido ou expirado (ou já utilizado).');
 
-  const stateData = snap.data() as any;
+    const stateData = snap.data() as any;
+    if (stateData.type && stateData.type !== 'facebook_page_selection') throw new Error('Tipo de sessão OAuth inválido.');
+    if (stateData.userId !== data.userId) throw new Error('Permissão negada: sessão de seleção pertence a outro usuário.');
+    if (stateData.companyId && data.companyId && stateData.companyId !== data.companyId) {
+      throw new Error('Permissão negada: empresa não corresponde à sessão de seleção.');
+    }
+    if (Number(stateData.expiresAt) < Date.now()) throw new Error('Sessão de seleção de página expirada.');
 
-  if (stateData.type && stateData.type !== 'facebook_page_selection') {
-    throw new Error('Tipo de sessão OAuth inválido.');
-  }
+    const companyId = data.companyId || stateData.companyId;
+    if (!companyId) throw new Error('Empresa da sessão de seleção não encontrada.');
+    const provider: 'facebook' | 'instagram' = stateData.provider === 'instagram' ? 'instagram' : 'facebook';
+    const pages = Array.isArray(stateData.pages) ? stateData.pages : [];
+    const chosen = pages.find((page: any) => String(page.id) === String(targetPageId));
+    if (!chosen) throw new Error('Página não encontrada na lista autorizada.');
 
-  if (stateData.userId !== data.userId) {
-    throw new Error('Permissão negada: sessão de seleção pertence a outro usuário.');
-  }
+    const encryptedToken = chosen.encryptedAccessToken || (chosen.accessToken ? encrypt(chosen.accessToken) : null);
+    if (!encryptedToken) throw new Error('Token de acesso da conta não encontrado.');
 
-  const companyId = data.companyId || stateData.companyId;
-  if (stateData.companyId && data.companyId && stateData.companyId !== data.companyId) {
-    throw new Error('Permissão negada: empresa não corresponde à sessão de seleção.');
-  }
+    const connectionId = stableId(`${data.userId}:${companyId}:${provider}`);
+    const connectionRef = db.collection(COLLECTIONS.socialConnections).doc(connectionId);
+    const expiresAt = stateData.expiresIn
+      ? new Date(Date.now() + Number(stateData.expiresIn) * 1000).toISOString()
+      : null;
+    const accountId = String(chosen.id);
+    const pageHostId = provider === 'instagram' ? String(chosen.pageId || '') || null : accountId;
+    const accountName = String(chosen.name || (provider === 'instagram' ? 'Instagram Professional' : 'Facebook Page'));
 
-  if (Number(stateData.expiresAt) < Date.now()) {
-    throw new Error('Sessão de seleção de página expirada.');
-  }
+    tx.set(connectionRef, {
+      userId: data.userId,
+      companyId,
+      provider,
+      accountId,
+      accountName,
+      pageId: pageHostId,
+      encryptedAccessToken: encryptedToken,
+      encryptedRefreshToken: null,
+      scopes: stateData.scopes || [],
+      expiresAt,
+      connectedAt: nowIso(),
+      updatedAt: nowIso(),
+      status: 'connected'
+    }, { merge: true });
+    if (oauthSnap.exists) tx.delete(oauthRef);
+    if (legacySnap.exists) tx.delete(legacyRef);
 
-  const pages = Array.isArray(stateData.pages) ? stateData.pages : [];
-  const chosen = pages.find((p: any) => p.id === targetPageId);
-  if (!chosen) {
-    throw new Error('Página não encontrada na lista autorizada.');
-  }
-
-  const encryptedToken = chosen.encryptedAccessToken || (chosen.accessToken ? encrypt(chosen.accessToken) : null);
-  if (!encryptedToken) {
-    throw new Error('Token de acesso da página não encontrado.');
-  }
-
-  // Anti-replay estrito: deletar sessão de seleção após validação completa
-  await docRef.delete().catch(() => undefined);
-  // Also clean up from both collections if present
-  await firestore().collection(COLLECTIONS.oauthStates).doc(tokenHash).delete().catch(() => undefined);
-  await firestore().collection(COLLECTIONS.pageSelectTokens).doc(tokenHash).delete().catch(() => undefined);
-
-  const connectionId = stableId(`${data.userId}:${companyId}:facebook`);
-  const expiresAt = stateData.expiresIn ? new Date(Date.now() + Number(stateData.expiresIn) * 1000).toISOString() : null;
-
-  await firestore().collection(COLLECTIONS.socialConnections).doc(connectionId).set({
-    userId: data.userId,
-    companyId,
-    provider: 'facebook',
-    accountId: chosen.id,
-    accountName: chosen.name,
-    pageId: chosen.id,
-    encryptedAccessToken: encryptedToken,
-    encryptedRefreshToken: null,
-    scopes: stateData.scopes || [],
-    expiresAt,
-    connectedAt: nowIso(),
-    updatedAt: nowIso(),
-    status: 'connected'
-  }, { merge: true });
-
-  return {
-    id: connectionId,
-    success: true,
-    provider: 'facebook',
-    pageId: chosen.id,
-    pageName: chosen.name,
-    account: { id: chosen.id, name: chosen.name }
-  };
+    return {
+      id: connectionId,
+      success: true,
+      provider,
+      pageId: accountId,
+      pageName: accountName,
+      account: { id: accountId, name: accountName }
+    };
+  });
 }
 
 export async function getFacebookPageSelectionCandidates(
@@ -754,11 +774,19 @@ export async function listConnections(userId: string, companyId: string) {
   const snap = await firestore().collection(COLLECTIONS.socialConnections).where('userId', '==', userId).where('companyId', '==', companyId).get();
   return snap.docs.map((doc) => {
     const item = doc.data() as any;
-    const { encryptedAccessToken, encryptedRefreshToken, ...safe } = item;
+    const {
+      encryptedAccessToken: _encryptedAccessToken,
+      encryptedRefreshToken: _encryptedRefreshToken,
+      accessToken: _accessToken,
+      refreshToken: _refreshToken,
+      token: _token,
+      ...safe
+    } = item;
     const isExpired = item.expiresAt ? new Date(item.expiresAt).getTime() < Date.now() : false;
     return {
       id: doc.id,
       ...safe,
+      ...(safe.errorMessage ? { errorMessage: sanitizeProviderMessage(safe.errorMessage, 'Falha na conexão social.') } : {}),
       status: isExpired ? 'token_expired' : item.status || 'connected'
     };
   });
@@ -781,7 +809,7 @@ export async function refreshSocialAccessToken(
 
   if (provider === 'x') {
     const creds = Buffer.from(`${config.social.x.clientId}:${config.social.x.clientSecret}`).toString('base64');
-    const res = await fetch('https://api.twitter.com/2/oauth2/token', {
+    const res = await socialFetch('https://api.twitter.com/2/oauth2/token', {
       method: 'POST',
       headers: {
         Authorization: `Basic ${creds}`,
@@ -806,7 +834,7 @@ export async function refreshSocialAccessToken(
   }
 
   if (provider === 'tiktok') {
-    const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+    const res = await socialFetch('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -830,7 +858,7 @@ export async function refreshSocialAccessToken(
   }
 
   if (provider === 'youtube') {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
+    const res = await socialFetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -854,7 +882,7 @@ export async function refreshSocialAccessToken(
 
   if (provider === 'pinterest') {
     const creds = Buffer.from(`${config.social.pinterest.clientId}:${config.social.pinterest.clientSecret}`).toString('base64');
-    const res = await fetch('https://api.pinterest.com/v5/oauth/token', {
+    const res = await socialFetch('https://api.pinterest.com/v5/oauth/token', {
       method: 'POST',
       headers: {
         Authorization: `Basic ${creds}`,
@@ -878,7 +906,7 @@ export async function refreshSocialAccessToken(
   }
 
   if (provider === 'linkedin') {
-    const res = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+    const res = await socialFetch('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -904,82 +932,137 @@ export async function refreshSocialAccessToken(
 }
 
 export async function ensureValidSocialAccessToken(connectionIdOrDoc: string | any): Promise<string> {
+  const db = firestore();
   let docRef: any;
   let connection: any;
 
   if (typeof connectionIdOrDoc === 'string') {
-    docRef = firestore().collection(COLLECTIONS.socialConnections).doc(connectionIdOrDoc);
+    docRef = db.collection(COLLECTIONS.socialConnections).doc(connectionIdOrDoc);
     const snap = await docRef.get();
     if (!snap.exists) throw new Error('Conexão social não encontrada.');
     connection = snap.data();
   } else {
     connection = connectionIdOrDoc;
-    docRef = firestore().collection(COLLECTIONS.socialConnections).doc(connection.id);
+    if (!connection?.id) throw new Error('Identificador da conexão social não encontrado.');
+    docRef = db.collection(COLLECTIONS.socialConnections).doc(connection.id);
   }
 
-  const now = Date.now();
-  const expiresAtMs = connection.expiresAt ? new Date(connection.expiresAt).getTime() : Infinity;
-  const isExpiringSoon = expiresAtMs - now < 5 * 60 * 1000; // Menos de 5 minutos
+  const decryptAccessToken = (record: any): string => {
+    const stored = record?.encryptedAccessToken || record?.accessToken;
+    if (!stored) throw new Error('Token de acesso social não encontrado.');
+    try {
+      return decrypt(stored);
+    } catch {
+      throw new Error('Token de acesso social inválido. Reconecte a conta.');
+    }
+  };
+
+  const isUsable = (record: any, at = Date.now()): boolean => {
+    if (!record?.encryptedAccessToken && !record?.accessToken) return false;
+    if (!record?.expiresAt) return true;
+    const expiresAt = new Date(record.expiresAt).getTime();
+    return Number.isFinite(expiresAt) && expiresAt - at >= 5 * 60 * 1000;
+  };
+
+  if (isUsable(connection)) return decryptAccessToken(connection);
 
   let rawRefreshToken = '';
   if (connection.encryptedRefreshToken) {
-    try {
-      rawRefreshToken = decrypt(connection.encryptedRefreshToken);
-    } catch {
-      // Ignora erro de decrypt no refresh token
-    }
+    try { rawRefreshToken = decrypt(connection.encryptedRefreshToken); } catch {}
   }
 
-  // Se o token ainda é válido por mais de 5 minutos, apenas retorna o accessToken
-  if (!isExpiringSoon && (connection.encryptedAccessToken || connection.accessToken)) {
-    try {
-      return decrypt(connection.encryptedAccessToken || connection.accessToken);
-    } catch (e: any) {
-      throw new Error(`Falha ao descriptografar token de acesso: ${e.message}`);
+  if (!rawRefreshToken) {
+    const expiresAt = connection.expiresAt ? new Date(connection.expiresAt).getTime() : Infinity;
+    if (expiresAt <= Date.now()) {
+      await docRef.update({
+        status: 'token_expired',
+        errorMessage: 'Token expirou e não há refresh_token disponível para renovação automática.',
+        updatedAt: nowIso()
+      }).catch(() => undefined);
+      throw new Error(`A autenticação com ${connection.provider} expirou. Reconecte a conta nas configurações.`);
     }
+    return decryptAccessToken(connection);
   }
 
-  // Se estiver expirando ou expirado e possui refresh_token
-  if (rawRefreshToken) {
-    try {
-      const refreshed = await refreshSocialAccessToken(connection.provider, rawRefreshToken);
+  const refreshOwner = crypto.randomUUID();
+  const claim = await db.runTransaction(async (tx) => {
+    const freshSnap = await tx.get(docRef);
+    if (!freshSnap.exists) throw new Error('Conexão social não encontrada.');
+    const current = freshSnap.data() as any;
+    if (isUsable(current)) return { mode: 'ready' as const, connection: current };
+
+    const leaseUntil = Number(current.tokenRefreshLeaseUntil || 0);
+    if (leaseUntil > Date.now() && current.tokenRefreshOwner !== refreshOwner) {
+      return { mode: 'waiting' as const, connection: current };
+    }
+
+    tx.update(docRef, {
+      tokenRefreshOwner: refreshOwner,
+      tokenRefreshLeaseUntil: Date.now() + 60_000,
+      updatedAt: nowIso()
+    });
+    return { mode: 'claimed' as const, connection: current };
+  });
+
+  if (claim.mode === 'ready') return decryptAccessToken(claim.connection);
+  if (claim.mode === 'waiting') {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await wait(250);
+      const latestSnap = await docRef.get();
+      if (!latestSnap.exists) throw new Error('Conexão social não encontrada.');
+      const latest = latestSnap.data() as any;
+      if (isUsable(latest)) return decryptAccessToken(latest);
+      if (Number(latest.tokenRefreshLeaseUntil || 0) <= Date.now()) break;
+    }
+    throw new Error('A renovação do token social ainda está em andamento. Tente novamente em alguns segundos.');
+  }
+
+  try {
+    const latestBeforeRefresh = await docRef.get();
+    const latestData = latestBeforeRefresh.exists ? (latestBeforeRefresh.data() as any) : claim.connection;
+    const encryptedRefreshToken = latestData.encryptedRefreshToken || claim.connection.encryptedRefreshToken;
+    const refreshToken = encryptedRefreshToken ? decrypt(encryptedRefreshToken) : rawRefreshToken;
+    const refreshed = await refreshSocialAccessToken(claim.connection.provider, refreshToken);
+
+    const persisted = await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docRef);
+      if (!freshSnap.exists) throw new Error('Conexão social não encontrada.');
+      const current = freshSnap.data() as any;
+      if (current.tokenRefreshOwner !== refreshOwner) return { owned: false, connection: current };
+
       const updateData: any = {
         encryptedAccessToken: encrypt(refreshed.accessToken),
         expiresAt: new Date(refreshed.expiresAt).toISOString(),
         status: 'connected',
         errorMessage: null,
+        tokenRefreshOwner: null,
+        tokenRefreshLeaseUntil: 0,
         updatedAt: nowIso()
       };
-      if (refreshed.refreshToken) {
-        updateData.encryptedRefreshToken = encrypt(refreshed.refreshToken);
-      }
-      await docRef.update(updateData);
-      return refreshed.accessToken;
-    } catch (refreshErr: any) {
-      await docRef.update({
+      if (refreshed.refreshToken) updateData.encryptedRefreshToken = encrypt(refreshed.refreshToken);
+      tx.update(docRef, updateData);
+      return { owned: true, connection: { ...current, ...updateData } };
+    });
+
+    if (persisted.owned) return refreshed.accessToken;
+    if (isUsable(persisted.connection)) return decryptAccessToken(persisted.connection);
+    throw new Error('A posse da renovação do token social foi perdida antes da persistência.');
+  } catch (refreshError: any) {
+    const message = sanitizeProviderMessage(refreshError?.message, 'Falha ao renovar token social.');
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docRef);
+      if (!freshSnap.exists) return;
+      const current = freshSnap.data() as any;
+      if (current.tokenRefreshOwner !== refreshOwner) return;
+      tx.update(docRef, {
         status: 'token_expired',
-        errorMessage: `Falha ao renovar token automaticamente: ${refreshErr.message}`,
+        errorMessage: `Falha ao renovar token automaticamente: ${message}`,
+        tokenRefreshOwner: null,
+        tokenRefreshLeaseUntil: 0,
         updatedAt: nowIso()
-      }).catch(() => undefined);
-      throw new Error(`A autenticação com ${connection.provider} expirou e a renovação falhou: ${refreshErr.message}`);
-    }
-  }
-
-  // Expirado e SEM refresh_token
-  if (expiresAtMs <= now) {
-    await docRef.update({
-      status: 'token_expired',
-      errorMessage: 'Token expirou e não há refresh_token disponível para renovação automática.',
-      updatedAt: nowIso()
+      });
     }).catch(() => undefined);
-    throw new Error(`A autenticação com ${connection.provider} expirou. Reconecte a conta nas configurações.`);
-  }
-
-  // Token não tem expiresAt (ex: Meta Page token permanente) ou ainda válido
-  try {
-    return decrypt(connection.encryptedAccessToken || connection.accessToken);
-  } catch (e: any) {
-    throw new Error(`Falha ao descriptografar token de acesso: ${e.message}`);
+    throw new Error(`A autenticação com ${connection.provider} expirou e a renovação falhou. Reconecte a conta.`);
   }
 }
 
@@ -1069,7 +1152,7 @@ export async function publishText(data: {
 
     try {
       const endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(targetAccountId)}/feed`;
-      const response = await fetch(endpoint, {
+      const response = await socialFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ message: trimmedText, access_token: token }).toString()
@@ -1107,7 +1190,7 @@ export async function publishText(data: {
           };
         }
 
-        const errorMsg = json.error?.message || `Rejeição da API do Facebook (HTTP ${response.status}).`;
+        const errorMsg = sanitizeProviderMessage(json.error?.message, `Rejeição da API do Facebook (HTTP ${response.status}).`);
         return {
           provider: 'facebook',
           externalId: null,
@@ -1151,7 +1234,7 @@ export async function publishText(data: {
 
   if (data.provider === 'x') {
     try {
-      const response = await fetch('https://api.x.com/2/tweets', {
+      const response = await socialFetch('https://api.x.com/2/tweets', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1195,7 +1278,7 @@ export async function publishText(data: {
             });
 
             // Re-executa uma única chamada segura com o token renovado
-            const retryRes = await fetch('https://api.x.com/2/tweets', {
+            const retryRes = await socialFetch('https://api.x.com/2/tweets', {
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${refreshed.accessToken}`,
@@ -1208,7 +1291,10 @@ export async function publishText(data: {
               return { provider: 'x', externalId: null, externalState: 'unknown', retrySafe: false, statusCode: retryRes.status, error: `Erro interno do X (HTTP ${retryRes.status}).` };
             }
             if (retryRes.status >= 400) {
-              const errMsg = retryJson.detail || retryJson.title || retryJson.error || `Rejeição da API do X (HTTP ${retryRes.status}).`;
+              const errMsg = sanitizeProviderMessage(
+                retryJson.detail || retryJson.title || retryJson.error,
+                `Rejeição da API do X (HTTP ${retryRes.status}).`
+              );
               return { provider: 'x', externalId: null, externalState: 'confirmed_failed', retrySafe: retryRes.status !== 401, statusCode: retryRes.status, error: errMsg };
             }
             if (retryJson.data?.id) {
@@ -1233,7 +1319,10 @@ export async function publishText(data: {
       }
 
       if (response.status >= 400) {
-        const errorMsg = json.detail || json.title || json.error || `Rejeição da API do X (HTTP ${response.status}).`;
+        const errorMsg = sanitizeProviderMessage(
+          json.detail || json.title || json.error,
+          `Rejeição da API do X (HTTP ${response.status}).`
+        );
         return {
           provider: 'x',
           externalId: null,
@@ -1287,7 +1376,7 @@ export async function publishText(data: {
     }
 
     try {
-      const response = await fetch('https://api.linkedin.com/rest/posts', {
+      const response = await socialFetch('https://api.linkedin.com/rest/posts', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1337,7 +1426,7 @@ export async function publishText(data: {
               updatedAt: nowIso()
             });
 
-            const retryRes = await fetch('https://api.linkedin.com/rest/posts', {
+            const retryRes = await socialFetch('https://api.linkedin.com/rest/posts', {
               method: 'POST',
               headers: {
                 Authorization: `Bearer ${refreshed.accessToken}`,
@@ -1360,7 +1449,7 @@ export async function publishText(data: {
             }
             if (retryRes.status >= 400) {
               const textErr = await retryRes.text().catch(() => '');
-              return { provider: 'linkedin', externalId: null, externalState: 'confirmed_failed', retrySafe: retryRes.status !== 401, statusCode: retryRes.status, error: textErr.slice(0, 300) || `Rejeição da API do LinkedIn (HTTP ${retryRes.status}).` };
+              return { provider: 'linkedin', externalId: null, externalState: 'confirmed_failed', retrySafe: retryRes.status !== 401, statusCode: retryRes.status, error: sanitizeProviderMessage(textErr, `Rejeição da API do LinkedIn (HTTP ${retryRes.status}).`) };
             }
             const headerId = retryRes.headers.get('x-restli-id') || retryRes.headers.get('x-linkedin-id');
             if (headerId && headerId.trim()) {
@@ -1393,9 +1482,9 @@ export async function publishText(data: {
         let errorMsg = `Rejeição da API do LinkedIn (HTTP ${response.status}).`;
         try {
           const parsed = JSON.parse(responseText);
-          errorMsg = parsed.message || parsed.error || errorMsg;
+          errorMsg = sanitizeProviderMessage(parsed.message || parsed.error, errorMsg);
         } catch {
-          if (responseText) errorMsg = responseText.slice(0, 300);
+          if (responseText) errorMsg = sanitizeProviderMessage(responseText, errorMsg);
         }
         return {
           provider: 'linkedin',
@@ -1524,7 +1613,7 @@ export async function uploadTikTokDraftVideo(data: {
     }
   };
 
-  const initResponse = await fetch(initEndpoint, {
+  const initResponse = await socialFetch(initEndpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -1548,7 +1637,7 @@ export async function uploadTikTokDraftVideo(data: {
   }
 
   // 2. Upload Binário (PUT)
-  const uploadResponse = await fetch(uploadUrl, {
+  const uploadResponse = await socialFetch(uploadUrl, {
     method: 'PUT',
     headers: {
       'Content-Type': 'video/mp4',
@@ -1637,7 +1726,7 @@ export async function getTikTokUploadStatus(data: {
   const token = decrypt(connection.encryptedAccessToken);
 
   const statusEndpoint = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
-  const statusResponse = await fetch(statusEndpoint, {
+  const statusResponse = await socialFetch(statusEndpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -1654,7 +1743,9 @@ export async function getTikTokUploadStatus(data: {
   }
 
   const rawStatus = String(statusJson.data?.status || 'UNKNOWN');
-  const failReason = statusJson.data?.fail_reason || null;
+  const failReason = statusJson.data?.fail_reason
+    ? sanitizeProviderMessage(statusJson.data.fail_reason, 'Falha no processamento do TikTok.')
+    : null;
   const isDraftDelivered = rawStatus === 'SEND_TO_USER_INBOX' || rawStatus === 'PUBLISH_COMPLETE';
 
   let userFriendlyMessage = 'Processando rascunho no TikTok...';
@@ -1723,7 +1814,7 @@ export async function initTikTokDraftUpload(data: {
     }
   };
 
-  const initResponse = await fetch(initEndpoint, {
+  const initResponse = await socialFetch(initEndpoint, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1763,6 +1854,32 @@ export async function initTikTokDraftUpload(data: {
   return { publishId, uploadUrl };
 }
 
+async function waitForInstagramContainer(creationId: string, accessToken: string): Promise<void> {
+  const endpoint = new URL(`https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(creationId)}`);
+  endpoint.searchParams.set('fields', 'status_code');
+
+  for (let attempt = 0; attempt <= INSTAGRAM_CONTAINER_POLL_DELAYS_MS.length; attempt += 1) {
+    const response = await socialFetch(endpoint, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const json = await response.json().catch(() => ({} as any));
+    if (!response.ok) {
+      const message = sanitizeProviderMessage(json.error?.message, `Erro HTTP ${response.status} ao consultar o container do Instagram.`);
+      throw new Error(`Falha ao consultar processamento do Instagram: ${message}`);
+    }
+
+    const statusCode = String(json.status_code || '').toUpperCase();
+    if (statusCode === 'FINISHED' || statusCode === 'PUBLISHED') return;
+    if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
+      throw new Error(`O Instagram encerrou o container com status ${statusCode}.`);
+    }
+    if (attempt === INSTAGRAM_CONTAINER_POLL_DELAYS_MS.length) break;
+    await wait(INSTAGRAM_CONTAINER_POLL_DELAYS_MS[attempt]);
+  }
+
+  throw new Error('O Instagram não concluiu o processamento da mídia dentro do tempo seguro. Tente novamente mais tarde.');
+}
+
 export async function publishInstagramMedia(data: {
   userId: string;
   companyId: string;
@@ -1793,7 +1910,8 @@ export async function publishInstagramMedia(data: {
   }
 
   const connection = snap.docs[0].data() as any;
-  const igUserId = connection.accountId || connection.pageId;
+  // accountId é sempre o IG User ID. pageId identifica apenas a Página host da Meta.
+  const igUserId = connection.accountId;
   if (!igUserId) {
     throw new Error('Identificador da conta profissional do Instagram não encontrado na conexão.');
   }
@@ -1814,7 +1932,7 @@ export async function publishInstagramMedia(data: {
     containerParams.image_url = data.imageUrl;
   }
 
-  const containerRes = await fetch(containerEndpoint, {
+  const containerRes = await socialFetch(containerEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(containerParams).toString()
@@ -1822,15 +1940,18 @@ export async function publishInstagramMedia(data: {
 
   const containerJson = await containerRes.json().catch(() => ({} as any));
   if (!containerRes.ok || !containerJson.id) {
-    const errorMsg = containerJson.error?.message || `Erro ${containerRes.status} ao criar container no Instagram.`;
+    const errorMsg = sanitizeProviderMessage(containerJson.error?.message, `Erro ${containerRes.status} ao criar container no Instagram.`);
     throw new Error(`Falha ao criar container no Instagram: ${errorMsg}`);
   }
 
-  const creationId = containerJson.id;
+  const creationId = String(containerJson.id);
+
+  // A publicação só pode ocorrer depois que o container estiver FINISHED.
+  await waitForInstagramContainer(creationId, token);
 
   // 2. Publicar container: POST /{ig-user-id}/media_publish
   const publishEndpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(igUserId)}/media_publish`;
-  const publishRes = await fetch(publishEndpoint, {
+  const publishRes = await socialFetch(publishEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ creation_id: creationId, access_token: token }).toString()
@@ -1838,7 +1959,7 @@ export async function publishInstagramMedia(data: {
 
   const publishJson = await publishRes.json().catch(() => ({} as any));
   if (!publishRes.ok || !publishJson.id) {
-    const errorMsg = publishJson.error?.message || `Erro ${publishRes.status} ao publicar no Instagram.`;
+    const errorMsg = sanitizeProviderMessage(publishJson.error?.message, `Erro ${publishRes.status} ao publicar no Instagram.`);
     throw new Error(`Falha ao publicar mídia no Instagram: ${errorMsg}`);
   }
 
@@ -1902,7 +2023,7 @@ export async function initYouTubeResumableUpload(data: {
     headers['X-Upload-Content-Length'] = String(data.videoSize);
   }
 
-  const initRes = await fetch(initEndpoint, {
+  const initRes = await socialFetch(initEndpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify(metadata)
@@ -1940,7 +2061,7 @@ export async function getPinterestBoards(data: {
 
   const token = await ensureValidSocialAccessToken(snap.docs[0].id);
 
-  const res = await fetch('https://api.pinterest.com/v5/boards?page_size=50', {
+  const res = await socialFetch('https://api.pinterest.com/v5/boards?page_size=50', {
     headers: { Authorization: `Bearer ${token}` }
   });
   const json = await res.json().catch(() => ({} as any));
@@ -2003,7 +2124,7 @@ export async function createPinterestPin(data: {
     pinBody.link = data.link.trim();
   }
 
-  const res = await fetch('https://api.pinterest.com/v5/pins', {
+  const res = await socialFetch('https://api.pinterest.com/v5/pins', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -2082,7 +2203,8 @@ export async function getSocialReadiness(companyId: string, userId?: string): Pr
       oauthConfigured: configured,
       connected: isConnected,
       status: conn?.status || 'disconnected',
-      accountId: conn?.accountId || conn?.pageId || null,
+      accountId: conn?.accountId || null,
+      pageId: conn?.pageId || null,
       accountName: conn?.accountName || null,
       expiresAt: conn?.expiresAt || null,
       capability: capabilitiesMap[p]
@@ -2096,4 +2218,3 @@ export async function getSocialReadiness(companyId: string, userId?: string): Pr
 
   return readiness;
 }
-

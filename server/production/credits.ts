@@ -15,6 +15,57 @@ export interface WalletRecord {
   updatedAt: string;
 }
 
+function requireCreditAmount(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} inválida.`);
+  return value;
+}
+
+function nonNegativeCreditValue(value: unknown, field: string): number {
+  if (value === undefined || value === null || value === '') return 0;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`[Froc Ledger Integrity] Campo ${field} da carteira está corrompido.`);
+  }
+  return parsed;
+}
+
+function normalizeWallet(userId: string, raw?: Record<string, any>): WalletRecord {
+  const base = defaultWallet(userId);
+  const wallet: WalletRecord = {
+    ...base,
+    ...(raw || {}),
+    id: userId,
+    userId,
+    balance: nonNegativeCreditValue(raw?.balance, 'balance'),
+    bonusBalance: nonNegativeCreditValue(raw?.bonusBalance, 'bonusBalance'),
+    totalUsed: nonNegativeCreditValue(raw?.totalUsed, 'totalUsed'),
+    totalReceived: nonNegativeCreditValue(raw?.totalReceived, 'totalReceived'),
+    reservedCredits: nonNegativeCreditValue(raw?.reservedCredits, 'reservedCredits'),
+    updatedAt: String(raw?.updatedAt || base.updatedAt)
+  };
+  if (wallet.reservedCredits > wallet.balance) {
+    throw new Error('[Froc Ledger Integrity] Créditos reservados excedem o saldo total da carteira.');
+  }
+  if (wallet.bonusBalance > wallet.balance) {
+    throw new Error('[Froc Ledger Integrity] Saldo de bônus excede o saldo total da carteira.');
+  }
+  return wallet;
+}
+
+function creditOperationFingerprint(data: {
+  userId: string;
+  amount: number;
+  type: string;
+  referenceId?: string;
+}): string {
+  return stableId(JSON.stringify({
+    userId: data.userId,
+    amount: data.amount,
+    type: data.type,
+    referenceId: data.referenceId || null
+  }));
+}
+
 function defaultWallet(userId: string): WalletRecord {
   return {
     id: userId,
@@ -41,7 +92,7 @@ export async function getEffectiveWallet(userId: string, options?: { failClosed?
   const snap = await ref.get();
   let wallet: WalletRecord;
   if (snap.exists) {
-    wallet = { id: snap.id, ...(snap.data() as any) } as WalletRecord;
+    wallet = normalizeWallet(userId, snap.data() as any);
   } else {
     wallet = defaultWallet(userId);
     try {
@@ -49,7 +100,7 @@ export async function getEffectiveWallet(userId: string, options?: { failClosed?
     } catch (error) {
       const fresh = await ref.get();
       if (fresh.exists) {
-        wallet = { id: fresh.id, ...(fresh.data() as any) } as WalletRecord;
+        wallet = normalizeWallet(userId, fresh.data() as any);
       }
     }
   }
@@ -99,29 +150,56 @@ export async function addCredits(data: {
   type: 'purchase' | 'subscription' | 'bonus' | 'admin_adjustment' | 'refund';
   source: string;
   referenceId?: string;
-  idempotencyKey: string;
+  idempotencyKey?: string;
   metadata?: Record<string, any>;
 }): Promise<WalletRecord> {
-  if (!Number.isFinite(data.amount) || data.amount <= 0) throw new Error('Quantidade de créditos inválida.');
+  const amount = requireCreditAmount(data.amount, 'Quantidade de créditos');
+  const providedIdempotencyKey = String(data.idempotencyKey || '').trim();
+  if (providedIdempotencyKey.length > 500) throw new Error('Chave de idempotência de créditos inválida.');
+  // Compatibilidade segura para chamadas internas legadas: chave ausente nunca pode colidir globalmente.
+  const idempotencyKey = providedIdempotencyKey || newId('credit');
+  const fingerprint = creditOperationFingerprint({ ...data, amount });
   const db = firestore();
   const walletRef = db.collection(COLLECTIONS.wallets).doc(data.userId);
-  const idemRef = db.collection(COLLECTIONS.idempotency).doc(stableId(`credit:${data.idempotencyKey}`));
+  const idemRef = db.collection(COLLECTIONS.idempotency).doc(stableId(`credit:${data.userId}:${idempotencyKey}`));
+  const legacyIdemRef = db.collection(COLLECTIONS.idempotency).doc(stableId(`credit:${idempotencyKey}`));
   const txRef = db.collection(COLLECTIONS.creditTransactions).doc(newId('tx'));
 
   return db.runTransaction(async (tx) => {
-    const [idemSnap, walletSnap] = await Promise.all([tx.get(idemRef), tx.get(walletRef)]);
-    const current = walletSnap.exists ? ({ id: data.userId, ...(walletSnap.data() as any) } as WalletRecord) : defaultWallet(data.userId);
-    if (idemSnap.exists) return current;
+    const [idemSnap, legacyIdemSnap, walletSnap] = await Promise.all([
+      tx.get(idemRef),
+      tx.get(legacyIdemRef),
+      tx.get(walletRef)
+    ]);
+    const current = walletSnap.exists ? normalizeWallet(data.userId, walletSnap.data() as any) : defaultWallet(data.userId);
+    const previousIdempotency = idemSnap.exists
+      ? (idemSnap.data() as any)
+      : legacyIdemSnap.exists
+        ? (legacyIdemSnap.data() as any)
+        : null;
+    if (previousIdempotency) {
+      if (previousIdempotency.fingerprint && previousIdempotency.fingerprint !== fingerprint) {
+        const error: any = new Error('A chave de idempotência já foi utilizada com dados diferentes.');
+        error.statusCode = 409;
+        throw error;
+      }
+      return current;
+    }
 
-    const before = Number(current.balance || 0);
-    const after = before + data.amount;
+    const before = current.balance;
+    const after = before + amount;
+    const nextBonus = current.bonusBalance + (data.type === 'bonus' ? amount : 0);
+    const nextTotalReceived = current.totalReceived + amount;
+    if (![after, nextBonus, nextTotalReceived].every(Number.isSafeInteger)) {
+      throw new Error('[Froc Ledger Integrity] Operação excede o limite seguro da carteira.');
+    }
     const next: WalletRecord = {
       ...current,
       id: data.userId,
       userId: data.userId,
       balance: after,
-      bonusBalance: Number(current.bonusBalance || 0) + (data.type === 'bonus' ? data.amount : 0),
-      totalReceived: Number(current.totalReceived || 0) + data.amount,
+      bonusBalance: nextBonus,
+      totalReceived: nextTotalReceived,
       updatedAt: nowIso()
     };
 
@@ -130,15 +208,21 @@ export async function addCredits(data: {
       userId: data.userId,
       type: data.type,
       source: data.source,
-      amount: data.amount,
+      amount,
       balanceBefore: before,
       balanceAfter: after,
       referenceId: data.referenceId || null,
-      idempotencyKey: data.idempotencyKey,
+      idempotencyKey,
       timestamp: nowIso(),
       metadata: data.metadata || {}
     });
-    tx.set(idemRef, { key: data.idempotencyKey, createdAt: nowIso(), transactionId: txRef.id });
+    tx.set(idemRef, {
+      key: idempotencyKey,
+      userId: data.userId,
+      fingerprint,
+      createdAt: nowIso(),
+      transactionId: txRef.id
+    });
     return next;
   });
 }
@@ -149,27 +233,36 @@ export async function reserveCredits(data: {
   operation: string;
   companyId?: string;
 }): Promise<{ reservationId: string; wallet: WalletRecord }> {
-  if (!Number.isFinite(data.amount) || data.amount <= 0) throw new Error('Custo de créditos inválido.');
+  const amount = requireCreditAmount(data.amount, 'Custo de créditos');
+  const operation = String(data.operation || '').trim();
+  if (!operation || operation.length > 200) throw new Error('Operação de reserva de créditos inválida.');
   const db = firestore();
   const walletRef = db.collection(COLLECTIONS.wallets).doc(data.userId);
   const reservationRef = db.collection(COLLECTIONS.creditReservations).doc(newId('res'));
 
   const wallet = await db.runTransaction(async (tx) => {
     const snap = await tx.get(walletRef);
-    const current = snap.exists ? ({ id: data.userId, ...(snap.data() as any) } as WalletRecord) : defaultWallet(data.userId);
-    const available = Number(current.balance || 0) - Number(current.reservedCredits || 0);
-    if (available < data.amount) {
-      throw new Error(`Saldo insuficiente. Necessário: ${data.amount} créditos; disponível: ${Math.max(0, available)}.`);
+    const current = snap.exists ? normalizeWallet(data.userId, snap.data() as any) : defaultWallet(data.userId);
+    const available = current.balance - current.reservedCredits;
+    if (available < amount) {
+      throw new Error(`Saldo insuficiente. Necessário: ${amount} créditos; disponível: ${Math.max(0, available)}.`);
     }
-    const next = { ...current, reservedCredits: Number(current.reservedCredits || 0) + data.amount, updatedAt: nowIso() };
+    const nextReserved = current.reservedCredits + amount;
+    if (!Number.isSafeInteger(nextReserved) || nextReserved > current.balance) {
+      throw new Error('[Froc Ledger Integrity] Reserva excede o saldo disponível da carteira.');
+    }
+    const timestamp = nowIso();
+    const next: WalletRecord = { ...current, reservedCredits: nextReserved, updatedAt: timestamp };
     tx.set(walletRef, next, { merge: true });
     tx.set(reservationRef, {
+      id: reservationRef.id,
       userId: data.userId,
       companyId: data.companyId || null,
-      amount: data.amount,
-      operation: data.operation,
+      amount,
+      operation,
       status: 'reserved',
-      createdAt: nowIso()
+      createdAt: timestamp,
+      updatedAt: timestamp
     });
     return next;
   });
@@ -193,27 +286,34 @@ export async function commitReservation(data: {
     if (!reservationSnap.exists) throw new Error('Reserva de créditos não encontrada.');
     const reservation = reservationSnap.data() as any;
     if (reservation.userId !== data.userId) throw new Error('Reserva inválida.');
-    const current = walletSnap.exists ? ({ id: data.userId, ...(walletSnap.data() as any) } as WalletRecord) : defaultWallet(data.userId);
+    const current = walletSnap.exists ? normalizeWallet(data.userId, walletSnap.data() as any) : defaultWallet(data.userId);
     if (reservation.status === 'committed') return current;
     if (reservation.status !== 'reserved') throw new Error('Reserva de créditos não está ativa.');
 
-    const amount = Number(reservation.amount || 0);
-    const before = Number(current.balance || 0);
+    const amount = requireCreditAmount(Number(reservation.amount), 'Quantidade reservada');
+    const before = current.balance;
     if (before < amount) throw new Error('Saldo alterado durante a operação. Tente novamente.');
+    if (current.reservedCredits < amount) {
+      throw new Error('[Froc Ledger Integrity] Reserva ativa não está refletida na carteira.');
+    }
     const after = before - amount;
-    const bonusBefore = Math.max(0, Number(current.bonusBalance || 0));
+    const bonusBefore = current.bonusBalance;
     const bonusUsed = Math.min(bonusBefore, amount);
+    const nextTotalUsed = current.totalUsed + amount;
+    if (!Number.isSafeInteger(nextTotalUsed)) {
+      throw new Error('[Froc Ledger Integrity] Consumo excede o limite seguro da carteira.');
+    }
     const next: WalletRecord = {
       ...current,
       balance: after,
       bonusBalance: bonusBefore - bonusUsed,
-      reservedCredits: Math.max(0, Number(current.reservedCredits || 0) - amount),
-      totalUsed: Number(current.totalUsed || 0) + amount,
+      reservedCredits: current.reservedCredits - amount,
+      totalUsed: nextTotalUsed,
       updatedAt: nowIso()
     };
 
     tx.set(walletRef, next, { merge: true });
-    tx.update(reservationRef, { status: 'committed', committedAt: nowIso() });
+    tx.update(reservationRef, { status: 'committed', committedAt: nowIso(), updatedAt: nowIso() });
     tx.set(usageRef, {
       userId: data.userId,
       companyId: reservation.companyId || null,
@@ -230,33 +330,48 @@ export async function commitReservation(data: {
   });
 }
 
-export async function rollbackReservation(userId: string, reservationId: string, reason: string): Promise<void> {
+export async function rollbackReservation(userId: string, reservationId: string, reason: string): Promise<boolean> {
   const db = firestore();
   const walletRef = db.collection(COLLECTIONS.wallets).doc(userId);
   const reservationRef = db.collection(COLLECTIONS.creditReservations).doc(reservationId);
-  await db.runTransaction(async (tx) => {
+  return db.runTransaction(async (tx) => {
     const [walletSnap, reservationSnap] = await Promise.all([tx.get(walletRef), tx.get(reservationRef)]);
-    if (!reservationSnap.exists) return;
+    if (!reservationSnap.exists) return false;
     const reservation = reservationSnap.data() as any;
-    if (reservation.userId !== userId || reservation.status !== 'reserved') return;
-    const current = walletSnap.exists ? ({ id: userId, ...(walletSnap.data() as any) } as WalletRecord) : defaultWallet(userId);
-    const amount = Number(reservation.amount || 0);
-    tx.set(walletRef, { ...current, reservedCredits: Math.max(0, Number(current.reservedCredits || 0) - amount), updatedAt: nowIso() }, { merge: true });
-    tx.update(reservationRef, { status: 'rolled_back', rollbackReason: reason, rolledBackAt: nowIso() });
+    if (reservation.userId !== userId || reservation.status !== 'reserved') return false;
+    const current = walletSnap.exists ? normalizeWallet(userId, walletSnap.data() as any) : defaultWallet(userId);
+    const amount = requireCreditAmount(Number(reservation.amount), 'Quantidade reservada');
+    if (current.reservedCredits < amount) {
+      throw new Error('[Froc Ledger Integrity] Estorno recusado: reserva não está refletida na carteira.');
+    }
+    const timestamp = nowIso();
+    tx.set(walletRef, { ...current, reservedCredits: current.reservedCredits - amount, updatedAt: timestamp }, { merge: true });
+    tx.update(reservationRef, {
+      status: 'rolled_back',
+      rollbackReason: String(reason || 'Operação cancelada.').slice(0, 500),
+      rolledBackAt: timestamp,
+      updatedAt: timestamp
+    });
+    return true;
   });
 }
 
 export async function listCreditTransactions(userId: string, limit = 50): Promise<any[]> {
+  const safeLimit = Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 50;
   const snap = await firestore().collection(COLLECTIONS.creditTransactions).where('userId', '==', userId).get();
   return snap.docs
     .map((doc) => ({ id: doc.id, ...doc.data() } as any))
     .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
-    .slice(0, Math.min(Math.max(limit, 1), 100));
+    .slice(0, safeLimit);
 }
 
 export async function cleanupStaleReservations(maxAgeMinutes = 30): Promise<number> {
-  const cutoff = new Date(Date.now() - Math.max(5, maxAgeMinutes) * 60_000).toISOString();
-  const snap = await firestore().collection(COLLECTIONS.creditReservations)
+  const db = firestore();
+  const safeAgeMinutes = Number.isFinite(maxAgeMinutes) ? Math.max(5, Math.floor(maxAgeMinutes)) : 30;
+  const staleAgeMs = safeAgeMinutes * 60_000;
+  const now = Date.now();
+  const cutoff = new Date(now - staleAgeMs).toISOString();
+  const snap = await db.collection(COLLECTIONS.creditReservations)
     .where('status', '==', 'reserved')
     .where('createdAt', '<=', cutoff)
     .limit(100)
@@ -265,8 +380,28 @@ export async function cleanupStaleReservations(maxAgeMinutes = 30): Promise<numb
   for (const doc of snap.docs) {
     const reservation = doc.data() as any;
     if (!reservation?.userId) continue;
-    await rollbackReservation(String(reservation.userId), doc.id, 'Reserva expirada automaticamente após timeout.');
-    released += 1;
+
+    // Não libera créditos de um vídeo que ainda possui heartbeat ou lease ativo.
+    const jobsSnap = await db.collection(COLLECTIONS.mediaGenerationJobs)
+      .where('reservationId', '==', doc.id)
+      .limit(5)
+      .get();
+    const hasActiveJob = jobsSnap.docs.some((jobDoc: any) => {
+      const job = jobDoc.data() as any;
+      if (!['queued', 'processing', 'finalizing'].includes(String(job.status))) return false;
+      const leaseUntil = job.finalizationLeaseUntil ? new Date(job.finalizationLeaseUntil).getTime() : 0;
+      if (job.status === 'finalizing' && Number.isFinite(leaseUntil) && leaseUntil > now) return true;
+      const heartbeat = new Date(job.updatedAt || job.providerStartedAt || job.createdAt || 0).getTime();
+      return Number.isFinite(heartbeat) && now - heartbeat < staleAgeMs;
+    });
+    if (hasActiveJob) continue;
+
+    const rolledBack = await rollbackReservation(
+      String(reservation.userId),
+      doc.id,
+      'Reserva expirada automaticamente após timeout sem job ativo.'
+    );
+    if (rolledBack) released += 1;
   }
   return released;
 }
