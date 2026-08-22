@@ -3,9 +3,9 @@ import { CREDIT_COSTS } from '../../shared/creditCosts.js';
 
 dotenv.config();
 
-const nodeEnv: string = process.env.NODE_ENV || 'development';
+const nodeEnv = process.env.NODE_ENV || 'development';
 const isProduction = nodeEnv === 'production';
-const isNonProd = !isProduction;
+const isTest = nodeEnv === 'test';
 
 function env(name: string, fallback = ''): string {
   return (process.env[name] ?? fallback).trim();
@@ -59,13 +59,13 @@ export const config = {
     publicKey: env('MERCADO_PAGO_PUBLIC_KEY'),
     billingMode: env('MERCADO_PAGO_BILLING_MODE', 'subscription').toLowerCase() === 'one_time' ? 'one_time' : 'subscription'
   },
-  encryptionKey: env('TOKEN_ENCRYPTION_KEY', isNonProd ? 'test_token_encryption_key_32bytes_long!' : ''),
-  cronSecret: env('CRON_SECRET', isNonProd ? 'test_cron_secret' : ''),
+  encryptionKey: env('TOKEN_ENCRYPTION_KEY', isTest ? 'test_token_encryption_key_32bytes_long!' : ''),
+  cronSecret: env('CRON_SECRET', isTest ? 'test_cron_secret' : ''),
   adminBootstrap: {
     enabled: env('ADMIN_BOOTSTRAP_ENABLED', isProduction ? 'false' : 'true').toLowerCase() === 'true',
-    key: env('ADMIN_BOOTSTRAP_KEY', isNonProd ? 'test_admin_bootstrap_key' : '')
+    key: env('ADMIN_BOOTSTRAP_KEY', isTest ? 'test_admin_bootstrap_key' : '')
   },
-  adminBootstrapKey: env('ADMIN_BOOTSTRAP_KEY', isNonProd ? 'test_admin_bootstrap_key' : ''),
+  adminBootstrapKey: env('ADMIN_BOOTSTRAP_KEY', isTest ? 'test_admin_bootstrap_key' : ''),
   freeSignupBonusCredits: Number(env('FREE_SIGNUP_BONUS_CREDITS', '25')),
   support: {
     email: env('SUPPORT_EMAIL', 'brasilportalvip@gmail.com'),
@@ -77,30 +77,30 @@ export const config = {
   },
   social: {
     meta: {
-      clientId: env('META_APP_ID', isNonProd ? 'mock_meta_app_id' : ''),
-      clientSecret: env('META_APP_SECRET', isNonProd ? 'mock_meta_app_secret' : ''),
+      clientId: env('META_APP_ID', isTest ? 'mock_meta_app_id' : ''),
+      clientSecret: env('META_APP_SECRET', isTest ? 'mock_meta_app_secret' : ''),
       graphVersion: env('META_GRAPH_VERSION', 'v24.0')
     },
     linkedin: {
-      clientId: env('LINKEDIN_CLIENT_ID', isNonProd ? 'mock_linkedin_client_id' : ''),
-      clientSecret: env('LINKEDIN_CLIENT_SECRET', isNonProd ? 'mock_linkedin_client_secret' : ''),
+      clientId: env('LINKEDIN_CLIENT_ID', isTest ? 'mock_linkedin_client_id' : ''),
+      clientSecret: env('LINKEDIN_CLIENT_SECRET', isTest ? 'mock_linkedin_client_secret' : ''),
       apiVersion: env('LINKEDIN_API_VERSION')
     },
     google: {
-      clientId: env('GOOGLE_CLIENT_ID', isNonProd ? 'mock_google_client_id' : ''),
-      clientSecret: env('GOOGLE_CLIENT_SECRET', isNonProd ? 'mock_google_client_secret' : '')
+      clientId: env('GOOGLE_CLIENT_ID', isTest ? 'mock_google_client_id' : ''),
+      clientSecret: env('GOOGLE_CLIENT_SECRET', isTest ? 'mock_google_client_secret' : '')
     },
     tiktok: {
-      clientId: env('TIKTOK_CLIENT_KEY', isNonProd ? 'mock_tiktok_client_id' : ''),
-      clientSecret: env('TIKTOK_CLIENT_SECRET', isNonProd ? 'mock_tiktok_client_secret' : '')
+      clientId: env('TIKTOK_CLIENT_KEY', isTest ? 'mock_tiktok_client_id' : ''),
+      clientSecret: env('TIKTOK_CLIENT_SECRET', isTest ? 'mock_tiktok_client_secret' : '')
     },
     pinterest: {
-      clientId: env('PINTEREST_APP_ID', isNonProd ? 'mock_pinterest_client_id' : ''),
-      clientSecret: env('PINTEREST_APP_SECRET', isNonProd ? 'mock_pinterest_client_secret' : '')
+      clientId: env('PINTEREST_APP_ID', isTest ? 'mock_pinterest_client_id' : ''),
+      clientSecret: env('PINTEREST_APP_SECRET', isTest ? 'mock_pinterest_client_secret' : '')
     },
     x: {
-      clientId: env('X_CLIENT_ID', isNonProd ? 'mock_x_client_id' : ''),
-      clientSecret: env('X_CLIENT_SECRET', isNonProd ? 'mock_x_client_secret' : '')
+      clientId: env('X_CLIENT_ID', isTest ? 'mock_x_client_id' : ''),
+      clientSecret: env('X_CLIENT_SECRET', isTest ? 'mock_x_client_secret' : '')
     }
   },
   plans: [
