@@ -248,6 +248,7 @@ export const COLLECTIONS = {
   payments: 'payments',
   socialConnections: 'socialConnections',
   oauthStates: 'oauthStates',
+  pageSelectTokens: 'pageSelectTokens',
   seoReports: 'seoReports',
   blogPosts: 'blogPosts',
   autopilotConfigs: 'autopilotConfigs',

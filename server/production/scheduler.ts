@@ -136,14 +136,23 @@ export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): P
     if (processingTime < cutoffMs) {
       const publicationResults = Array.isArray(post.publicationResults) ? post.publicationResults : [];
       const requestedPlatforms = Array.isArray(post.platforms) ? post.platforms : [];
+
       const successfulResults = publicationResults.filter((r: any) =>
         r?.success && r?.externalId && (r?.externalState === 'confirmed_success' || !r?.externalState)
       );
-      const allConfirmed = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
-        successfulResults.some((s: any) => s.platform === plat || normalizeProvider(s.platform) === normalizeProvider(plat))
+
+      const hasUnknown = publicationResults.some((r: any) => r?.externalState === 'unknown');
+
+      // Verifica se todos os provedores solicitados possuem resultado registrado
+      const allRequestedHaveResult = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
+        publicationResults.some((r: any) => r?.platform === plat || normalizeProvider(r?.platform) === normalizeProvider(plat))
       );
 
-      if (allConfirmed) {
+      const allConfirmedSuccess = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
+        successfulResults.some((s: any) => s?.platform === plat || normalizeProvider(s?.platform) === normalizeProvider(plat))
+      );
+
+      if (allConfirmedSuccess) {
         const firstSuccess = successfulResults[0];
         await doc.ref.update({
           status: 'published',
@@ -153,10 +162,36 @@ export async function recoverStalePublishingPosts(staleThresholdMinutes = 15): P
           recoveredAt: nowIso(),
           updatedAt: nowIso()
         });
-      } else {
+
+        // Atualização segura do contentItem com validação de tenant
+        if (post.contentItemId) {
+          const contentSnap = await db.collection(COLLECTIONS.contentItems).doc(post.contentItemId).get();
+          if (contentSnap.exists) {
+            const contentData = contentSnap.data() as any;
+            if (contentData?.userId === post.userId && contentData?.companyId === post.companyId) {
+              await contentSnap.ref.update({ status: 'published', updatedAt: nowIso() });
+            }
+          }
+        }
+      } else if (hasUnknown || !allRequestedHaveResult) {
         await doc.ref.update({
           status: 'requires_review',
           errorMessage: 'Verificação manual necessária — o processamento foi interrompido e a rede social pode ter recebido a publicação.',
+          recoveredAt: nowIso(),
+          updatedAt: nowIso()
+        });
+      } else {
+        // Todos os targets solicitados foram processados, nenhum é unknown, mas há falha confirmada
+        const failedErrors = publicationResults
+          .filter((r: any) => !r?.success)
+          .map((r: any) => r?.error)
+          .filter(Boolean)
+          .join(' | ')
+          .slice(0, 500) || 'Falha na publicação após recuperação.';
+
+        await doc.ref.update({
+          status: 'failed',
+          errorMessage: failedErrors,
           recoveredAt: nowIso(),
           updatedAt: nowIso()
         });
@@ -421,33 +456,53 @@ export async function processAutopilot(): Promise<number> {
       continue;
     }
 
-    // Pre-flight check para modo automático: verificar se redes suportam publicação direta e se há conexão ativa
+    // Pre-flight check para modo automático: verificar se TODOS os canais suportam publicação direta e possuem conexão ativa e válida
     if (ap.mode === 'automatic') {
       const targetPlatforms = Array.isArray(ap.targetPlatforms) && ap.targetPlatforms.length > 0
         ? ap.targetPlatforms
         : ['facebook'];
 
-      const normalizedTargets = targetPlatforms.map((p: string) => normalizeProvider(p)).filter(Boolean) as SocialProvider[];
-      const supportedTargets = normalizedTargets.filter((p) => isTextAutoPublishSupported(p));
+      // 1. Todos os canais devem normalizar e suportar publicação automática textual direta (facebook, linkedin, x)
+      let allTargetsSupported = true;
+      const normalizedTargets: SocialProvider[] = [];
+      for (const plat of targetPlatforms) {
+        const norm = normalizeProvider(plat);
+        if (!norm || !isTextAutoPublishSupported(norm)) {
+          allTargetsSupported = false;
+          break;
+        }
+        normalizedTargets.push(norm);
+      }
 
-      if (supportedTargets.length === 0) {
-        console.warn(`[Froc Autopilot] Nenhuma plataforma de publicação direta suportada para ${doc.id} (suportadas: facebook, linkedin, x)`);
+      if (!allTargetsSupported || normalizedTargets.length === 0) {
+        console.warn(`[Froc Autopilot] Canais incompatíveis com o modo automático em ${doc.id}. Apenas Facebook, LinkedIn e X são suportados.`);
         continue;
       }
 
+      // 2. Buscar conexões da empresa e validar se CADA UM dos alvos possui conexão própria ativa com token válido
       const connsSnap = await db.collection(COLLECTIONS.socialConnections)
         .where('userId', '==', ap.userId)
         .where('companyId', '==', ap.companyId)
         .get();
 
-      const activeProviders = connsSnap.docs
-        .map((d) => d.data() as any)
-        .filter((c) => c.status === 'connected' && (!c.expiresAt || new Date(c.expiresAt).getTime() > Date.now()))
-        .map((c) => c.provider);
+      const connMap = new Map<string, any>();
+      for (const d of connsSnap.docs) {
+        const c = d.data() as any;
+        connMap.set(c.provider, c);
+      }
 
-      const hasReadyConnection = supportedTargets.some((p) => activeProviders.includes(p));
-      if (!hasReadyConnection) {
-        console.warn(`[Froc Autopilot] Nenhuma conexão social ativa encontrada para os canais automáticos de ${doc.id}`);
+      let allConnectionsValid = true;
+      for (const target of normalizedTargets) {
+        const conn = connMap.get(target);
+        const isExpired = conn?.expiresAt ? new Date(conn.expiresAt).getTime() <= Date.now() : false;
+        if (!conn || conn.status !== 'connected' || (!conn.encryptedAccessToken && !conn.accessToken) || isExpired) {
+          allConnectionsValid = false;
+          break;
+        }
+      }
+
+      if (!allConnectionsValid) {
+        console.warn(`[Froc Autopilot] Nem todos os canais selecionados possuem conexão ativa e válida para ${doc.id}`);
         continue;
       }
     }
@@ -611,16 +666,22 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
     throw error;
   }
 
-  // Pre-flight check para modo automático: verificar se redes suportam publicação direta e se há conexão ativa
+  // Pre-flight check para modo automático: verificar se TODOS os canais suportam publicação direta e possuem conexão ativa e válida
   if (ap.mode === 'automatic') {
     const targetPlatforms = Array.isArray(ap.targetPlatforms) && ap.targetPlatforms.length > 0
       ? ap.targetPlatforms
       : ['facebook'];
 
-    const normalizedTargets = targetPlatforms.map((p: string) => normalizeProvider(p)).filter(Boolean) as SocialProvider[];
-    const supportedTargets = normalizedTargets.filter((p) => isTextAutoPublishSupported(p));
+    const normalizedTargets: SocialProvider[] = [];
+    for (const plat of targetPlatforms) {
+      const norm = normalizeProvider(plat);
+      if (!norm || !isTextAutoPublishSupported(norm)) {
+        throw new Error(`A rede social "${plat}" selecionada não suporta publicação automática direta no modo automático (suportadas apenas Facebook, LinkedIn e X).`);
+      }
+      normalizedTargets.push(norm);
+    }
 
-    if (supportedTargets.length === 0) {
+    if (normalizedTargets.length === 0) {
       throw new Error('Para utilizar o modo automático do Autopilot, selecione ao menos uma rede social que suporte publicação direta (Facebook, LinkedIn ou X).');
     }
 
@@ -629,14 +690,18 @@ export async function triggerUserAutopilot(userId: string, companyId: string): P
       .where('companyId', '==', companyId)
       .get();
 
-    const activeProviders = connsSnap.docs
-      .map((d) => d.data() as any)
-      .filter((c) => c.status === 'connected' && (!c.expiresAt || new Date(c.expiresAt).getTime() > Date.now()))
-      .map((c) => c.provider);
+    const connMap = new Map<string, any>();
+    for (const d of connsSnap.docs) {
+      const c = d.data() as any;
+      connMap.set(c.provider, c);
+    }
 
-    const hasReadyConnection = supportedTargets.some((p) => activeProviders.includes(p));
-    if (!hasReadyConnection) {
-      throw new Error('Nenhuma conexão social suportada está ativa para esta empresa. Conecte sua Página do Facebook, LinkedIn ou X antes de acionar o modo automático.');
+    for (const target of normalizedTargets) {
+      const conn = connMap.get(target);
+      const isExpired = conn?.expiresAt ? new Date(conn.expiresAt).getTime() <= Date.now() : false;
+      if (!conn || conn.status !== 'connected' || (!conn.encryptedAccessToken && !conn.accessToken) || isExpired) {
+        throw new Error(`A rede social "${target}" selecionada para o Autopilot automático não possui conexão ativa e válida nesta empresa.`);
+      }
     }
   }
 
@@ -807,10 +872,18 @@ export async function processSchedulerTick() {
 export async function getSchedulerHealth(): Promise<{
   status: 'ok' | 'degraded';
   environment: string;
-  cronConfigured: boolean;
+  cronSecretConfigured: boolean;
   metaConfigured: boolean;
   lock?: { isLocked: boolean; lockedAt: number | null; lockedUntil: number | null; owner: string | null };
-  queueStats?: { scheduledPending: number; publishingCount: number };
+  queueStats?: {
+    scheduledPending: number;
+    scheduledPostsDue: number;
+    publishingPending: number;
+    publishingCount: number;
+    videoJobsPending: number;
+    autopilotEnabled: number;
+    autoBlogEnabled: boolean;
+  };
   error?: string;
   checkedAt: string;
 }> {
@@ -823,20 +896,26 @@ export async function getSchedulerHealth(): Promise<{
     const lockedUntil = lockData?.lockedUntil ? Number(lockData.lockedUntil) : 0;
     const isLocked = lockedUntil > now;
 
-    const [pendingSnap, publishingSnap] = await Promise.all([
+    const [dueSnap, publishingSnap, videoJobsSnap, autopilotSnap] = await Promise.all([
       db.collection(COLLECTIONS.scheduledPosts)
         .where('status', '==', 'scheduled')
         .where('scheduledFor', '<=', nowIso())
         .get(),
       db.collection(COLLECTIONS.scheduledPosts)
         .where('status', '==', 'publishing')
-        .get()
+        .get(),
+      db.collection(COLLECTIONS.mediaGenerationJobs)
+        .where('status', 'in', ['pending', 'processing'])
+        .get().catch(() => ({ size: 0 })),
+      db.collection(COLLECTIONS.autopilotConfigs)
+        .where('enabled', '==', true)
+        .get().catch(() => ({ size: 0 }))
     ]);
 
     return {
       status: 'ok',
       environment: config.nodeEnv,
-      cronConfigured: Boolean(config.cronSecret),
+      cronSecretConfigured: Boolean(config.cronSecret),
       metaConfigured: Boolean(config.social.meta.clientId && config.social.meta.clientSecret),
       lock: {
         isLocked,
@@ -845,8 +924,13 @@ export async function getSchedulerHealth(): Promise<{
         owner: lockData?.owner || null
       },
       queueStats: {
-        scheduledPending: pendingSnap.size,
-        publishingCount: publishingSnap.size
+        scheduledPending: dueSnap.size,
+        scheduledPostsDue: dueSnap.size,
+        publishingPending: publishingSnap.size,
+        publishingCount: publishingSnap.size,
+        videoJobsPending: videoJobsSnap.size,
+        autopilotEnabled: autopilotSnap.size,
+        autoBlogEnabled: Boolean(config.blog.autoEnabled)
       },
       checkedAt: nowIso()
     };
@@ -854,7 +938,7 @@ export async function getSchedulerHealth(): Promise<{
     return {
       status: 'degraded',
       environment: config.nodeEnv,
-      cronConfigured: Boolean(config.cronSecret),
+      cronSecretConfigured: Boolean(config.cronSecret),
       metaConfigured: Boolean(config.social.meta.clientId && config.social.meta.clientSecret),
       error: 'Falha ao consultar estado das filas no Firestore: ' + (err?.message ? String(err.message).slice(0, 200) : 'Erro desconhecido'),
       checkedAt: nowIso()
@@ -863,26 +947,42 @@ export async function getSchedulerHealth(): Promise<{
 }
 
 export async function processSocialTick(): Promise<{
+  skipped?: boolean;
+  reason?: string;
   recoveredPublishing: number;
   scheduledPosts: number;
   error?: string;
   processedAt: string;
 }> {
+  if (!(await acquireLock())) {
+    return {
+      skipped: true,
+      reason: 'scheduler_busy',
+      recoveredPublishing: 0,
+      scheduledPosts: 0,
+      processedAt: nowIso()
+    };
+  }
+
   try {
     const recoveredPublishing = await recoverStalePublishingPosts(15);
     const scheduledPosts = await processScheduledPosts();
     return {
+      skipped: false,
       recoveredPublishing,
       scheduledPosts,
       processedAt: nowIso()
     };
   } catch (err: any) {
     return {
+      skipped: false,
       recoveredPublishing: 0,
       scheduledPosts: 0,
       error: err instanceof Error ? err.message : String(err),
       processedAt: nowIso()
     };
+  } finally {
+    await releaseLock();
   }
 }
 

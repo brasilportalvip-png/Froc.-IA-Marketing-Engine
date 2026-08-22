@@ -53,7 +53,7 @@ export function normalizeProvider(value: string): SocialProvider | null {
 }
 
 function key(): Buffer {
-  const encKey = config.encryptionKey || (process.env.NODE_ENV === 'test' ? 'default_test_token_encryption_key_32bytes_long!' : '');
+  const encKey = config.encryptionKey || process.env.TOKEN_ENCRYPTION_KEY || (!config.isProduction ? 'default_dev_test_token_encryption_key_32b!' : '');
   if (!encKey) throw new Error('TOKEN_ENCRYPTION_KEY não configurada.');
   return crypto.createHash('sha256').update(encKey).digest();
 }
@@ -98,7 +98,9 @@ function providerCredentials(provider: SocialProvider): { clientId: string; clie
 
 export async function createOAuthUrl(data: { provider: SocialProvider; userId: string; companyId: string }) {
   const credentials = providerCredentials(data.provider);
-  if (!credentials.clientId) throw new Error(`Credenciais OAuth de ${data.provider} não configuradas.`);
+  if (!credentials.clientId && config.isProduction) {
+    throw new Error(`Credenciais OAuth de ${data.provider} não configuradas.`);
+  }
   const state = crypto.randomBytes(32).toString('base64url');
   const codeVerifier = data.provider === 'x' ? crypto.randomBytes(48).toString('base64url') : '';
   await firestore().collection(COLLECTIONS.oauthStates).doc(stableId(state)).set({
@@ -558,15 +560,21 @@ export async function selectFacebookPage(data: {
     throw new Error('Token de seleção e ID da página são obrigatórios.');
   }
 
-  const docRef = firestore().collection(COLLECTIONS.oauthStates).doc(stableId(token));
-  const snap = await docRef.get();
+  const tokenHash = stableId(token);
+  let docRef = firestore().collection(COLLECTIONS.oauthStates).doc(tokenHash);
+  let snap = await docRef.get();
+  if (!snap.exists) {
+    docRef = firestore().collection(COLLECTIONS.pageSelectTokens).doc(tokenHash);
+    snap = await docRef.get();
+  }
+
   if (!snap.exists) {
     throw new Error('Token de seleção de página inválido ou expirado (já utilizada).');
   }
 
   const stateData = snap.data() as any;
 
-  if (stateData.type !== 'facebook_page_selection') {
+  if (stateData.type && stateData.type !== 'facebook_page_selection') {
     throw new Error('Tipo de sessão OAuth inválido.');
   }
 
@@ -596,6 +604,9 @@ export async function selectFacebookPage(data: {
 
   // Anti-replay estrito: deletar sessão de seleção após validação completa
   await docRef.delete().catch(() => undefined);
+  // Also clean up from both collections if present
+  await firestore().collection(COLLECTIONS.oauthStates).doc(tokenHash).delete().catch(() => undefined);
+  await firestore().collection(COLLECTIONS.pageSelectTokens).doc(tokenHash).delete().catch(() => undefined);
 
   const connectionId = stableId(`${data.userId}:${companyId}:facebook`);
   const expiresAt = stateData.expiresIn ? new Date(Date.now() + Number(stateData.expiresIn) * 1000).toISOString() : null;
@@ -626,6 +637,71 @@ export async function selectFacebookPage(data: {
   };
 }
 
+export async function getFacebookPageSelectionCandidates(
+  userIdOrData: string | { userId: string; selectionToken?: string; pageSelectToken?: string; companyId?: string },
+  tokenArg?: string,
+  companyIdArg?: string
+): Promise<{ companyId?: string; pages: Array<{ id: string; name: string }> }> {
+  let userId = '';
+  let selectionToken = '';
+  let companyId: string | undefined = undefined;
+
+  if (typeof userIdOrData === 'string') {
+    userId = userIdOrData;
+    selectionToken = tokenArg || '';
+    companyId = companyIdArg;
+  } else {
+    userId = userIdOrData.userId;
+    selectionToken = userIdOrData.selectionToken || userIdOrData.pageSelectToken || tokenArg || '';
+    companyId = userIdOrData.companyId;
+  }
+
+  if (!selectionToken) {
+    throw new Error('Token de seleção é obrigatório.');
+  }
+
+  const tokenHash = stableId(selectionToken);
+  let docRef = firestore().collection(COLLECTIONS.oauthStates).doc(tokenHash);
+  let snap = await docRef.get();
+
+  if (!snap.exists) {
+    docRef = firestore().collection(COLLECTIONS.pageSelectTokens).doc(tokenHash);
+    snap = await docRef.get();
+  }
+
+  if (!snap.exists) {
+    throw new Error('Token de seleção de página inválido ou expirado.');
+  }
+
+  const stateData = snap.data() as any;
+  if (stateData.type && stateData.type !== 'facebook_page_selection') {
+    throw new Error('Tipo de sessão OAuth inválido.');
+  }
+
+  if (stateData.userId !== userId) {
+    throw new Error('Permissão negada: sessão de seleção pertence a outro usuário.');
+  }
+
+  if (stateData.companyId && companyId && stateData.companyId !== companyId) {
+    throw new Error('Permissão negada: empresa não corresponde à sessão de seleção.');
+  }
+
+  if (Number(stateData.expiresAt) < Date.now()) {
+    throw new Error('Sessão de seleção de página expirada.');
+  }
+
+  const rawPages = Array.isArray(stateData.pages) ? stateData.pages : [];
+  const cleanPages = rawPages.map((p: any) => ({
+    id: String(p.id),
+    name: String(p.name || 'Facebook Page')
+  }));
+
+  return {
+    companyId: stateData.companyId,
+    pages: cleanPages
+  };
+}
+
 export async function listConnections(userId: string, companyId: string) {
   const snap = await firestore().collection(COLLECTIONS.socialConnections).where('userId', '==', userId).where('companyId', '==', companyId).get();
   return snap.docs.map((doc) => {
@@ -647,6 +723,216 @@ export async function disconnectSocial(userId: string, companyId: string, provid
   snap.docs.forEach((doc) => batch.delete(doc.ref));
   await batch.commit();
   return true;
+}
+
+export async function refreshSocialAccessToken(
+  provider: SocialProvider,
+  refreshToken: string
+): Promise<{ accessToken: string; refreshToken?: string; expiresAt: number }> {
+  if (!refreshToken) throw new Error(`Refresh token não fornecido para ${provider}.`);
+
+  if (provider === 'x') {
+    const creds = Buffer.from(`${config.social.x.clientId}:${config.social.x.clientSecret}`).toString('base64');
+    const res = await fetch('https://api.twitter.com/2/oauth2/token', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${creds}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: config.social.x.clientId
+      }).toString()
+    });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || !json.access_token) {
+      throw new Error(json.error_description || json.error || `Falha ao renovar token do X (HTTP ${res.status}).`);
+    }
+    const expiresIn = Number(json.expires_in || 7200);
+    return {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || refreshToken,
+      expiresAt: Date.now() + expiresIn * 1000
+    };
+  }
+
+  if (provider === 'tiktok') {
+    const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_key: config.social.tiktok.clientId,
+        client_secret: config.social.tiktok.clientSecret,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken
+      }).toString()
+    });
+    const json = await res.json().catch(() => ({} as any));
+    const tokenData = json.data || json;
+    if (!res.ok || !tokenData.access_token) {
+      throw new Error(json.error?.message || json.message || `Falha ao renovar token do TikTok (HTTP ${res.status}).`);
+    }
+    const expiresIn = Number(tokenData.expires_in || 86400);
+    return {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token || refreshToken,
+      expiresAt: Date.now() + expiresIn * 1000
+    };
+  }
+
+  if (provider === 'youtube') {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.social.google.clientId,
+        client_secret: config.social.google.clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token'
+      }).toString()
+    });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || !json.access_token) {
+      throw new Error(json.error_description || json.error || `Falha ao renovar token do Google/YouTube (HTTP ${res.status}).`);
+    }
+    const expiresIn = Number(json.expires_in || 3600);
+    return {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || refreshToken,
+      expiresAt: Date.now() + expiresIn * 1000
+    };
+  }
+
+  if (provider === 'pinterest') {
+    const creds = Buffer.from(`${config.social.pinterest.clientId}:${config.social.pinterest.clientSecret}`).toString('base64');
+    const res = await fetch('https://api.pinterest.com/v5/oauth/token', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${creds}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken
+      }).toString()
+    });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || !json.access_token) {
+      throw new Error(json.message || json.error || `Falha ao renovar token do Pinterest (HTTP ${res.status}).`);
+    }
+    const expiresIn = Number(json.expires_in || 86400 * 30);
+    return {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || refreshToken,
+      expiresAt: Date.now() + expiresIn * 1000
+    };
+  }
+
+  if (provider === 'linkedin') {
+    const res = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: config.social.linkedin.clientId,
+        client_secret: config.social.linkedin.clientSecret
+      }).toString()
+    });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || !json.access_token) {
+      throw new Error(json.error_description || json.error || `Falha ao renovar token do LinkedIn (HTTP ${res.status}).`);
+    }
+    const expiresIn = Number(json.expires_in || 5184000);
+    return {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || refreshToken,
+      expiresAt: Date.now() + expiresIn * 1000
+    };
+  }
+
+  throw new Error(`Renovação de token não suportada para o provedor ${provider}.`);
+}
+
+export async function ensureValidSocialAccessToken(connectionIdOrDoc: string | any): Promise<string> {
+  let docRef: any;
+  let connection: any;
+
+  if (typeof connectionIdOrDoc === 'string') {
+    docRef = firestore().collection(COLLECTIONS.socialConnections).doc(connectionIdOrDoc);
+    const snap = await docRef.get();
+    if (!snap.exists) throw new Error('Conexão social não encontrada.');
+    connection = snap.data();
+  } else {
+    connection = connectionIdOrDoc;
+    docRef = firestore().collection(COLLECTIONS.socialConnections).doc(connection.id);
+  }
+
+  const now = Date.now();
+  const expiresAtMs = connection.expiresAt ? new Date(connection.expiresAt).getTime() : Infinity;
+  const isExpiringSoon = expiresAtMs - now < 5 * 60 * 1000; // Menos de 5 minutos
+
+  let rawRefreshToken = '';
+  if (connection.encryptedRefreshToken) {
+    try {
+      rawRefreshToken = decrypt(connection.encryptedRefreshToken);
+    } catch {
+      // Ignora erro de decrypt no refresh token
+    }
+  }
+
+  // Se o token ainda é válido por mais de 5 minutos, apenas retorna o accessToken
+  if (!isExpiringSoon && (connection.encryptedAccessToken || connection.accessToken)) {
+    try {
+      return decrypt(connection.encryptedAccessToken || connection.accessToken);
+    } catch (e: any) {
+      throw new Error(`Falha ao descriptografar token de acesso: ${e.message}`);
+    }
+  }
+
+  // Se estiver expirando ou expirado e possui refresh_token
+  if (rawRefreshToken) {
+    try {
+      const refreshed = await refreshSocialAccessToken(connection.provider, rawRefreshToken);
+      const updateData: any = {
+        encryptedAccessToken: encrypt(refreshed.accessToken),
+        expiresAt: new Date(refreshed.expiresAt).toISOString(),
+        status: 'connected',
+        errorMessage: null,
+        updatedAt: nowIso()
+      };
+      if (refreshed.refreshToken) {
+        updateData.encryptedRefreshToken = encrypt(refreshed.refreshToken);
+      }
+      await docRef.update(updateData);
+      return refreshed.accessToken;
+    } catch (refreshErr: any) {
+      await docRef.update({
+        status: 'token_expired',
+        errorMessage: `Falha ao renovar token automaticamente: ${refreshErr.message}`,
+        updatedAt: nowIso()
+      }).catch(() => undefined);
+      throw new Error(`A autenticação com ${connection.provider} expirou e a renovação falhou: ${refreshErr.message}`);
+    }
+  }
+
+  // Expirado e SEM refresh_token
+  if (expiresAtMs <= now) {
+    await docRef.update({
+      status: 'token_expired',
+      errorMessage: 'Token expirou e não há refresh_token disponível para renovação automática.',
+      updatedAt: nowIso()
+    }).catch(() => undefined);
+    throw new Error(`A autenticação com ${connection.provider} expirou. Reconecte a conta nas configurações.`);
+  }
+
+  // Token não tem expiresAt (ex: Meta Page token permanente) ou ainda válido
+  try {
+    return decrypt(connection.encryptedAccessToken || connection.accessToken);
+  } catch (e: any) {
+    throw new Error(`Falha ao descriptografar token de acesso: ${e.message}`);
+  }
 }
 
 export async function publishText(data: {
@@ -707,28 +993,16 @@ export async function publishText(data: {
     };
   }
 
-  if (connection.expiresAt && new Date(connection.expiresAt).getTime() < Date.now()) {
-    await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
-    return {
-      provider: data.provider,
-      externalId: null,
-      externalState: 'confirmed_failed',
-      retrySafe: false,
-      error: `A autenticação com ${data.provider} expirou. Reconecte a conta nas configurações.`
-    };
-  }
-
   let token = '';
   try {
-    const tokenEncrypted = connection.encryptedAccessToken || connection.accessToken || '';
-    token = decrypt(tokenEncrypted);
-  } catch {
+    token = await ensureValidSocialAccessToken(connDoc.id);
+  } catch (err: any) {
     return {
       provider: data.provider,
       externalId: null,
       externalState: 'confirmed_failed',
       retrySafe: false,
-      error: `Falha ao descriptografar token de acesso de ${data.provider}.`
+      error: err.message || `A autenticação com ${data.provider} expirou.`
     };
   }
 

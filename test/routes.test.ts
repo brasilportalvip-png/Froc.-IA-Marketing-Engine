@@ -652,22 +652,23 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
     const resCronUnauth = await fetch(`${baseUrl}/api/cron/social`);
     assert.equal(resCronUnauth.status, 401, 'Cron social sem secret deve retornar 401');
 
-    const resCronWrongSecret = await fetch(`${baseUrl}/api/cron/social?secret=wrong_secret`);
-    assert.equal(resCronWrongSecret.status, 401, 'Cron social com secret incorreto deve retornar 401');
+    const resCronQuerySecret = await fetch(`${baseUrl}/api/cron/social?secret=${config.cronSecret || 'any'}`);
+    assert.equal(resCronQuerySecret.status, 401, 'Cron social com secret na URL deve ser rejeitado com 401 (apenas Authorization: Bearer)');
 
     if (config.cronSecret) {
       const resCronHeader = await fetch(`${baseUrl}/api/cron/social`, {
         headers: { Authorization: `Bearer ${config.cronSecret}` }
       });
-      assert.equal(resCronHeader.status, 200, 'Cron social com Bearer token deve retornar 200');
+      assert.equal(resCronHeader.status, 200, 'Cron social GET com Bearer token deve retornar 200');
       const cronHeaderData = await resCronHeader.json();
       assert.ok('recoveredPublishing' in cronHeaderData);
       assert.ok('scheduledPosts' in cronHeaderData);
 
-      const resCronQuery = await fetch(`${baseUrl}/api/cron/social?secret=${config.cronSecret}`, {
-        method: 'POST'
+      const resCronPost = await fetch(`${baseUrl}/api/cron/social`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.cronSecret}` }
       });
-      assert.equal(resCronQuery.status, 200, 'Cron social POST com query secret deve retornar 200');
+      assert.equal(resCronPost.status, 200, 'Cron social POST com Bearer token deve retornar 200');
     }
   } finally {
     server.close();

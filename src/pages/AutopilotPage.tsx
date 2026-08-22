@@ -45,12 +45,6 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
   }, [selectedCompany?.id]);
 
   const patch = (p: Partial<AutopilotConfig>) => setCfg((c) => (c ? { ...c, ...p } : c));
-  const toggleChannel = (name: string) =>
-    patch({
-      targetPlatforms: cfg?.targetPlatforms.includes(name)
-        ? cfg.targetPlatforms.filter((v) => v !== name)
-        : [...(cfg?.targetPlatforms || []), name]
-    });
 
   const save = async () => {
     if (!cfg || !selectedCompany) return;
@@ -123,7 +117,41 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
   if (loading && !cfg) return <div className="grid min-h-72 place-items-center text-xs text-slate-400">Carregando Autopilot…</div>;
   if (!cfg) return <div className="froc-panel text-rose-300">Não foi possível carregar a configuração. {message}</div>;
 
-  const channels = ['Instagram', 'Facebook', 'LinkedIn', 'TikTok', 'YouTube', 'Pinterest', 'X'];
+  const channels = [
+    { name: 'Facebook', directSupport: true },
+    { name: 'LinkedIn', directSupport: true },
+    { name: 'X', directSupport: true },
+    { name: 'Instagram', directSupport: false },
+    { name: 'TikTok', directSupport: false },
+    { name: 'YouTube', directSupport: false },
+    { name: 'Pinterest', directSupport: false }
+  ];
+
+  const toggleChannel = (name: string, directSupport: boolean) => {
+    if (cfg?.mode === 'automatic' && !directSupport) {
+      setMessage(`O canal ${name} não suporta publicação automática direta. Selecione Facebook, LinkedIn ou X, ou altere o modo para Aprovação manual.`);
+      return;
+    }
+    patch({
+      targetPlatforms: cfg?.targetPlatforms.includes(name)
+        ? cfg.targetPlatforms.filter((v) => v !== name)
+        : [...(cfg?.targetPlatforms || []), name]
+    });
+  };
+
+  const setMode = (mode: 'manual_approval' | 'automatic') => {
+    if (mode === 'automatic') {
+      if (!hasAutomaticModeAccess) {
+        setMessage('O modo 100% automático requer o plano BUSINESS ou AGENCY.');
+      }
+      // Filtra canais que não suportam publicação direta ao alternar para automático
+      const supported = ['Facebook', 'LinkedIn', 'X'];
+      const filtered = (cfg?.targetPlatforms || []).filter((p) => supported.includes(p));
+      patch({ mode: 'automatic', targetPlatforms: filtered.length > 0 ? filtered : ['Facebook'] });
+    } else {
+      patch({ mode: 'manual_approval' });
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 animate-fadeIn">
@@ -192,7 +220,7 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
           <h3 className="froc-section-title">Modo de Operação</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <button
-              onClick={() => patch({ mode: 'manual_approval' })}
+              onClick={() => setMode('manual_approval')}
               className={`rounded-2xl border p-4 text-left transition ${
                 cfg.mode === 'manual_approval' ? 'border-cyan-400 bg-cyan-500/10' : 'border-slate-700 bg-slate-900'
               }`}
@@ -201,16 +229,11 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
                 <ShieldCheck size={16} className="text-cyan-400" />
                 Aprovação manual
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">Cria e salva o conteúdo para você revisar e aprovar antes de postar.</p>
+              <p className="mt-1 text-[11px] text-slate-400">Cria e salva o conteúdo para você revisar e aprovar antes de postar em qualquer rede.</p>
             </button>
 
             <button
-              onClick={() => {
-                if (!hasAutomaticModeAccess) {
-                  setMessage('O modo 100% automático requer o plano BUSINESS ou AGENCY.');
-                }
-                patch({ mode: 'automatic' });
-              }}
+              onClick={() => setMode('automatic')}
               className={`rounded-2xl border p-4 text-left transition relative ${
                 cfg.mode === 'automatic' ? 'border-cyan-400 bg-cyan-500/10' : 'border-slate-700 bg-slate-900'
               }`}
@@ -226,25 +249,43 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
                   </span>
                 )}
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">Cria e agenda diretamente na fila de publicação das redes conectadas.</p>
+              <p className="mt-1 text-[11px] text-slate-400">Cria e agenda diretamente na fila de publicação das redes suportadas (Facebook, LinkedIn, X).</p>
             </button>
           </div>
         </div>
 
         <div className="border-t border-slate-800 pt-5">
-          <h3 className="froc-section-title">Canais Alvo</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="froc-section-title">Canais Alvo</h3>
+            {cfg.mode === 'automatic' && (
+              <span className="text-[11px] text-cyan-300">Modo automático: canais com publicação direta (Facebook, LinkedIn, X)</span>
+            )}
+          </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            {channels.map((ch) => (
-              <button
-                key={ch}
-                onClick={() => toggleChannel(ch)}
-                className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${
-                  cfg.targetPlatforms.includes(ch) ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-200' : 'border-slate-700 bg-slate-900 text-slate-400'
-                }`}
-              >
-                {ch}
-              </button>
-            ))}
+            {channels.map((ch) => {
+              const isSelected = cfg.targetPlatforms.includes(ch.name);
+              const isIncompatible = cfg.mode === 'automatic' && !ch.directSupport;
+
+              return (
+                <button
+                  key={ch.name}
+                  onClick={() => toggleChannel(ch.name, ch.directSupport)}
+                  className={`min-h-10 rounded-xl border px-3 text-xs font-semibold flex items-center gap-1.5 transition ${
+                    isIncompatible
+                      ? 'border-slate-800 bg-slate-950/60 text-slate-600 cursor-not-allowed opacity-60'
+                      : isSelected
+                      ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-200'
+                      : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600'
+                  }`}
+                  title={isIncompatible ? 'Publicação direta não suportada no modo automático. Apenas no modo Aprovação manual.' : undefined}
+                >
+                  <span>{ch.name}</span>
+                  {isIncompatible && (
+                    <span className="rounded bg-slate-800 px-1 text-[9px] text-slate-400">Apenas manual</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 

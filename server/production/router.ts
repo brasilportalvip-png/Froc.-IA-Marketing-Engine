@@ -8,7 +8,7 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getProviderAutoPublishReason, getTikTokUploadStatus, handleOAuthCallback, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { createOAuthUrl, disconnectSocial, getFacebookPageSelectionCandidates, getProviderAutoPublishReason, getTikTokUploadStatus, handleOAuthCallback, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { getSchedulerHealth, processSchedulerTick, processSocialTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
@@ -754,8 +754,9 @@ router.post('/content/scheduled/:id/retry', requireAuth, asyncRoute(async (req: 
   const snap = await ref.get();
   if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Agendamento não encontrado.' });
   const current = snap.data() as any;
+  const existingResults = Array.isArray(current.publicationResults) ? current.publicationResults : [];
 
-  if (current.status === 'requires_review') {
+  if (current.status === 'requires_review' || existingResults.some((r: any) => r?.externalState === 'unknown')) {
     return res.status(409).json({
       error: 'Publicações em estado de verificação manual não podem ser reagendadas automaticamente devido ao risco de duplicação externa.'
     });
@@ -765,7 +766,13 @@ router.post('/content/scheduled/:id/retry', requireAuth, asyncRoute(async (req: 
     return res.status(409).json({ error: 'Somente publicações com falha comprovada podem ser reenviadas.' });
   }
 
-  const existingResults = Array.isArray(current.publicationResults) ? current.publicationResults : [];
+  const failedResults = existingResults.filter((r: any) => !r?.success);
+  if (failedResults.length > 0 && failedResults.every((r: any) => r?.retrySafe === false)) {
+    return res.status(409).json({
+      error: 'Falha definitiva de autenticação ou parâmetro. Reconecte a conta ou edite o conteúdo antes de tentar novamente.'
+    });
+  }
+
   const successfulResults = existingResults.filter((r: any) => r?.success && r?.externalId);
   const requestedPlatforms = Array.isArray(current.platforms) ? current.platforms : [];
 
@@ -977,6 +984,38 @@ router.post('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticat
   const rawHours = Array.isArray(req.body?.preferredHours) ? req.body.preferredHours : undefined;
   const preferredHours = rawHours ? rawHours.filter((h: any) => typeof h === 'number' && h >= 0 && h <= 23) : undefined;
   const timezone = safeString(req.body?.timezone, 80) || 'America/Sao_Paulo';
+  const targetPlatforms = stringArray(req.body?.targetPlatforms, 10);
+
+  if (requestedEnabled && requestedMode === 'automatic') {
+    const targets = targetPlatforms.length > 0 ? targetPlatforms : ['facebook'];
+    for (const plat of targets) {
+      const provider = normalizeProvider(plat);
+      if (!provider || !isTextAutoPublishSupported(provider)) {
+        return res.status(400).json({
+          error: `O canal "${plat}" não suporta publicação automática direta no modo automático (suportados apenas Facebook, LinkedIn e X).`
+        });
+      }
+      const connSnap = await firestore().collection(COLLECTIONS.socialConnections)
+        .where('userId', '==', req.user!.id)
+        .where('companyId', '==', companyId)
+        .where('provider', '==', provider)
+        .limit(1)
+        .get();
+
+      if (connSnap.empty) {
+        return res.status(400).json({
+          error: `O canal "${plat}" não está conectado para esta empresa. Conecte-o em Redes Sociais antes de ativar o modo automático.`
+        });
+      }
+      const conn = connSnap.docs[0].data() as any;
+      const isExpired = conn.expiresAt ? new Date(conn.expiresAt).getTime() <= Date.now() : false;
+      if (conn.status !== 'connected' || (!conn.encryptedAccessToken && !conn.accessToken) || isExpired) {
+        return res.status(400).json({
+          error: `A conexão do canal "${plat}" expirou ou está inativa. Reconecte-a em Redes Sociais antes de ativar o modo automático.`
+        });
+      }
+    }
+  }
 
   const update = cleanObject({
     id,
@@ -988,7 +1027,7 @@ router.post('/autopilot/config', requireAuth, asyncRoute(async (req: Authenticat
     timezone,
     preferredDays,
     preferredHours,
-    targetPlatforms: stringArray(req.body?.targetPlatforms, 10),
+    targetPlatforms,
     primaryGoal: safeString(req.body?.primaryGoal, 2000) || 'Engajamento e Vendas',
     maxMonthlyCredits: Math.max(5, Number(req.body?.maxMonthlyCredits || 100)),
     updatedAt: nowIso(),
@@ -1044,6 +1083,9 @@ router.get('/social/:provider/callback', asyncRoute(async (req, res) => {
   if (!code || !state) return res.redirect(`${config.appUrl}/redes-sociais?error=${encodeURIComponent('Autorização OAuth incompleta')}`);
   try {
     const result = await handleOAuthCallback({ provider, code, state });
+    if (result.selectionRequired && result.pageSelectToken) {
+      return res.redirect(`${config.appUrl}/redes-sociais?pageSelection=${encodeURIComponent(result.pageSelectToken)}&companyId=${encodeURIComponent(result.companyId)}`);
+    }
     res.redirect(`${config.appUrl}/redes-sociais?connected=${encodeURIComponent(provider)}&companyId=${encodeURIComponent(result.companyId)}`);
   } catch (err: any) {
     const publicError = sanitizeOAuthPublicError(err, provider);
@@ -1067,15 +1109,30 @@ router.delete('/social/:provider/disconnect', requireAuth, asyncRoute(async (req
   res.json({ success, message: success ? 'Conta desconectada.' : 'Conexão não encontrada.' });
 }));
 
-// Legacy-compatible social routes used by the existing UI
+router.get('/social/facebook/selection-candidates', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const selectionToken = safeString(req.query.selectionToken || req.query.pageSelectToken || req.headers['x-selection-token'], 1000);
+  const companyId = safeString(req.query.companyId, 200) || undefined;
+  if (!selectionToken) {
+    return res.status(400).json({ error: 'selectionToken é obrigatório.' });
+  }
+  const pages = await getFacebookPageSelectionCandidates({
+    userId: req.user!.id,
+    selectionToken,
+    companyId
+  });
+  res.json({ pages });
+}));
+
 router.post('/social/facebook/select-page', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const selectionToken = safeString(req.body?.selectionToken, 1000);
-  const pageId = safeString(req.body?.pageId, 200);
+  const selectionToken = safeString(req.body?.selectionToken || req.body?.pageSelectToken, 1000);
+  const pageId = safeString(req.body?.pageId || req.body?.selectedPageId, 200);
+  const companyId = safeString(req.body?.companyId, 200) || undefined;
   if (!selectionToken || !pageId) {
     return res.status(400).json({ error: 'selectionToken e pageId são obrigatórios.' });
   }
   const result = await selectFacebookPage({
     userId: req.user!.id,
+    companyId,
     selectionToken,
     pageId
   });
@@ -1320,32 +1377,28 @@ router.delete('/admin/blog/:id', requireAdmin, asyncRoute(async (req: Authentica
 // Scheduler.
 router.get('/cron/health', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
-  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
-  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  const isAuthorized = Boolean(config.cronSecret && auth === `Bearer ${config.cronSecret}`);
   if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
   res.json(await getSchedulerHealth());
 }));
 
 router.get('/cron/process', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
-  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
-  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  const isAuthorized = Boolean(config.cronSecret && auth === `Bearer ${config.cronSecret}`);
   if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
   res.json(await processSchedulerTick());
 }));
 
 router.get('/cron/social', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
-  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
-  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  const isAuthorized = Boolean(config.cronSecret && auth === `Bearer ${config.cronSecret}`);
   if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
   res.json(await processSocialTick());
 }));
 
 router.post('/cron/social', asyncRoute(async (req, res) => {
   const auth = String(req.headers.authorization || '');
-  const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
-  const isAuthorized = Boolean(config.cronSecret && (auth === `Bearer ${config.cronSecret}` || querySecret === config.cronSecret));
+  const isAuthorized = Boolean(config.cronSecret && auth === `Bearer ${config.cronSecret}`);
   if (!isAuthorized) return res.status(401).json({ error: 'Cron não autorizado.' });
   res.json(await processSocialTick());
 }));

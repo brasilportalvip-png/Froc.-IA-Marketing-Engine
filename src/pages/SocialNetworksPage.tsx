@@ -35,6 +35,15 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
   const [copiedPublishId, setCopiedPublishId] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Facebook Multi-Page Selection Modal State
+  const [isPageSelectModalOpen, setIsPageSelectModalOpen] = useState(false);
+  const [pageCandidates, setPageCandidates] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedPageId, setSelectedPageId] = useState('');
+  const [pageSelectToken, setPageSelectToken] = useState('');
+  const [pageSelectLoading, setPageSelectLoading] = useState(false);
+  const [pageSelectSaving, setPageSelectSaving] = useState(false);
+  const [pageSelectError, setPageSelectError] = useState('');
+
   const fetchConnections=useCallback(async()=>{
     if(!selectedCompany?.id){setConnections([]);return;}
     setLoading(true); setError('');
@@ -48,12 +57,37 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     const p = new URLSearchParams(window.location.search);
     const connected = p.get('connected');
     const oauthError = p.get('error');
+    const pageSelection = p.get('pageSelection') || p.get('pageSelectToken');
+
     if (connected) {
       setMessage(`${connected} conectado com sucesso.`);
       void fetchConnections();
     }
     if (oauthError) setError(oauthError);
-    if (connected || oauthError || p.has('companyId')) {
+
+    if (pageSelection) {
+      setPageSelectToken(pageSelection);
+      setIsPageSelectModalOpen(true);
+      setPageSelectLoading(true);
+      setPageSelectError('');
+      const compId = p.get('companyId') || selectedCompany?.id || '';
+      apiRequest<{ pages: Array<{ id: string; name: string }> }>(
+        `/api/social/facebook/selection-candidates?selectionToken=${encodeURIComponent(pageSelection)}${compId ? `&companyId=${encodeURIComponent(compId)}` : ''}`
+      )
+        .then((res) => {
+          const list = res.pages || [];
+          setPageCandidates(list);
+          if (list.length > 0) setSelectedPageId(list[0].id);
+        })
+        .catch((err: any) => {
+          setPageSelectError(err.message || 'Não foi possível carregar a lista de Páginas disponíveis.');
+        })
+        .finally(() => {
+          setPageSelectLoading(false);
+        });
+    }
+
+    if (connected || oauthError || (!pageSelection && p.has('companyId'))) {
       try {
         p.delete('connected');
         p.delete('error');
@@ -65,7 +99,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
         // Safe fallback
       }
     }
-  },[fetchConnections]);
+  },[fetchConnections, selectedCompany?.id]);
 
   const byProvider=useMemo(()=>new Map(connections.map(c=>[c.provider,c])),[connections]);
   const connect=async(provider:Provider)=>{
@@ -206,6 +240,45 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     setTimeout(() => setCopiedPublishId(false), 2000);
   };
 
+  const handleConfirmPageSelection = async () => {
+    if (!pageSelectToken || !selectedPageId) {
+      setPageSelectError('Selecione uma Página do Facebook para continuar.');
+      return;
+    }
+    setPageSelectSaving(true);
+    setPageSelectError('');
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        '/api/social/facebook/select-page',
+        {
+          method: 'POST',
+          body: {
+            selectionToken: pageSelectToken,
+            pageId: selectedPageId,
+            companyId: selectedCompany?.id
+          }
+        }
+      );
+      setMessage(res.message || 'Página do Facebook conectada com sucesso.');
+      setIsPageSelectModalOpen(false);
+      setPageSelectToken('');
+      setPageCandidates([]);
+      // Clean query url params
+      const p = new URLSearchParams(window.location.search);
+      p.delete('pageSelection');
+      p.delete('pageSelectToken');
+      p.delete('companyId');
+      const newSearch = p.toString();
+      const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
+      window.history.replaceState({}, document.title, newUrl);
+      await fetchConnections();
+    } catch (err: any) {
+      setPageSelectError(err.message || 'Falha ao conectar Página selecionada.');
+    } finally {
+      setPageSelectSaving(false);
+    }
+  };
+
   return <div className="mx-auto max-w-6xl space-y-6 animate-fadeIn">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div><h2 className="flex items-center gap-2 text-xl font-bold text-white"><Share2 className="text-cyan-400"/>Redes Sociais</h2><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-400">Conecte contas oficiais via OAuth. O Froc.IA só registra publicação quando a API do provedor confirma sucesso.</p></div>
@@ -246,6 +319,118 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
         )}
       </div>
     </article>})}</div>}
+
+    {/* Facebook Page Selection Modal */}
+    {isPageSelectModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-sm animate-fadeIn">
+        <div className="relative flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#334155] bg-[#0F172A] shadow-2xl shadow-black/80">
+          <div className="flex items-center justify-between border-b border-slate-800 p-4 sm:p-5">
+            <div className="flex items-center gap-2.5">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#1E293B] text-lg">📘</div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Selecionar Página do Facebook</h3>
+                <p className="text-[11px] text-slate-400">Escolha a Página gerenciada para conectar à empresa</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPageSelectModalOpen(false)}
+              className="grid h-8 w-8 place-items-center rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+            {pageSelectError && (
+              <div className="flex gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-200">
+                <AlertTriangle size={16} className="shrink-0 text-rose-400 mt-0.5" />
+                <p className="leading-relaxed">{pageSelectError}</p>
+              </div>
+            )}
+
+            {pageSelectLoading ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center space-y-3">
+                <div className="w-7 h-7 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin"></div>
+                <p className="text-xs text-slate-400">Carregando Páginas autorizadas...</p>
+              </div>
+            ) : pageCandidates.length === 0 ? (
+              <div className="rounded-2xl border border-slate-800 bg-[#1E293B]/40 p-6 text-center space-y-2">
+                <Info size={24} className="mx-auto text-amber-400" />
+                <p className="text-xs font-bold text-white">Nenhuma Página disponível</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  O token não possui permissões administrativas ou você não selecionou Páginas durante o OAuth. Tente reconectar autorizando as Páginas desejadas.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Páginas disponíveis ({pageCandidates.length})
+                </label>
+                <div className="space-y-2">
+                  {pageCandidates.map((page) => (
+                    <label
+                      key={page.id}
+                      className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition ${
+                        selectedPageId === page.id
+                          ? 'border-cyan-400 bg-cyan-500/10'
+                          : 'border-slate-800 bg-[#1E293B]/60 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="radio"
+                          name="facebookPage"
+                          value={page.id}
+                          checked={selectedPageId === page.id}
+                          onChange={() => setSelectedPageId(page.id)}
+                          className="h-4 w-4 text-cyan-400 focus:ring-cyan-400"
+                        />
+                        <div>
+                          <p className="text-xs font-bold text-white">{page.name}</p>
+                          <p className="text-[10px] text-slate-400">ID: {page.id}</p>
+                        </div>
+                      </div>
+                      {selectedPageId === page.id && (
+                        <Check size={16} className="text-cyan-400" />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-slate-800 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2.5">
+            <button
+              type="button"
+              onClick={() => setIsPageSelectModalOpen(false)}
+              className="min-h-11 rounded-xl border border-slate-700 px-4 text-xs font-bold text-slate-300 hover:bg-slate-800"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmPageSelection}
+              disabled={pageSelectSaving || !selectedPageId || pageCandidates.length === 0}
+              className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-xs font-extrabold text-white shadow-lg shadow-blue-500/25 hover:opacity-95 disabled:opacity-50"
+            >
+              {pageSelectSaving ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  <span>Conectando Página...</span>
+                </>
+              ) : (
+                <>
+                  <Check size={15} />
+                  <span>Conectar Página Selecionada</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* TikTok Draft Upload Modal */}
     {isTikTokModalOpen && (

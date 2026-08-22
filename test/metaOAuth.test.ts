@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOAuthUrl, handleOAuthCallback, resolveMetaAccount, sanitizeOAuthPublicError, selectFacebookPage, SocialProvider } from '../server/production/social.js';
+import { createOAuthUrl, handleOAuthCallback, resolveMetaAccount, sanitizeOAuthPublicError, selectFacebookPage, getFacebookPageSelectionCandidates, ensureValidSocialAccessToken, refreshSocialAccessToken, encrypt, SocialProvider } from '../server/production/social.js';
 import { resetMemoryDb, firestore, COLLECTIONS, stableId } from '../server/production/store.js';
 import { config } from '../server/config/index.js';
 import { router } from '../server/production/router.js';
@@ -588,5 +588,229 @@ test('12. Facebook Multi-Page: selectFacebookPage conecta a página escolhida e 
     },
     /inválido ou expirado/
   );
+});
+
+test('21. Facebook Multi-Pages: getFacebookPageSelectionCandidates retorna dados sanitizados sem vazar tokens', async () => {
+  resetMemoryDb();
+  const userId = 'usr_cand_test';
+  const token = 'tok_opaque_candidate_123';
+  const tokenHash = stableId(token);
+
+  await firestore().collection(COLLECTIONS.pageSelectTokens).doc(tokenHash).set({
+    tokenHash,
+    userId,
+    companyId: 'comp_cand_1',
+    provider: 'facebook',
+    pages: [
+      { id: 'page_a', name: 'Page Alpha', accessToken: 'EAAB_secret_token_alpha', tasks: ['CREATE_CONTENT'] },
+      { id: 'page_b', name: 'Page Beta', accessToken: 'EAAB_secret_token_beta', tasks: ['CREATE_CONTENT'] }
+    ],
+    expiresAt: Date.now() + 600000,
+    claimed: false,
+    createdAt: new Date().toISOString()
+  });
+
+  const candidates = await getFacebookPageSelectionCandidates(userId, token);
+  assert.equal(candidates.companyId, 'comp_cand_1');
+  assert.equal(candidates.pages.length, 2);
+  assert.equal(candidates.pages[0].id, 'page_a');
+  assert.equal(candidates.pages[0].name, 'Page Alpha');
+  // Tokens NÃO devem estar presentes no retorno público
+  assert.equal((candidates.pages[0] as any).accessToken, undefined);
+  assert.equal((candidates.pages[1] as any).accessToken, undefined);
+
+  // Usuário diferente tentando acessar token deve ser rejeitado (403/Forbidden)
+  await assert.rejects(
+    async () => {
+      await getFacebookPageSelectionCandidates('usr_other_user', token);
+    },
+    /Permissão negada/
+  );
+});
+
+test('22. Token Refresh: X (Twitter) OAuth2 refresh com Basic Auth e rotação de refresh_token', async () => {
+  const originalFetch = globalThis.fetch;
+  let refreshCalled = false;
+  let authHeaderUsed = '';
+
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('api.twitter.com/2/oauth2/token') || url.includes('api.x.com/2/oauth2/token')) {
+        refreshCalled = true;
+        authHeaderUsed = (init?.headers as any)?.Authorization || '';
+        return new Response(JSON.stringify({
+          access_token: 'new_x_access_token_777',
+          refresh_token: 'new_x_refresh_token_888',
+          expires_in: 7200,
+          token_type: 'bearer'
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const res = await refreshSocialAccessToken('x', 'old_x_refresh_token');
+    assert.equal(refreshCalled, true, 'Deve ter chamado endpoint de refresh do X');
+    assert.equal(res.accessToken, 'new_x_access_token_777');
+    assert.equal(res.refreshToken, 'new_x_refresh_token_888');
+    assert.ok(res.expiresAt > Date.now(), 'expiresAt deve ser futuro');
+    assert.ok(authHeaderUsed.startsWith('Basic '), 'Deve usar Basic Authorization com Client ID e Secret');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('23. Token Refresh: Google / YouTube OAuth2 refresh flow', async () => {
+  const originalFetch = globalThis.fetch;
+  let refreshCalled = false;
+
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('oauth2.googleapis.com/token')) {
+        refreshCalled = true;
+        return new Response(JSON.stringify({
+          access_token: 'new_youtube_access_token_999',
+          expires_in: 3600,
+          token_type: 'Bearer'
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const res = await refreshSocialAccessToken('youtube', 'google_refresh_token_xyz');
+    assert.equal(refreshCalled, true, 'Deve chamar endpoint de token do Google');
+    assert.equal(res.accessToken, 'new_youtube_access_token_999');
+    assert.ok(res.expiresAt > Date.now());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('24. Token Refresh: Pinterest OAuth2 refresh flow', async () => {
+  const originalFetch = globalThis.fetch;
+  let refreshCalled = false;
+
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.pinterest.com/v5/oauth/token')) {
+        refreshCalled = true;
+        return new Response(JSON.stringify({
+          access_token: 'new_pinterest_access_token_333',
+          refresh_token: 'new_pinterest_refresh_token_444',
+          expires_in: 86400,
+          token_type: 'bearer'
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const res = await refreshSocialAccessToken('pinterest', 'pin_refresh_token_abc');
+    assert.equal(refreshCalled, true, 'Deve chamar endpoint de token do Pinterest');
+    assert.equal(res.accessToken, 'new_pinterest_access_token_333');
+    assert.equal(res.refreshToken, 'new_pinterest_refresh_token_444');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('25. Token Refresh: LinkedIn tenta refresh apenas se houver refresh_token', async () => {
+  const originalFetch = globalThis.fetch;
+  let refreshCalled = false;
+
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('linkedin.com/oauth/v2/accessToken')) {
+        refreshCalled = true;
+        return new Response(JSON.stringify({
+          access_token: 'new_linkedin_access_token_555',
+          refresh_token: 'new_linkedin_refresh_token_666',
+          expires_in: 5184000
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const res = await refreshSocialAccessToken('linkedin', 'li_refresh_token_123');
+    assert.equal(refreshCalled, true);
+    assert.equal(res.accessToken, 'new_linkedin_access_token_555');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('26. Token Lifecycle: ensureValidSocialAccessToken renova token expirado e persiste novo token criptografado', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const connId = 'conn_refresh_lifecycle_test';
+
+  // Conexão expirada há 10 minutos mas com refresh_token válido
+  await db.collection(COLLECTIONS.socialConnections).doc(connId).set({
+    id: connId,
+    userId: 'usr_token_cycle',
+    companyId: 'comp_token_cycle',
+    provider: 'x',
+    status: 'connected',
+    encryptedAccessToken: encrypt('expired_access_token'),
+    encryptedRefreshToken: encrypt('valid_refresh_token_x'),
+    expiresAt: new Date(Date.now() - 600000).toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('oauth2/token')) {
+        return new Response(JSON.stringify({
+          access_token: 'brand_new_refreshed_access_token',
+          refresh_token: 'brand_new_refreshed_refresh_token',
+          expires_in: 7200,
+          token_type: 'bearer'
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const validToken = await ensureValidSocialAccessToken(connId);
+    assert.equal(validToken, 'brand_new_refreshed_access_token');
+
+    // Confirma que conexão foi atualizada no banco
+    const connFresh = await db.collection(COLLECTIONS.socialConnections).doc(connId).get();
+    const data = connFresh.data() as any;
+    assert.equal(data.status, 'connected');
+    assert.ok(new Date(data.expiresAt).getTime() > Date.now(), 'Novo expiresAt deve ser futuro');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('27. Token Lifecycle: Conexão sem refresh_token e expirada é marcada como token_expired', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const connId = 'conn_expired_no_refresh';
+
+  await db.collection(COLLECTIONS.socialConnections).doc(connId).set({
+    id: connId,
+    userId: 'usr_token_exp',
+    companyId: 'comp_token_exp',
+    provider: 'linkedin',
+    status: 'connected',
+    encryptedAccessToken: encrypt('expired_token_no_refresh'),
+    expiresAt: new Date(Date.now() - 600000).toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+
+  await assert.rejects(
+    async () => {
+      await ensureValidSocialAccessToken(connId);
+    },
+    /expirou/
+  );
+
+  const connFresh = await db.collection(COLLECTIONS.socialConnections).doc(connId).get();
+  assert.equal(connFresh.data()?.status, 'token_expired');
 });
 
