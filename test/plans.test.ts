@@ -496,10 +496,10 @@ test('Plans: Casos rigorosos de expiração temporal de active, approved, cancel
   assert.equal(res3.planId, 'plan_free');
   assert.equal(res3.planStatus, 'free');
 
-  // Caso 4: CANCEL_AT_PERIOD_END FUTURE => Mantém plano
+  // Caso 4: CANCEL_AT_PERIOD_END FUTURE => Mantém plano (com pagamento aprovado)
   const u4 = 'usr_cancel_future';
   await db.collection(COLLECTIONS.payments).doc('ord_u4').set({
-    id: 'ord_u4', userId: u4, planId: 'plan_business', status: 'cancel_at_period_end', subscriptionStatus: 'cancelled', currentPeriodEnd: future, createdAt: new Date().toISOString()
+    id: 'ord_u4', userId: u4, planId: 'plan_business', status: 'cancel_at_period_end', subscriptionStatus: 'cancelled', lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(), currentPeriodEnd: future, createdAt: new Date().toISOString()
   });
   const res4 = await recalculateUserPlan(u4);
   assert.equal(res4.planId, 'plan_business');
@@ -508,7 +508,7 @@ test('Plans: Casos rigorosos de expiração temporal de active, approved, cancel
   // Caso 5: CANCEL_AT_PERIOD_END EXPIRED => FREE
   const u5 = 'usr_cancel_expired';
   await db.collection(COLLECTIONS.payments).doc('ord_u5').set({
-    id: 'ord_u5', userId: u5, planId: 'plan_agency', status: 'cancel_at_period_end', subscriptionStatus: 'cancelled', currentPeriodEnd: past, createdAt: new Date(now - 40 * 86400000).toISOString()
+    id: 'ord_u5', userId: u5, planId: 'plan_agency', status: 'cancel_at_period_end', subscriptionStatus: 'cancelled', lastPaymentStatus: 'approved', lastCreditedAt: new Date(now - 40 * 86400000).toISOString(), currentPeriodEnd: past, createdAt: new Date(now - 40 * 86400000).toISOString()
   });
   const res5 = await recalculateUserPlan(u5);
   assert.equal(res5.planId, 'plan_free');
@@ -517,10 +517,10 @@ test('Plans: Casos rigorosos de expiração temporal de active, approved, cancel
   // Caso 6: MULTIPLE ORDERS (Expired Business + Valid Pro => PRO)
   const u6 = 'usr_multi_biz_pro';
   await db.collection(COLLECTIONS.payments).doc('ord_u6_biz').set({
-    id: 'ord_u6_biz', userId: u6, planId: 'plan_business', status: 'active', currentPeriodEnd: past, createdAt: new Date(now - 40 * 86400000).toISOString()
+    id: 'ord_u6_biz', userId: u6, planId: 'plan_business', status: 'active', lastPaymentStatus: 'approved', lastCreditedAt: new Date(now - 40 * 86400000).toISOString(), currentPeriodEnd: past, createdAt: new Date(now - 40 * 86400000).toISOString()
   });
   await db.collection(COLLECTIONS.payments).doc('ord_u6_pro').set({
-    id: 'ord_u6_pro', userId: u6, planId: 'plan_pro', status: 'active', currentPeriodEnd: future, createdAt: new Date().toISOString()
+    id: 'ord_u6_pro', userId: u6, planId: 'plan_pro', status: 'active', lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(), currentPeriodEnd: future, createdAt: new Date().toISOString()
   });
   const res6 = await recalculateUserPlan(u6);
   assert.equal(res6.planId, 'plan_pro');
@@ -531,6 +531,87 @@ test('Plans: Casos rigorosos de expiração temporal de active, approved, cancel
   const res7 = await recalculateUserPlan(u7);
   assert.equal(res7.planId, 'plan_free');
   assert.equal(res7.planStatus, 'free');
+
+  // Caso 8 (P01/P04): PREAPPROVAL APENAS AUTHORIZED SEM PAGAMENTO APROVADO => PERMANECE FREE
+  const u8 = 'usr_preapproval_only_authorized';
+  await db.collection(COLLECTIONS.payments).doc('ord_u8').set({
+    id: 'ord_u8', userId: u8, planId: 'plan_pro', status: 'pending', subscriptionStatus: 'authorized', createdAt: new Date().toISOString()
+  });
+  const res8 = await recalculateUserPlan(u8);
+  assert.equal(res8.planId, 'plan_free', 'Preapproval authorized sem liquidação não pode ativar plano Pro');
+  assert.equal(res8.planStatus, 'free');
+
+  // Caso 9 (P02): PREAPPROVAL PENDENTE CANCELADA NUNCA LIQUIDADA => PERMANECE FREE
+  const u9 = 'usr_preapproval_cancelled_unpaid';
+  await db.collection(COLLECTIONS.payments).doc('ord_u9').set({
+    id: 'ord_u9', userId: u9, planId: 'plan_business', status: 'cancelled', subscriptionStatus: 'cancelled', createdAt: new Date().toISOString()
+  });
+  const res9 = await recalculateUserPlan(u9);
+  assert.equal(res9.planId, 'plan_free', 'Assinatura cancelada antes do primeiro pagamento aprovado deve ser free');
+  assert.equal(res9.planStatus, 'free');
+});
+
+test('Payments: Sentinela de reversão único evita dedução dupla de créditos em múltiplos eventos de estorno', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_reversal_sentinel_test';
+  const orderId = 'order_rev_1';
+  const paymentId = 'mp_pay_rev_100';
+
+  // Cria pedido Pro de 150 créditos
+  await db.collection(COLLECTIONS.payments).doc(orderId).set({
+    id: orderId,
+    userId,
+    planId: 'plan_pro',
+    planName: 'PRO',
+    amount: 97,
+    currency: 'BRL',
+    creditsGranted: 150,
+    bonusCreditsGranted: 0,
+    status: 'pending',
+    billingMode: 'one_time'
+  });
+
+  // 1. Pagamento aprovado
+  await applyPaymentCycle({
+    orderId,
+    paymentId,
+    cycleId: paymentId,
+    status: 'approved',
+    amount: 97,
+    currency: 'BRL'
+  });
+
+  const walletAfterApprove = await getWallet(userId);
+  assert.equal(walletAfterApprove.balance, 150);
+  assert.equal(walletAfterApprove.planStatus, 'active');
+
+  // 2. Primeiro evento de estorno: 'refunded'
+  await applyPaymentCycle({
+    orderId,
+    paymentId,
+    cycleId: paymentId,
+    status: 'refunded',
+    amount: 97,
+    currency: 'BRL'
+  });
+
+  const walletAfterRefund = await getWallet(userId);
+  assert.equal(walletAfterRefund.balance, 0, 'Créditos estornados devem voltar a 0');
+  assert.equal(walletAfterRefund.planStatus, 'free');
+
+  // 3. Segundo evento para o MESMO paymentId: 'charged_back'
+  await applyPaymentCycle({
+    orderId,
+    paymentId,
+    cycleId: paymentId,
+    status: 'charged_back',
+    amount: 97,
+    currency: 'BRL'
+  });
+
+  const walletAfterChargedBack = await getWallet(userId);
+  assert.equal(walletAfterChargedBack.balance, 0, 'Sentinela único impede saldo negativo / dedução dupla');
 });
 
 test('AI & Credits: Mock AI em teste executa reserva, commit e rollback de créditos corretamente', async () => {

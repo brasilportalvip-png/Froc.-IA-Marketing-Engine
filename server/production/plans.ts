@@ -96,10 +96,17 @@ export async function recalculateUserPlan(userId: string): Promise<{
   const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
   const now = new Date().toISOString();
 
-  // Filtra pedidos estritamente válidos e não expirados
+  // Filtra pedidos estritamente válidos, oficialmente liquidados/aprovados e não expirados
   const activeOrders = orders.filter((o) => {
-    // Rejeita pagamentos estornados, contestados ou com falha
-    if (['refunded', 'charged_back', 'failed'].includes(o.status) || ['refunded', 'charged_back', 'failed'].includes(o.lastPaymentStatus)) {
+    // Rejeita pagamentos estornados, contestados, com falha ou rejeitados
+    if (['refunded', 'charged_back', 'failed', 'rejected'].includes(o.status) || ['refunded', 'charged_back', 'failed', 'rejected'].includes(o.lastPaymentStatus)) {
+      return false;
+    }
+
+    // Regra P01/P03: Pedidos com status 'pending' ou preapprovals apenas 'authorized' sem liquidação não concedem plano pago.
+    // Pedidos válidos devem ter status 'active', 'approved', 'cancel_at_period_end' com pagamento anterior aprovado (lastPaymentStatus ou lastCreditedAt).
+    const isExplicitlyPaidOrActive = o.status === 'active' || o.status === 'approved' || o.lastPaymentStatus === 'approved' || Boolean(o.lastCreditedAt);
+    if (!isExplicitlyPaidOrActive || o.status === 'pending' || (o.status === 'cancelled' && !o.lastCreditedAt && o.lastPaymentStatus !== 'approved')) {
       return false;
     }
 
@@ -108,14 +115,15 @@ export async function recalculateUserPlan(userId: string): Promise<{
       return false;
     }
 
-    // Se não possui currentPeriodEnd explícito mas possui data base, calcula ciclo de 30 dias
+    // Se não possui currentPeriodEnd explícito, calcula ciclo de 30 dias a partir da data de liquidação (lastCreditedAt)
     if (!o.currentPeriodEnd) {
-      const baseDate = o.lastCreditedAt || o.createdAt;
-      if (baseDate) {
-        const computedEnd = new Date(new Date(baseDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      if (o.lastCreditedAt) {
+        const computedEnd = new Date(new Date(o.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
         if (computedEnd <= now) {
           return false;
         }
+      } else {
+        return false;
       }
     }
 

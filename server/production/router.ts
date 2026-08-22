@@ -912,11 +912,20 @@ router.get('/payments/plans', (_req, res) => res.json({ plans: config.plans, gat
 router.post('/payments/checkout', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const planId = safeString(req.body?.planId, 100);
   if (!planId) return res.status(400).json({ error: 'Selecione um plano.' });
-  res.json(await createCheckout({ userId: req.user!.id, userEmail: req.user!.email, userName: req.user!.name, planId }));
+  const idempotencyKey = safeString(req.body?.idempotencyKey || req.headers['x-idempotency-key'], 200) || undefined;
+  res.json(await createCheckout({ userId: req.user!.id, userEmail: req.user!.email, userName: req.user!.name, planId, idempotencyKey }));
 }));
 router.get('/payments/orders', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const snap = await firestore().collection(COLLECTIONS.payments).where('userId', '==', req.user!.id).get();
   res.json({ orders: queryData<any>(snap).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))) });
+}));
+router.get('/payments/orders/:orderId', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const ref = firestore().collection(COLLECTIONS.payments).doc(req.params.orderId);
+  const snap = await ref.get();
+  if (!snap.exists || snap.data()?.userId !== req.user!.id) {
+    return res.status(404).json({ error: 'Pedido não encontrado.' });
+  }
+  res.json({ order: { id: snap.id, ...snap.data() } });
 }));
 router.get('/payments/subscriptions', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   res.json({ subscriptions: await listUserSubscriptions(req.user!.id), billingMode: config.mercadoPago.billingMode });

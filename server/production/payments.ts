@@ -16,30 +16,64 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 }
 
 async function mpJson(url: string, init: RequestInit = {}): Promise<any> {
-  const response = await fetch(url, {
-    ...init,
-    headers: authHeaders({ ...(init.headers as Record<string, string> || {}) })
-  });
-  const body = await response.json().catch(() => ({} as any));
-  if (!response.ok) {
-    const message = body?.message || body?.error_description || body?.error || `Mercado Pago HTTP ${response.status}`;
-    const error: any = new Error(String(message));
-    error.statusCode = response.status >= 500 ? 502 : 400;
-    throw error;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: authHeaders({ ...(init.headers as Record<string, string> || {}) })
+    });
+    const body = await response.json().catch(() => ({} as any));
+    if (!response.ok) {
+      const message = body?.message || body?.error_description || body?.error || `Mercado Pago HTTP ${response.status}`;
+      const error: any = new Error(String(message));
+      error.statusCode = response.status >= 500 ? 502 : 400;
+      throw error;
+    }
+    return body;
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      const timeoutError: any = new Error('Tempo limite excedido ao comunicar com o Mercado Pago.');
+      timeoutError.statusCode = 504;
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return body;
 }
 
-export async function createCheckout(data: { userId: string; userEmail: string; userName: string; planId: string }) {
+export async function createCheckout(data: { userId: string; userEmail: string; userName: string; planId: string; idempotencyKey?: string }) {
   if (!config.mercadoPago.accessToken) throw new Error('Mercado Pago não configurado no servidor.');
   const plan = config.plans.find((item) => item.id === data.planId);
   if (!plan) throw new Error('Plano inválido.');
+
+  // Idempotência no checkout (P09/P10): evita cobranças e ordens duplicadas por retries
+  if (data.idempotencyKey) {
+    const existingSnap = await firestore().collection(COLLECTIONS.payments)
+      .where('userId', '==', data.userId)
+      .where('clientCheckoutKey', '==', data.idempotencyKey)
+      .limit(1)
+      .get();
+    if (!existingSnap.empty) {
+      const existing = existingSnap.docs[0].data() as any;
+      if (existing.initPoint && ['pending', 'authorized', 'active'].includes(existing.status)) {
+        return {
+          order: { id: existingSnap.docs[0].id, ...existing },
+          initPoint: existing.initPoint,
+          billingMode: existing.billingMode || config.mercadoPago.billingMode
+        };
+      }
+    }
+  }
 
   const orderId = newId('order');
   const billingMode = config.mercadoPago.billingMode as BillingMode;
   const order: Record<string, any> = {
     id: orderId,
     userId: data.userId,
+    clientCheckoutKey: data.idempotencyKey || null,
     planId: plan.id,
     planName: plan.name,
     amount: plan.price,
@@ -181,7 +215,7 @@ export async function applyPaymentCycle(data: {
     const order = orderSnap.data() as any;
     const walletRef = db.collection(COLLECTIONS.wallets).doc(order.userId);
     const creditIdemRef = db.collection(COLLECTIONS.idempotency).doc(stableId(`mp-credit:${data.paymentId}`));
-    const reversalIdemRef = db.collection(COLLECTIONS.idempotency).doc(stableId(`mp-reversal:${data.paymentId}:${data.status}`));
+    const reversalIdemRef = db.collection(COLLECTIONS.idempotency).doc(stableId(`mp-reversal:${data.paymentId}`));
 
     // Todas as leituras da transação acontecem antes da primeira escrita.
     const [walletSnap, creditIdemSnap, reversalIdemSnap] = await Promise.all([
@@ -264,11 +298,11 @@ export async function applyPaymentCycle(data: {
         balanceBefore: before,
         balanceAfter: after,
         referenceId: data.paymentId,
-        idempotencyKey: `mp-reversal:${data.paymentId}:${status}`,
+        idempotencyKey: `mp-reversal:${data.paymentId}`,
         timestamp: nowIso(),
         metadata: { orderId: data.orderId, planId: order.planId, cycleId: data.cycleId }
       });
-      tx.set(reversalIdemRef, { key: `mp-reversal:${data.paymentId}:${status}`, createdAt: nowIso(), orderId: data.orderId, credits });
+      tx.set(reversalIdemRef, { key: `mp-reversal:${data.paymentId}`, createdAt: nowIso(), orderId: data.orderId, credits, status });
       baseUpdate.status = status;
       baseUpdate.reversedAt = nowIso();
       userIdToRecalculate = order.userId;
@@ -341,15 +375,21 @@ async function processSubscription(resourceId: string): Promise<{ processed: boo
   const now = nowIso();
   const currentPeriodEnd = existing.currentPeriodEnd || (existing.lastCreditedAt ? new Date(new Date(existing.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : null);
 
-  let newStatus = String(subscription.status || 'pending');
+  let newStatus = existing.status || 'pending';
+  let periodEnd = existing.currentPeriodEnd || null;
+
   if (subscription.status === 'cancelled') {
-    if (currentPeriodEnd && currentPeriodEnd > now) {
+    if (existing.lastCreditedAt && currentPeriodEnd && currentPeriodEnd > now) {
       newStatus = 'cancel_at_period_end';
+      periodEnd = currentPeriodEnd;
     } else {
       newStatus = 'cancelled';
+      periodEnd = null;
     }
   } else if (subscription.status === 'authorized') {
-    newStatus = 'active';
+    // Preapproval autorizada apenas sinaliza autorização de cobrança periódica;
+    // O status do plano só passa a 'active' após o primeiro pagamento 'approved' via processAuthorizedPayment.
+    newStatus = existing.status === 'active' ? 'active' : 'pending';
   }
 
   await ref.set({
@@ -357,7 +397,7 @@ async function processSubscription(resourceId: string): Promise<{ processed: boo
     providerPreapprovalId: String(subscription.id),
     subscriptionStatus: String(subscription.status || 'pending'),
     status: newStatus,
-    currentPeriodEnd: currentPeriodEnd || existing.currentPeriodEnd || null,
+    currentPeriodEnd: periodEnd,
     nextPaymentDate: subscription.next_payment_date || null,
     updatedAt: nowIso()
   }, { merge: true });
