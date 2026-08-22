@@ -49,53 +49,134 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
   const plan = config.plans.find((item) => item.id === data.planId);
   if (!plan) throw new Error('Plano inválido.');
 
-  // Idempotência no checkout (P09/P10): evita cobranças e ordens duplicadas por retries
+  const db = firestore();
+
+  // A01: Idempotência atômica com escopo por usuário e operação
+  let orderId: string;
+  let billingMode = config.mercadoPago.billingMode as BillingMode;
+
   if (data.idempotencyKey) {
-    const existingSnap = await firestore().collection(COLLECTIONS.payments)
-      .where('userId', '==', data.userId)
-      .where('clientCheckoutKey', '==', data.idempotencyKey)
-      .limit(1)
-      .get();
-    if (!existingSnap.empty) {
-      const existing = existingSnap.docs[0].data() as any;
-      if (existing.initPoint && ['pending', 'authorized', 'active'].includes(existing.status)) {
+    const idemDocId = stableId(`checkout:${data.userId}:${data.idempotencyKey}`);
+    const idemRef = db.collection(COLLECTIONS.idempotency).doc(idemDocId);
+
+    // Reserva atômica via transação
+    const reservation = await db.runTransaction(async (tx) => {
+      const idemSnap = await tx.get(idemRef);
+      if (idemSnap.exists) {
+        const stored = idemSnap.data() as any;
+        // Se a mesma chave foi enviada com plano ou usuário diferente => 409 Conflict
+        if (stored.planId !== data.planId || stored.userId !== data.userId) {
+          const conflictErr: any = new Error('Conflito de idempotência: a mesma chave já foi utilizada com outros parâmetros.');
+          conflictErr.statusCode = 409;
+          throw conflictErr;
+        }
+        return { isExisting: true, orderId: stored.orderId, initPoint: stored.initPoint, billingMode: stored.billingMode || billingMode, status: stored.status };
+      }
+
+      const newOrderId = newId('order');
+      const orderData: Record<string, any> = {
+        id: newOrderId,
+        userId: data.userId,
+        clientCheckoutKey: data.idempotencyKey,
+        planId: plan.id,
+        planName: plan.name,
+        amount: plan.price,
+        currency: 'BRL',
+        creditsGranted: plan.credits,
+        bonusCreditsGranted: plan.bonusCredits,
+        billingMode,
+        status: 'pending',
+        provider: 'mercadopago',
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      };
+
+      const newOrderRef = db.collection(COLLECTIONS.payments).doc(newOrderId);
+      tx.set(newOrderRef, orderData);
+      tx.set(idemRef, {
+        key: data.idempotencyKey,
+        userId: data.userId,
+        planId: data.planId,
+        orderId: newOrderId,
+        billingMode,
+        status: 'pending',
+        createdAt: nowIso()
+      });
+
+      return { isExisting: false, orderId: newOrderId, orderData };
+    });
+
+    if (reservation.isExisting) {
+      if (reservation.initPoint) {
         return {
-          order: { id: existingSnap.docs[0].id, ...existing },
-          initPoint: existing.initPoint,
-          billingMode: existing.billingMode || config.mercadoPago.billingMode
+          order: { id: reservation.orderId, planId: data.planId, status: reservation.status, initPoint: reservation.initPoint },
+          initPoint: reservation.initPoint,
+          billingMode: reservation.billingMode
         };
       }
+      // Se a ordem já existe mas ainda está em processamento de criação do initPoint por outra requisição concorrente,
+      // aguarda com polling até que o initPoint seja persistido
+      for (let attempt = 0; attempt < 80; attempt++) {
+        await new Promise((r) => setTimeout(r, 25));
+        const idemSnap = await db.collection(COLLECTIONS.idempotency).doc(idemDocId).get();
+        if (idemSnap.exists && idemSnap.data()?.initPoint) {
+          const stored = idemSnap.data() as any;
+          return {
+            order: { id: reservation.orderId, planId: data.planId, status: stored.status, initPoint: stored.initPoint },
+            initPoint: stored.initPoint,
+            billingMode: stored.billingMode || billingMode
+          };
+        }
+        const existingOrderSnap = await db.collection(COLLECTIONS.payments).doc(reservation.orderId).get();
+        if (existingOrderSnap.exists) {
+          const ext = existingOrderSnap.data() as any;
+          if (ext.initPoint) {
+            return {
+              order: { id: reservation.orderId, ...ext },
+              initPoint: ext.initPoint,
+              billingMode: ext.billingMode || billingMode
+            };
+          }
+        }
+      }
+      orderId = reservation.orderId;
+    } else {
+      orderId = reservation.orderId;
     }
+  } else {
+    orderId = newId('order');
+    const orderData: Record<string, any> = {
+      id: orderId,
+      userId: data.userId,
+      clientCheckoutKey: null,
+      planId: plan.id,
+      planName: plan.name,
+      amount: plan.price,
+      currency: 'BRL',
+      creditsGranted: plan.credits,
+      bonusCreditsGranted: plan.bonusCredits,
+      billingMode,
+      status: 'pending',
+      provider: 'mercadopago',
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    await db.collection(COLLECTIONS.payments).doc(orderId).set(orderData);
   }
 
-  const orderId = newId('order');
-  const billingMode = config.mercadoPago.billingMode as BillingMode;
-  const order: Record<string, any> = {
-    id: orderId,
-    userId: data.userId,
-    clientCheckoutKey: data.idempotencyKey || null,
-    planId: plan.id,
-    planName: plan.name,
-    amount: plan.price,
-    currency: 'BRL',
-    creditsGranted: plan.credits,
-    bonusCreditsGranted: plan.bonusCredits,
-    billingMode,
-    status: 'pending',
-    provider: 'mercadopago',
-    createdAt: nowIso(),
-    updatedAt: nowIso()
-  };
-  const orderRef = firestore().collection(COLLECTIONS.payments).doc(orderId);
-  await orderRef.set(order);
+  const orderRef = db.collection(COLLECTIONS.payments).doc(orderId);
+  const orderSnap = await orderRef.get();
+  const order = orderSnap.data() as any;
 
   try {
     if (billingMode === 'subscription') {
-      // Assinatura sem plano associado, com checkout pendente. O Mercado Pago
-      // disponibiliza init_point e passa a cobrar mensalmente após autorização.
+      const mpIdemKey = `mp-preapproval-${orderId}`;
       const body = await mpJson('https://api.mercadopago.com/preapproval', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': mpIdemKey
+        },
         body: JSON.stringify({
           reason: `Plano Froc.IA ${plan.name} - ${plan.totalCredits} créditos por ciclo`,
           external_reference: orderId,
@@ -119,13 +200,19 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
         status: String(body.status || 'pending'),
         updatedAt: nowIso()
       });
+
+      if (data.idempotencyKey) {
+        const idemDocId = stableId(`checkout:${data.userId}:${data.idempotencyKey}`);
+        await db.collection(COLLECTIONS.idempotency).doc(idemDocId).set({ initPoint, status: String(body.status || 'pending') }, { merge: true });
+      }
+
       return { order: { ...order, providerSubscriptionId: String(body.id), initPoint }, initPoint, billingMode };
     }
 
-    const idempotencyKey = `mp-pref-${orderId}`;
+    const mpIdemKey = `mp-pref-${orderId}`;
     const body = await mpJson('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': idempotencyKey },
+      headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': mpIdemKey },
       body: JSON.stringify({
         items: [{
           id: plan.id,
@@ -149,7 +236,13 @@ export async function createCheckout(data: { userId: string; userEmail: string; 
     });
     const initPoint = body.init_point || body.sandbox_init_point;
     if (!body.id || !initPoint) throw new Error('Mercado Pago não retornou o checkout.');
-    await orderRef.update({ providerPreferenceId: body.id, initPoint, idempotencyKey, updatedAt: nowIso() });
+    await orderRef.update({ providerPreferenceId: body.id, initPoint, idempotencyKey: mpIdemKey, updatedAt: nowIso() });
+
+    if (data.idempotencyKey) {
+      const idemDocId = stableId(`checkout:${data.userId}:${data.idempotencyKey}`);
+      await db.collection(COLLECTIONS.idempotency).doc(idemDocId).set({ initPoint, status: 'pending' }, { merge: true });
+    }
+
     return { order: { ...order, providerPreferenceId: body.id, initPoint }, initPoint, billingMode };
   } catch (error: any) {
     await orderRef.set({ status: 'failed', providerError: String(error?.message || error).slice(0, 500), updatedAt: nowIso() }, { merge: true });
@@ -183,6 +276,26 @@ export function verifyMercadoPagoSignature(data: { signatureHeader?: string; req
   } catch {
     return false;
   }
+}
+
+// A02: Máquina de estados monotônica estrita para ordens de pagamento
+const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
+  pending: ['approved', 'active', 'rejected', 'cancelled', 'failed'],
+  approved: ['refunded', 'charged_back'],
+  active: ['cancel_at_period_end', 'cancelled', 'refunded', 'charged_back'],
+  cancel_at_period_end: ['cancelled', 'refunded', 'charged_back'],
+  rejected: [],
+  failed: [],
+  cancelled: [],
+  refunded: [],
+  charged_back: []
+};
+
+export function canTransitionOrderStatus(currentStatus: string, targetStatus: string): boolean {
+  if (currentStatus === targetStatus) return true;
+  const allowed = ALLOWED_ORDER_TRANSITIONS[currentStatus];
+  if (!allowed) return false;
+  return allowed.includes(targetStatus);
 }
 
 function normalizePaymentStatus(status: string): string {
@@ -247,7 +360,15 @@ export async function applyPaymentCycle(data: {
     const before = Number(wallet.balance || 0);
     const currentPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
+    const currentStatus = order.status || 'pending';
+    let targetOrderStatus: string = currentStatus;
+
     if (status === 'approved' && !creditIdemSnap.exists) {
+      targetOrderStatus = order.billingMode === 'subscription' ? 'active' : 'approved';
+      if (!canTransitionOrderStatus(currentStatus, targetOrderStatus)) {
+        // Se a ordem já foi cancelada ou estornada, ignora aprovação tardia para manter monotonicidade
+        return;
+      }
       tx.set(walletRef, {
         ...wallet,
         id: order.userId,
@@ -275,11 +396,15 @@ export async function applyPaymentCycle(data: {
         metadata: { orderId: data.orderId, planId: order.planId, cycleId: data.cycleId, subscriptionId: data.subscriptionId || null }
       });
       tx.set(creditIdemRef, { key: `mp-credit:${data.paymentId}`, createdAt: nowIso(), orderId: data.orderId, credits });
-      baseUpdate.status = order.billingMode === 'subscription' ? 'active' : 'approved';
+      baseUpdate.status = targetOrderStatus;
       baseUpdate.currentPeriodEnd = currentPeriodEnd;
       baseUpdate.processedAt = nowIso();
       baseUpdate.lastCreditedAt = nowIso();
     } else if (['refunded', 'charged_back', 'cancelled'].includes(status) && creditIdemSnap.exists && !reversalIdemSnap.exists) {
+      targetOrderStatus = status;
+      if (canTransitionOrderStatus(currentStatus, targetOrderStatus)) {
+        baseUpdate.status = targetOrderStatus;
+      }
       const after = before - credits;
       tx.set(walletRef, {
         ...wallet,
@@ -303,11 +428,12 @@ export async function applyPaymentCycle(data: {
         metadata: { orderId: data.orderId, planId: order.planId, cycleId: data.cycleId }
       });
       tx.set(reversalIdemRef, { key: `mp-reversal:${data.paymentId}`, createdAt: nowIso(), orderId: data.orderId, credits, status });
-      baseUpdate.status = status;
       baseUpdate.reversedAt = nowIso();
       userIdToRecalculate = order.userId;
     } else if (status !== 'approved') {
-      baseUpdate.status = status;
+      if (canTransitionOrderStatus(currentStatus, status)) {
+        baseUpdate.status = status;
+      }
     }
 
     tx.set(orderRef, baseUpdate, { merge: true });
@@ -472,21 +598,35 @@ export async function cancelSubscription(userId: string, orderId?: string): Prom
     throw error;
   }
 
-  const currentPeriodEnd = target.nextPaymentDate || target.currentPeriodEnd || (target.lastCreditedAt ? new Date(new Date(target.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
+  // A04: Se a assinatura nunca teve um ciclo pago liquidado (lastCreditedAt ausente), não concede 30 dias de fallback
+  const now = nowIso();
+  const hasSettledCycle = Boolean(target.lastCreditedAt || target.lastPaymentStatus === 'approved');
+  let currentPeriodEnd: string | null = null;
+  let finalStatus = 'cancelled';
+
+  if (hasSettledCycle) {
+    const rawPeriodEnd = target.nextPaymentDate || target.currentPeriodEnd || (target.lastCreditedAt ? new Date(new Date(target.lastCreditedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() : null);
+    if (rawPeriodEnd && rawPeriodEnd > now) {
+      currentPeriodEnd = rawPeriodEnd;
+      finalStatus = 'cancel_at_period_end';
+    }
+  }
 
   await firestore().collection(COLLECTIONS.payments).doc(target.id).set({
-    status: 'cancel_at_period_end',
+    status: finalStatus,
     subscriptionStatus: 'cancelled',
     currentPeriodEnd,
-    cancelledAt: nowIso(),
-    updatedAt: nowIso()
+    cancelledAt: now,
+    updatedAt: now
   }, { merge: true });
 
+  const recalculated = await recalculateUserPlan(userId);
   await firestore().collection(COLLECTIONS.wallets).doc(userId).set({
-    planStatus: 'cancel_at_period_end',
-    currentPeriodEnd,
-    updatedAt: nowIso()
+    planId: recalculated.planId,
+    planStatus: recalculated.planStatus,
+    currentPeriodEnd: recalculated.currentPeriodEnd,
+    updatedAt: now
   }, { merge: true });
 
-  return { id: target.id, providerSubscriptionId: subscriptionId, status: 'cancel_at_period_end', currentPeriodEnd };
+  return { id: target.id, providerSubscriptionId: subscriptionId, status: finalStatus, currentPeriodEnd };
 }

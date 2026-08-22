@@ -152,6 +152,8 @@ class MemoryCollectionRef extends MemoryQuery {
 }
 
 class MemoryFirestoreStore {
+  private txLock: Promise<void> = Promise.resolve();
+
   collection(name: string): MemoryCollectionRef {
     return new MemoryCollectionRef(name);
   }
@@ -183,13 +185,25 @@ class MemoryFirestoreStore {
   }
 
   async runTransaction<T>(updateFunction: (transaction: any) => Promise<T>): Promise<T> {
-    const tx = {
-      get: async (docRef: any) => docRef.get(),
-      set: (docRef: any, data: any, options?: any) => docRef.set(data, options),
-      update: (docRef: any, data: any) => docRef.update(data),
-      delete: (docRef: any) => docRef.delete()
-    };
-    return await updateFunction(tx);
+    let releaseLock!: () => void;
+    const nextLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const currentLock = this.txLock;
+    this.txLock = nextLock;
+
+    await currentLock;
+    try {
+      const tx = {
+        get: async (docRef: any) => docRef.get(),
+        set: (docRef: any, data: any, options?: any) => docRef.set(data, options),
+        update: (docRef: any, data: any) => docRef.update(data),
+        delete: (docRef: any) => docRef.delete()
+      };
+      return await updateFunction(tx);
+    } finally {
+      releaseLock();
+    }
   }
 }
 

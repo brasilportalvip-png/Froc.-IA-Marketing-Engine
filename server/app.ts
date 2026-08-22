@@ -19,7 +19,7 @@ export function createApp() {
       return callback(new Error('Origem não autorizada pelo CORS.'));
     },
     methods: ['GET','POST','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization','X-Request-Id','X-Signature'],
+    allowedHeaders: ['Content-Type','Authorization','X-Request-Id','X-Signature','X-Idempotency-Key'],
     maxAge: 86400
   }));
 

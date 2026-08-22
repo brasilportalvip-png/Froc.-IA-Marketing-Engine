@@ -241,7 +241,7 @@ test('Plans: cancelSubscription é estritamente fail-closed e propaga erros do M
   const originalFetch = globalThis.fetch;
 
   try {
-    // 1. Cria assinatura ativa
+    // 1. Cria assinatura ativa com ciclo liquidado
     await db.collection(COLLECTIONS.payments).doc(orderId).set({
       id: orderId,
       userId,
@@ -250,6 +250,8 @@ test('Plans: cancelSubscription é estritamente fail-closed e propaga erros do M
       providerSubscriptionId: subId,
       status: 'active',
       subscriptionStatus: 'authorized',
+      lastPaymentStatus: 'approved',
+      lastCreditedAt: new Date().toISOString(),
       currentPeriodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString()
     });
@@ -673,3 +675,393 @@ test('AI & Credits: Mock AI em teste executa reserva, commit e rollback de créd
   assert.equal(walletAfterFail.balance, 49);
   assert.equal(walletAfterFail.reservedCredits, 0);
 });
+
+test('Payments: Dez checkouts concorrentes com a mesma chave geram uma única ordem e uma chamada ao provedor (A01)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_concurrent_checkout';
+  const idemKey = 'test-concurrent-key-123';
+
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+
+  try {
+    globalThis.fetch = async (url, init) => {
+      providerCalls++;
+      // Simula pequena latência de rede
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'mp_pref_conc_999', init_point: 'https://mercadopago.com/checkout/conc_999' })
+      } as any;
+    };
+
+    const { createCheckout } = await import('../server/production/payments.js');
+
+    // Dispara 10 requisições rigorosamente concorrentes
+    const requests = Array.from({ length: 10 }).map(() =>
+      createCheckout({
+        userId,
+        userEmail: 'user@teste.com',
+        userName: 'User Teste',
+        planId: 'plan_pro',
+        idempotencyKey: idemKey
+      })
+    );
+
+    const results = await Promise.all(requests);
+
+    // Todos os 10 devem retornar o MESMO initPoint e o MESMO orderId
+    const firstOrderId = results[0].order.id;
+    const firstInitPoint = results[0].initPoint;
+    assert.ok(firstOrderId);
+    assert.ok(firstInitPoint);
+
+    for (const res of results) {
+      assert.equal(res.order.id, firstOrderId);
+      assert.equal(res.initPoint, firstInitPoint);
+    }
+
+    // Apenas UMA ordem deve existir no banco
+    const orderDocs = await db.collection(COLLECTIONS.payments).where('userId', '==', userId).get();
+    assert.equal(orderDocs.size, 1);
+
+    // Apenas UMA chamada ao provedor
+    assert.equal(providerCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Payments: Mesma chave de idempotência com payload diferente retorna conflito 409 (A01)', async () => {
+  resetMemoryDb();
+  const userId = 'usr_conflict_idem';
+  const idemKey = 'test-conflict-key-456';
+
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'mp_pref_conflict', init_point: 'https://mp.com/conflict' })
+    } as any);
+
+    const { createCheckout } = await import('../server/production/payments.js');
+
+    // 1. Primeira chamada com plano PRO
+    const res1 = await createCheckout({
+      userId,
+      userEmail: 'user@teste.com',
+      userName: 'User Teste',
+      planId: 'plan_pro',
+      idempotencyKey: idemKey
+    });
+    assert.ok(res1.initPoint);
+
+    // 2. Segunda chamada com a MESMA chave mas plano BUSINESS => Deve lançar 409
+    await assert.rejects(
+      async () => {
+        await createCheckout({
+          userId,
+          userEmail: 'user@teste.com',
+          userName: 'User Teste',
+          planId: 'plan_business',
+          idempotencyKey: idemKey
+        });
+      },
+      (err: any) => {
+        return err.statusCode === 409 || err.message.includes('Conflito de idempotência');
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Payments: Máquina de estados monotônica impede regressão de cancelado/estornado para aprovado (A02)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_monotonic_test';
+  const orderId = 'ord_monotonic_1';
+
+  // Cria pedido já estornado (estado final)
+  await db.collection(COLLECTIONS.payments).doc(orderId).set({
+    id: orderId,
+    userId,
+    amount: 197,
+    currency: 'BRL',
+    planId: 'plan_business',
+    planName: 'BUSINESS',
+    billingMode: 'single_payment',
+    creditsGranted: 500,
+    status: 'refunded',
+    lastPaymentStatus: 'refunded',
+    createdAt: new Date().toISOString()
+  });
+
+  const { applyPaymentCycle, canTransitionOrderStatus } = await import('../server/production/payments.js');
+
+  // Testes diretos da matriz de transição
+  assert.equal(canTransitionOrderStatus('pending', 'approved'), true);
+  assert.equal(canTransitionOrderStatus('pending', 'active'), true);
+  assert.equal(canTransitionOrderStatus('approved', 'refunded'), true);
+  assert.equal(canTransitionOrderStatus('approved', 'charged_back'), true);
+  assert.equal(canTransitionOrderStatus('refunded', 'approved'), false);
+  assert.equal(canTransitionOrderStatus('cancelled', 'approved'), false);
+  assert.equal(canTransitionOrderStatus('failed', 'approved'), false);
+
+  // Tentativa de aplicar webhook tardio 'approved' em pedido 'refunded' não altera status para approved
+  await applyPaymentCycle({
+    orderId,
+    paymentId: 'pay_late_approved_123',
+    cycleId: 'cycle_late_123',
+    status: 'approved',
+    amount: 197,
+    currency: 'BRL'
+  });
+
+  const orderAfter = await db.collection(COLLECTIONS.payments).doc(orderId).get();
+  assert.equal(orderAfter.data()?.status, 'refunded');
+});
+
+test('Payments: Cancelamento sem ciclo liquidado nunca gera 30 dias de fallback e cancela imediatamente (A04)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_unsettled_cancel';
+  const orderId = 'order_unsettled_sub';
+  const subId = 'mp_sub_unsettled_123';
+
+  const originalFetch = globalThis.fetch;
+  try {
+    // Pedido de assinatura com status pending / authorized sem nunca ter sido liquidado
+    await db.collection(COLLECTIONS.payments).doc(orderId).set({
+      id: orderId,
+      userId,
+      planId: 'plan_pro',
+      billingMode: 'subscription',
+      providerSubscriptionId: subId,
+      status: 'pending',
+      subscriptionStatus: 'pending',
+      createdAt: new Date().toISOString()
+    });
+
+    await db.collection(COLLECTIONS.wallets).doc(userId).set({
+      id: userId,
+      userId,
+      balance: 0,
+      planId: 'plan_free',
+      planStatus: 'free',
+      updatedAt: new Date().toISOString()
+    });
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'cancelled' })
+    } as any);
+
+    const { cancelSubscription } = await import('../server/production/payments.js');
+    const res = await cancelSubscription(userId, orderId);
+
+    // Deve cancelar imediatamente com status 'cancelled' e SEM currentPeriodEnd
+    assert.equal(res.status, 'cancelled');
+    assert.equal(res.currentPeriodEnd, null);
+
+    const savedOrder = await db.collection(COLLECTIONS.payments).doc(orderId).get();
+    assert.equal(savedOrder.data()?.status, 'cancelled');
+    assert.equal(savedOrder.data()?.subscriptionStatus, 'cancelled');
+    assert.equal(savedOrder.data()?.currentPeriodEnd, null);
+
+    const savedWallet = await db.collection(COLLECTIONS.wallets).doc(userId).get();
+    assert.equal(savedWallet.data()?.planStatus, 'free');
+    assert.equal(savedWallet.data()?.planId, 'plan_free');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Payments: Prova financeira real expurga ativações fraudulentas ou não liquidadas (A03)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_fraud_audit';
+
+  // Ordem adulterada/não liquidada: status='active', mas sem lastCreditedAt e sem lastPaymentStatus='approved'
+  await db.collection(COLLECTIONS.payments).doc('ord_fraud_1').set({
+    id: 'ord_fraud_1',
+    userId,
+    planId: 'plan_agency',
+    status: 'active',
+    // Propositalmente sem comprovante real de liquidação
+    createdAt: new Date().toISOString()
+  });
+
+  const { recalculateUserPlan } = await import('../server/production/plans.js');
+  const plan = await recalculateUserPlan(userId);
+
+  assert.equal(plan.planId, 'plan_free', 'Ordem sem comprovação de liquidação não pode conceder plano Agency');
+  assert.equal(plan.planStatus, 'free');
+});
+
+test('Payments: Reconciliação atômica da carteira no processamento de assinaturas (A05)', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const userId = 'usr_sub_reconcile';
+  const orderId = 'order_sub_rec_1';
+
+  await db.collection(COLLECTIONS.payments).doc(orderId).set({
+    id: orderId,
+    userId,
+    planId: 'plan_business',
+    planName: 'BUSINESS',
+    amount: 197,
+    currency: 'BRL',
+    creditsGranted: 350,
+    bonusCreditsGranted: 50,
+    status: 'pending',
+    billingMode: 'subscription'
+  });
+
+  const { applyPaymentCycle } = await import('../server/production/payments.js');
+  await applyPaymentCycle({
+    orderId,
+    paymentId: 'pay_sub_first_cycle',
+    cycleId: 'cycle_1',
+    status: 'approved',
+    amount: 197,
+    currency: 'BRL',
+    subscriptionId: 'sub_rec_123'
+  });
+
+  const wallet = await getWallet(userId);
+  assert.equal(wallet.balance, 400);
+  assert.equal(wallet.bonusBalance, 50);
+  assert.equal(wallet.planId, 'plan_business');
+  assert.equal(wallet.planStatus, 'active');
+  assert.ok(wallet.currentPeriodEnd);
+});
+
+test('Security & SEO: SSRF e DNS Rebinding bloqueiam estritamente redes privadas e localhost (D01)', async () => {
+  const { safeFetchHtml } = await import('../server/production/seo.js');
+
+  // Localhost
+  await assert.rejects(
+    async () => safeFetchHtml('http://localhost:8080'),
+    (err: any) => err.message.includes('bloqueado por segurança')
+  );
+
+  // IP Privado 127.0.0.1
+  await assert.rejects(
+    async () => safeFetchHtml('http://127.0.0.1:3000'),
+    (err: any) => err.message.includes('bloqueado por segurança')
+  );
+
+  // IP Privado 192.168.1.1
+  await assert.rejects(
+    async () => safeFetchHtml('http://192.168.1.1/admin'),
+    (err: any) => err.message.includes('bloqueado por segurança')
+  );
+
+  // IP Privado 10.0.0.1
+  await assert.rejects(
+    async () => safeFetchHtml('http://10.0.0.1/meta-data'),
+    (err: any) => err.message.includes('bloqueado por segurança')
+  );
+
+  // Link Local AWS / GCP Metadata 169.254.169.254
+  await assert.rejects(
+    async () => safeFetchHtml('http://169.254.169.254/latest/meta-data/'),
+    (err: any) => err.message.includes('bloqueado por segurança')
+  );
+});
+
+test('Security & Anti-Abuse: Bônus de boas-vindas bloqueia e-mails descartáveis e aliases canônicos repetidos (D02, D03)', async () => {
+  resetMemoryDb();
+  const { evaluateSignupBonusEligibility } = await import('../server/production/antiAbuse.js');
+
+  // E-mail descartável
+  const disposableRes = await evaluateSignupBonusEligibility({
+    userId: 'usr_temp_1',
+    email: 'test@10minutemail.com',
+    ip: '189.10.20.30'
+  });
+  assert.equal(disposableRes.eligibleForBonus, false);
+  assert.equal(disposableRes.bonusAmount, 0);
+  assert.equal(disposableRes.reason, 'blocked_disposable_email');
+
+  // Primeiro cadastro legítimo
+  const firstUserRes = await evaluateSignupBonusEligibility({
+    userId: 'usr_legit_1',
+    email: 'joao.silva@gmail.com',
+    ip: '189.10.20.30',
+    securityPayload: { deviceId: 'dev_iphone_123' }
+  });
+  assert.equal(firstUserRes.eligibleForBonus, true);
+  assert.equal(firstUserRes.bonusAmount, 25);
+  assert.equal(firstUserRes.reason, 'approved_first_account');
+
+  // Tentativa de alias repetido (joao.silva+bonus@gmail.com)
+  const aliasUserRes = await evaluateSignupBonusEligibility({
+    userId: 'usr_fraud_alias',
+    email: 'joao.silva+bonus@gmail.com',
+    ip: '189.10.20.30'
+  });
+  assert.equal(aliasUserRes.eligibleForBonus, false);
+  assert.equal(aliasUserRes.bonusAmount, 0);
+  assert.equal(aliasUserRes.reason, 'blocked_duplicate_canonical_email');
+
+  // Tentativa de reuso de mesmo Device ID
+  const duplicateDeviceRes = await evaluateSignupBonusEligibility({
+    userId: 'usr_fraud_device',
+    email: 'maria.souza@outlook.com',
+    ip: '189.10.20.30',
+    securityPayload: { deviceId: 'dev_iphone_123' }
+  });
+  assert.equal(duplicateDeviceRes.eligibleForBonus, false);
+  assert.equal(duplicateDeviceRes.bonusAmount, 0);
+  assert.equal(duplicateDeviceRes.reason, 'blocked_duplicate_device');
+});
+
+test('Auth & Security: Custom Claims e fail-closed para role de administrador (D04)', async () => {
+  const { requireAdmin } = await import('../server/production/auth.js');
+
+  let passed = false;
+  let statusSet = 0;
+  let jsonRes: any = null;
+
+  const mockRes: any = {
+    status: (code: number) => {
+      statusSet = code;
+      return {
+        json: (data: any) => { jsonRes = data; }
+      };
+    }
+  };
+
+  // Usuário padrão sem role admin
+  await requireAdmin(
+    { user: { id: 'usr_regular', role: 'user', name: 'Regular', email: 'reg@test.com', createdAt: '' } } as any,
+    mockRes,
+    () => { passed = true; }
+  );
+
+  assert.equal(passed, false);
+  assert.equal(statusSet, 403);
+  assert.equal(jsonRes?.error, 'Acesso restrito a administradores.');
+
+  // Usuário administrador
+  passed = false;
+  statusSet = 0;
+  await requireAdmin(
+    { user: { id: 'usr_admin_1', role: 'admin', name: 'Admin', email: 'admin@froc.ia', createdAt: '' } } as any,
+    mockRes,
+    () => { passed = true; }
+  );
+
+  assert.equal(passed, true);
+  assert.equal(statusSet, 0);
+});
+
+
+
+

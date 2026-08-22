@@ -5,10 +5,11 @@ dotenv.config();
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 const isProduction = nodeEnv === 'production';
-const isTest = nodeEnv === 'test';
+const isTest = nodeEnv === 'test' || process.env.NODE_ENV === 'test';
 
 function env(name: string, fallback = ''): string {
   const val = (process.env[name] ?? '').trim();
+  if (isTest && !val) return fallback;
   return val ? val : fallback;
 }
 
@@ -55,9 +56,9 @@ export const config = {
     privateKey: env('FIREBASE_ADMIN_PRIVATE_KEY', '').replace(/\\n/g, '\n')
   },
   mercadoPago: {
-    accessToken: env('MERCADO_PAGO_ACCESS_TOKEN'),
-    webhookSecret: env('MERCADO_PAGO_WEBHOOK_SECRET'),
-    publicKey: env('MERCADO_PAGO_PUBLIC_KEY'),
+    accessToken: env('MERCADO_PAGO_ACCESS_TOKEN', isTest ? 'TEST-mock-access-token-123456' : ''),
+    webhookSecret: env('MERCADO_PAGO_WEBHOOK_SECRET', isTest ? 'TEST-mock-webhook-secret-123456' : ''),
+    publicKey: env('MERCADO_PAGO_PUBLIC_KEY', isTest ? 'TEST-mock-public-key-123456' : ''),
     billingMode: env('MERCADO_PAGO_BILLING_MODE', 'subscription').toLowerCase() === 'one_time' ? 'one_time' : 'subscription'
   },
   encryptionKey: env('TOKEN_ENCRYPTION_KEY', isTest ? 'test_token_encryption_key_32bytes_long!' : ''),
