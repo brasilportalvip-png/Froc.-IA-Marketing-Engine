@@ -471,10 +471,10 @@ test('Plans: Casos rigorosos de expiração temporal de active, approved, cancel
   const future = new Date(now + 10 * 24 * 60 * 60 * 1000).toISOString();
   const past = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Caso 1: ACTIVE FUTURE => Ativo
+  // Caso 1: ACTIVE FUTURE => Ativo (com prova de pagamento válida)
   const u1 = 'usr_active_future';
   await db.collection(COLLECTIONS.payments).doc('ord_u1').set({
-    id: 'ord_u1', userId: u1, planId: 'plan_pro', status: 'active', currentPeriodEnd: future, createdAt: new Date().toISOString()
+    id: 'ord_u1', userId: u1, planId: 'plan_pro', status: 'active', lastPaymentStatus: 'approved', lastCreditedAt: new Date().toISOString(), currentPeriodEnd: future, createdAt: new Date().toISOString()
   });
   const res1 = await recalculateUserPlan(u1);
   assert.equal(res1.planId, 'plan_pro');

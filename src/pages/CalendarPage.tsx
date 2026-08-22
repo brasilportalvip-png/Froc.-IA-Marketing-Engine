@@ -118,7 +118,7 @@ export const CalendarPage: React.FC<Props> = ({
       if (msg.includes('plano') || msg.includes('upgrade') || msg.includes('PRO')) {
         setActionableTab('planos');
       } else if (msg.includes('conectada') || msg.includes('Redes Sociais') || msg.includes('expirou')) {
-        setActionableTab('redes');
+        setActionableTab('redes-sociais');
       }
     } finally {
       setLoading(false);
@@ -442,7 +442,7 @@ export const CalendarPage: React.FC<Props> = ({
                     className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/20 border border-rose-500/40 px-3 py-1 text-xs font-bold text-white hover:bg-rose-500/30"
                   >
                     <ExternalLink size={12} />
-                    {actionableTab === 'planos' ? 'Ver Planos & Assinaturas' : actionableTab === 'redes' ? 'Ir para Redes Sociais' : 'Ir para Minha Empresa'}
+                    {actionableTab === 'planos' ? 'Ver Planos & Assinaturas' : actionableTab === 'redes-sociais' ? 'Ir para Redes Sociais' : 'Ir para Minha Empresa'}
                   </button>
                 )}
               </div>

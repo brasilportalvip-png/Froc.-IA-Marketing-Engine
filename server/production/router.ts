@@ -1385,15 +1385,38 @@ router.get('/blog/:slug', asyncRoute(async (req, res) => {
   if (snap.empty) return res.status(404).json({ error: 'Artigo não encontrado.' });
   res.json({ post: { id: snap.docs[0].id, ...snap.docs[0].data() } });
 }));
+function sanitizePublicVitrineCompany(company: any) {
+  return {
+    id: company.id,
+    name: company.name,
+    slug: company.slug,
+    segment: company.segment || '',
+    niche: company.niche || '',
+    description: company.description || '',
+    logoUrl: company.logoUrl || null,
+    coverUrl: company.coverUrl || null,
+    website: company.website || null,
+    whatsapp: company.whatsapp || null,
+    instagram: company.instagram || null,
+    linkedin: company.linkedin || null,
+    facebook: company.facebook || null,
+    youtube: company.youtube || null,
+    tiktok: company.tiktok || null,
+    city: company.city || null,
+    state: company.state || null,
+    country: company.country || 'BR',
+    businessType: company.businessType || 'digital',
+    isPublicInVitrine: true,
+    updatedAt: company.updatedAt || company.createdAt || null
+  };
+}
+
 router.get('/vitrine', asyncRoute(async (_req, res) => {
   const snap = await firestore().collection(COLLECTIONS.companies).get();
   const companies = queryData<any>(snap)
     .filter((c) => parseStrictBoolean(c.isPublicInVitrine))
-    .map(({ userId, marketingProfile, ...company }) => ({
-      ...company,
-      isPublicInVitrine: true
-    }))
-    .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+    .map((c) => sanitizePublicVitrineCompany(c))
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   res.json({ companies });
 }));
 router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
@@ -1402,8 +1425,8 @@ router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
   if (!snap.empty) {
     const data = snap.docs[0].data() as any;
     if (parseStrictBoolean(data.isPublicInVitrine)) {
-      const { userId, marketingProfile, ...company } = { id: snap.docs[0].id, ...data };
-      return res.json({ company: { ...company, isPublicInVitrine: true } });
+      const company = sanitizePublicVitrineCompany({ id: snap.docs[0].id, ...data });
+      return res.json({ company });
     }
   }
   // Try direct document ID fallback
@@ -1411,8 +1434,8 @@ router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
   if (directSnap.exists) {
     const data = directSnap.data() as any;
     if (parseStrictBoolean(data.isPublicInVitrine)) {
-      const { userId, marketingProfile, ...company } = { id: directSnap.id, ...data };
-      return res.json({ company: { ...company, isPublicInVitrine: true } });
+      const company = sanitizePublicVitrineCompany({ id: directSnap.id, ...data });
+      return res.json({ company });
     }
   }
   res.status(404).json({ error: 'Empresa não encontrada ou não está visível na Vitrine Pública.' });

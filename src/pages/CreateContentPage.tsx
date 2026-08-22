@@ -73,6 +73,31 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
     }
   }, []);
 
+  const handleTopicChange = (newTopic: string) => {
+    setTopic(newTopic);
+    setLastSavedContentItem(null);
+  };
+
+  const handleContentTypeChange = (type: 'post' | 'carousel' | 'cta' | 'headline') => {
+    setContentType(type);
+    setLastSavedContentItem(null);
+  };
+
+  const handlePlatformChange = (newPlatform: string) => {
+    setPlatform(newPlatform);
+    setLastSavedContentItem(null);
+  };
+
+  const handleGoalChange = (newGoal: string) => {
+    setGoal(newGoal);
+    setLastSavedContentItem(null);
+  };
+
+  const handleToneChange = (newTone: string) => {
+    setTone(newTone);
+    setLastSavedContentItem(null);
+  };
+
   const currentCost = contentType === 'post'
     ? CREDIT_COSTS.full_post
     : contentType === 'carousel'
@@ -268,7 +293,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
                 <button
                   key={f.id}
                   type="button"
-                  onClick={() => setContentType(f.id as any)}
+                  onClick={() => handleContentTypeChange(f.id as any)}
                   className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all ${
                     contentType === f.id
                       ? 'bg-blue-600/30 text-cyan-300 border-blue-500'
@@ -286,7 +311,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
             <textarea
               rows={3}
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={(e) => handleTopicChange(e.target.value)}
               placeholder="Ex: Como nosso método inovador reduz o tempo de entrega pela metade..."
               className="w-full bg-[#1E293B] border border-slate-700 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
             />
@@ -297,7 +322,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               <label className="block text-xs font-semibold text-slate-300 mb-1">Rede Social</label>
               <select
                 value={platform}
-                onChange={(e) => setPlatform(e.target.value)}
+                onChange={(e) => handlePlatformChange(e.target.value)}
                 className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
               >
                 <option value="Instagram">Instagram</option>
@@ -313,7 +338,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               <label className="block text-xs font-semibold text-slate-300 mb-1">Tom de Voz</label>
               <select
                 value={tone}
-                onChange={(e) => setTone(e.target.value)}
+                onChange={(e) => handleToneChange(e.target.value)}
                 className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
               >
                 <option value="Persuasivo e Profissional">Persuasivo & Profissional</option>
@@ -329,7 +354,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
             <input
               type="text"
               value={goal}
-              onChange={(e) => setGoal(e.target.value)}
+              onChange={(e) => handleGoalChange(e.target.value)}
               placeholder="Ex: Quebrar objeções e levar para o WhatsApp"
               className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
             />

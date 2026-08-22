@@ -103,10 +103,15 @@ export async function recalculateUserPlan(userId: string): Promise<{
       return false;
     }
 
-    // Regra P01/P03: Pedidos com status 'pending' ou preapprovals apenas 'authorized' sem liquidação não concedem plano pago.
-    // Pedidos válidos devem ter status 'active', 'approved', 'cancel_at_period_end' com pagamento anterior aprovado (lastPaymentStatus ou lastCreditedAt).
-    const isExplicitlyPaidOrActive = o.status === 'active' || o.status === 'approved' || o.lastPaymentStatus === 'approved' || Boolean(o.lastCreditedAt);
-    if (!isExplicitlyPaidOrActive || o.status === 'pending' || (o.status === 'cancelled' && !o.lastCreditedAt && o.lastPaymentStatus !== 'approved')) {
+    // Regra A03: Pedidos válidos para plano pago devem possuir prova financeira real de liquidação:
+    // lastPaymentStatus === 'approved' OU lastCreditedAt não-nulo com registro de crédito.
+    // Documentos legados com status 'active' ou 'approved' sem lastCreditedAt e sem lastPaymentStatus 'approved' NÃO concedem plano pago.
+    const hasProofOfPayment = o.lastPaymentStatus === 'approved' || Boolean(o.lastCreditedAt);
+    if (!hasProofOfPayment) {
+      return false;
+    }
+
+    if (o.status === 'pending' || (o.status === 'cancelled' && !o.lastCreditedAt && o.lastPaymentStatus !== 'approved')) {
       return false;
     }
 
