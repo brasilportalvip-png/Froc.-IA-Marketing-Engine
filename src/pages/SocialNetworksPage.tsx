@@ -43,11 +43,24 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
   const [pageSelectLoading, setPageSelectLoading] = useState(false);
   const [pageSelectSaving, setPageSelectSaving] = useState(false);
   const [pageSelectError, setPageSelectError] = useState('');
+  const [readiness, setReadiness] = useState<{
+    healthy: boolean;
+    connectedCount: number;
+    connections: Array<{ provider: string; accountName: string; status: string; supportsAutoPublish: boolean; directMediaCapable?: boolean }>;
+    summary: string;
+  } | null>(null);
 
   const fetchConnections=useCallback(async()=>{
-    if(!selectedCompany?.id){setConnections([]);return;}
+    if(!selectedCompany?.id){setConnections([]);setReadiness(null);return;}
     setLoading(true); setError('');
-    try{const d=await apiRequest<{connections:SocialConnection[]}>(`/api/social/connections/${selectedCompany.id}`);setConnections(d.connections||[])}
+    try{
+      const [d, r] = await Promise.all([
+        apiRequest<{connections:SocialConnection[]}>(`/api/social/connections/${selectedCompany.id}`),
+        apiRequest<any>(`/api/social/readiness?companyId=${encodeURIComponent(selectedCompany.id)}`).catch(() => null)
+      ]);
+      setConnections(d.connections||[]);
+      if (r) setReadiness(r);
+    }
     catch(e:any){setError(e.message||'Não foi possível carregar as conexões sociais.');}
     finally{setLoading(false)}
   },[selectedCompany?.id]);
@@ -288,6 +301,25 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     <div className="flex gap-3 rounded-2xl border border-cyan-500/25 bg-cyan-500/5 p-4 text-xs text-slate-300"><ShieldCheck className="mt-0.5 shrink-0 text-cyan-400" size={20}/><p><strong className="text-white">Tokens protegidos no backend.</strong> Credenciais OAuth são criptografadas e nunca retornam para o navegador. Aplicativos móveis também usam a mesma API segura.</p></div>
     {error&&<div role="alert" className="flex gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200"><AlertTriangle size={17} className="shrink-0"/>{error}</div>}
     {message&&<div className="flex gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200"><CheckCircle2 size={17} className="shrink-0"/>{message}</div>}
+
+    {readiness && selectedCompany && (
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#0F172A] p-4 text-xs">
+        <div className="flex items-center gap-3">
+          <div className={`grid h-9 w-9 place-items-center rounded-xl ${readiness.healthy && readiness.connectedCount > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+            <ShieldCheck size={20} />
+          </div>
+          <div>
+            <p className="font-bold text-white">Status de Prontidão Operacional: {selectedCompany.name}</p>
+            <p className="text-slate-400 text-[11px]">{readiness.summary}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-lg bg-slate-950 px-3 py-1.5 font-mono text-[11px] text-cyan-300 border border-slate-800">
+            {readiness.connectedCount} {readiness.connectedCount === 1 ? 'canal conectado' : 'canais conectados'}
+          </span>
+        </div>
+      </div>
+    )}
 
     {!selectedCompany?<div className="rounded-3xl border border-slate-800 bg-[#0F172A] p-10 text-center"><p className="text-sm font-bold text-white">Selecione uma empresa para gerenciar conexões.</p><button onClick={()=>onNavigate('empresa')} className="mt-4 rounded-xl bg-cyan-500 px-5 py-3 text-xs font-extrabold text-slate-950">Ir para Minha Empresa</button></div>:
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{networks.map(net=>{const conn=byProvider.get(net.id);const connected=conn?.status==='connected';const expired=conn?.expiresAt&&new Date(conn.expiresAt).getTime()<Date.now();return <article key={net.id} className="flex min-h-[270px] flex-col justify-between rounded-3xl border border-[#334155] bg-[#0F172A] p-5 shadow-xl shadow-black/10 transition hover:border-cyan-500/40">

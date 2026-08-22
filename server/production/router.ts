@@ -8,7 +8,7 @@ import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
 import { analyzeSeo } from './seo.js';
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
-import { createOAuthUrl, disconnectSocial, getFacebookPageSelectionCandidates, getProviderAutoPublishReason, getTikTokUploadStatus, handleOAuthCallback, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
+import { createOAuthUrl, createPinterestPin, disconnectSocial, getFacebookPageSelectionCandidates, getPinterestBoards, getProviderAutoPublishReason, getSocialReadiness, getTikTokUploadStatus, handleOAuthCallback, initTikTokDraftUpload, initYouTubeResumableUpload, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, publishInstagramMedia, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { getSchedulerHealth, processSchedulerTick, processSocialTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
 import { COLLECTIONS, checkDatabaseHealth, cleanObject, createNotification, firestore, newId, nowIso, queryData, slugify, writeAdminLog } from './store.js';
@@ -638,8 +638,14 @@ router.post('/content/schedule', requireAuth, asyncRoute(async (req: Authenticat
   const itemSnap = await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).get();
   if (!itemSnap.exists || itemSnap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Conteúdo não encontrado.' });
   const itemData = itemSnap.data() as any;
-  if (itemData.companyId !== companyId && itemData.companyId !== 'default') {
-    return res.status(400).json({ error: 'O conteúdo selecionado pertence a outra empresa.' });
+  if (itemData.companyId !== companyId) {
+    if (isPlanning && itemData.companyId === 'default') {
+      // Aceita default apenas para planejamento editorial
+    } else if (!isPlanning && itemData.companyId === 'default') {
+      return res.status(400).json({ error: 'Associe este conteúdo a uma empresa antes de ativar a auto-publicação.' });
+    } else {
+      return res.status(400).json({ error: 'O conteúdo selecionado pertence a outra empresa.' });
+    }
   }
 
   const contentText = [itemData.headline, itemData.body, itemData.cta].filter(Boolean).join(' ').trim();
@@ -787,12 +793,14 @@ router.post('/content/scheduled/:id/retry', requireAuth, asyncRoute(async (req: 
   const when = req.body?.scheduledFor ? new Date(String(req.body.scheduledFor)) : new Date(Date.now() + 60_000);
   if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Data de reenvio inválida.' });
 
-  // Preserva estritamente resultados bem-sucedidos anteriores com seus externalIds
+  // Preserva estritamente resultados bem-sucedidos anteriores com seus externalIds e falhas sem retrySafe
+  const preservedResults = existingResults.filter((r: any) => (r?.success && r?.externalId) || r?.retrySafe === false);
+
   await ref.set({
     status: 'scheduled',
     scheduledFor: when.toISOString(),
     errorMessage: null,
-    publicationResults: successfulResults,
+    publicationResults: preservedResults,
     retryCount: Number(current.retryCount || 0) + 1,
     updatedAt: nowIso()
   }, { merge: true });
@@ -1237,6 +1245,113 @@ router.post('/social/tiktok/upload-status', requireAuth, asyncRoute(async (req: 
   });
 
   res.status(200).json(result);
+}));
+
+router.get('/social/readiness', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.query.companyId, 200);
+  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+  const readiness = await getSocialReadiness(companyId, req.user!.id);
+  res.json(readiness);
+}));
+
+router.post('/social/instagram/publish-media', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200);
+  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  const imageUrl = safeHttpUrl(req.body?.imageUrl, 2000) || undefined;
+  const videoUrl = safeHttpUrl(req.body?.videoUrl, 2000) || undefined;
+  const caption = safeString(req.body?.caption, 2200);
+  const contentItemId = safeString(req.body?.contentItemId, 200) || undefined;
+
+  if (!imageUrl && !videoUrl) {
+    return res.status(400).json({ error: 'Forneça uma URL válida de imagem ou vídeo (Reels).' });
+  }
+
+  const result = await publishInstagramMedia({
+    userId: req.user!.id,
+    companyId,
+    imageUrl,
+    videoUrl,
+    caption,
+    contentItemId
+  });
+
+  res.json(result);
+}));
+
+router.post('/social/tiktok/init-upload', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200);
+  const videoSize = Number(req.body?.videoSize || 0);
+  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
+  if (videoSize <= 0) return res.status(400).json({ error: 'videoSize deve ser maior que 0.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  const result = await initTikTokDraftUpload({
+    userId: req.user!.id,
+    companyId,
+    videoSize,
+    title: safeString(req.body?.title, 300)
+  });
+
+  res.json(result);
+}));
+
+router.post('/social/youtube/init-upload', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200);
+  const title = safeString(req.body?.title, 100);
+  if (!companyId || !title) return res.status(400).json({ error: 'companyId e title são obrigatórios.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  const result = await initYouTubeResumableUpload({
+    userId: req.user!.id,
+    companyId,
+    title,
+    description: safeString(req.body?.description, 5000),
+    privacyStatus: ['private', 'unlisted', 'public'].includes(req.body?.privacyStatus) ? req.body.privacyStatus : 'unlisted',
+    videoSize: req.body?.videoSize ? Number(req.body.videoSize) : undefined,
+    mimeType: safeString(req.body?.mimeType, 100) || 'video/mp4'
+  });
+
+  res.json(result);
+}));
+
+router.get('/social/pinterest/boards', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.query.companyId, 200);
+  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  const boards = await getPinterestBoards({
+    userId: req.user!.id,
+    companyId
+  });
+
+  res.json({ boards });
+}));
+
+router.post('/social/pinterest/create-pin', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.body?.companyId, 200);
+  const boardId = safeString(req.body?.boardId, 200);
+  const title = safeString(req.body?.title, 100);
+  const imageUrl = safeHttpUrl(req.body?.imageUrl, 2000);
+
+  if (!companyId || !boardId || !title || !imageUrl) {
+    return res.status(400).json({ error: 'companyId, boardId, title e imageUrl válida são obrigatórios.' });
+  }
+  await requireOwnedCompany(req.user!.id, companyId);
+
+  const result = await createPinterestPin({
+    userId: req.user!.id,
+    companyId,
+    boardId,
+    title,
+    description: safeString(req.body?.description, 800),
+    link: safeHttpUrl(req.body?.link, 1000) || undefined,
+    imageUrl
+  });
+
+  res.json(result);
 }));
 
 // Support

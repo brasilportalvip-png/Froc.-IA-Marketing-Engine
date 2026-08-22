@@ -178,7 +178,7 @@ async function exchangeCode(provider: SocialProvider, code: string, codeVerifier
     params = new URLSearchParams({ client_key: clientId, client_secret: clientSecret, code, grant_type: 'authorization_code', redirect_uri: redirectUri });
   } else if (provider === 'pinterest') {
     endpoint = 'https://api.pinterest.com/v5/oauth/token';
-    params = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
+    params = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, continuous_refresh: 'true' });
     headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
   } else if (provider === 'x') {
     endpoint = 'https://api.x.com/2/oauth2/token';
@@ -203,8 +203,22 @@ async function fetchAccount(provider: SocialProvider, accessToken: string): Prom
   let endpoint = '';
   const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
   if (provider === 'linkedin') endpoint = 'https://api.linkedin.com/v2/userinfo';
-  else if (provider === 'youtube') endpoint = 'https://www.googleapis.com/oauth2/v3/userinfo';
-  else if (provider === 'tiktok') endpoint = 'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url';
+  else if (provider === 'youtube') {
+    // Obter canal real via YouTube Data API
+    try {
+      const ytRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers });
+      const ytJson = await ytRes.json().catch(() => ({} as any));
+      if (ytRes.ok && Array.isArray(ytJson.items) && ytJson.items.length > 0) {
+        return {
+          id: String(ytJson.items[0].id),
+          name: String(ytJson.items[0].snippet?.title || 'Canal YouTube')
+        };
+      }
+    } catch {
+      // Fallback para userinfo
+    }
+    endpoint = 'https://www.googleapis.com/oauth2/v3/userinfo';
+  } else if (provider === 'tiktok') endpoint = 'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url';
   else if (provider === 'pinterest') endpoint = 'https://api.pinterest.com/v5/user_account';
   else if (provider === 'x') endpoint = 'https://api.x.com/2/users/me';
   else endpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`;
@@ -444,29 +458,61 @@ export async function resolveMetaAccount(
   const pagesJson = await pagesResponse.json().catch(() => ({} as any));
   const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
-  const page = pages.find((item: any) => item?.instagram_business_account?.id && item?.access_token);
-
-  if (!page || !page.instagram_business_account?.id || !page.access_token) {
-    const permDiag = await diagnoseMetaPermissions(userToken, [
-      'public_profile',
-      'pages_show_list',
-      'pages_read_engagement',
-      'instagram_basic',
-      'instagram_content_publish'
-    ]);
-    if (permDiag) throw new Error(permDiag);
-    throw new Error('Nenhuma conta profissional do Instagram vinculada a uma Página do Facebook foi encontrada.');
+  const instagramCandidates: Array<{ id: string; name: string; username: string; pageName: string; accessToken: string }> = [];
+  for (const p of pages) {
+    if (p?.instagram_business_account?.id && p?.access_token) {
+      instagramCandidates.push({
+        id: String(p.instagram_business_account.id),
+        username: String(p.instagram_business_account.username || p.instagram_business_account.name || 'Instagram Account'),
+        name: String(p.instagram_business_account.name || p.instagram_business_account.username || p.name || 'Instagram Business'),
+        pageName: String(p.name || 'Facebook Page'),
+        accessToken: String(p.access_token)
+      });
+    }
   }
 
-  const ig = page.instagram_business_account;
-  return {
-    id: String(ig.id),
-    name: String(ig.username || ig.name || 'Instagram'),
-    accessToken: String(page.access_token),
-    pageId: String(page.id),
-    expiresIn: longLivedExpiresIn,
-    multiplePages: false
-  };
+  // Deduplicate by IG account ID
+  const uniqueIgMap = new Map<string, any>();
+  for (const ig of instagramCandidates) {
+    if (!uniqueIgMap.has(ig.id)) {
+      uniqueIgMap.set(ig.id, ig);
+    }
+  }
+  const uniqueIgCandidates = Array.from(uniqueIgMap.values());
+
+  if (uniqueIgCandidates.length === 1) {
+    const ig = uniqueIgCandidates[0];
+    return {
+      id: ig.id,
+      name: ig.username,
+      accessToken: ig.accessToken,
+      pageId: ig.id,
+      expiresIn: longLivedExpiresIn,
+      multiplePages: false
+    };
+  }
+
+  if (uniqueIgCandidates.length > 1) {
+    return {
+      multiplePages: true,
+      pages: uniqueIgCandidates.map((ig) => ({
+        id: ig.id,
+        name: `@${ig.username} (${ig.pageName})`,
+        accessToken: ig.accessToken
+      })),
+      expiresIn: longLivedExpiresIn
+    };
+  }
+
+  const permDiag = await diagnoseMetaPermissions(userToken, [
+    'public_profile',
+    'pages_show_list',
+    'pages_read_engagement',
+    'instagram_basic',
+    'instagram_content_publish'
+  ]);
+  if (permDiag) throw new Error(permDiag);
+  throw new Error('Nenhuma conta profissional do Instagram vinculada a uma Página do Facebook foi encontrada.');
 }
 
 export async function handleOAuthCallback(data: { provider: SocialProvider; code: string; state: string }) {
@@ -1041,6 +1087,24 @@ export async function publishText(data: {
       }
 
       if (response.status >= 400) {
+        const isAuthError =
+          json.error?.code === 190 ||
+          json.error?.type === 'OAuthException' ||
+          json.error?.error_subcode === 463 ||
+          json.error?.error_subcode === 467;
+
+        if (isAuthError) {
+          await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+          return {
+            provider: 'facebook',
+            externalId: null,
+            externalState: 'confirmed_failed',
+            retrySafe: false,
+            statusCode: response.status,
+            error: 'A autenticação com o Facebook expirou ou foi revogada (código 190). Reconecte a conta em Redes Sociais.'
+          };
+        }
+
         const errorMsg = json.error?.message || `Rejeição da API do Facebook (HTTP ${response.status}).`;
         return {
           provider: 'facebook',
@@ -1104,6 +1168,65 @@ export async function publishText(data: {
           retrySafe: false,
           statusCode: response.status,
           error: `Erro interno do X (HTTP ${response.status}).`
+        };
+      }
+
+      if (response.status === 401) {
+        let rawRefresh = '';
+        if (connection.encryptedRefreshToken) {
+          try {
+            rawRefresh = decrypt(connection.encryptedRefreshToken);
+          } catch {
+            // ignore
+          }
+        }
+
+        if (rawRefresh) {
+          try {
+            const refreshed = await refreshSocialAccessToken('x', rawRefresh);
+            await connDoc.ref.update({
+              encryptedAccessToken: encrypt(refreshed.accessToken),
+              encryptedRefreshToken: refreshed.refreshToken ? encrypt(refreshed.refreshToken) : connection.encryptedRefreshToken,
+              expiresAt: new Date(refreshed.expiresAt).toISOString(),
+              status: 'connected',
+              updatedAt: nowIso()
+            });
+
+            // Re-executa uma única chamada segura com o token renovado
+            const retryRes = await fetch('https://api.x.com/2/tweets', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${refreshed.accessToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ text: trimmedText.slice(0, 280) })
+            });
+            const retryJson = await retryRes.json().catch(() => ({} as any));
+            if (retryRes.status >= 500) {
+              return { provider: 'x', externalId: null, externalState: 'unknown', retrySafe: false, statusCode: retryRes.status, error: `Erro interno do X (HTTP ${retryRes.status}).` };
+            }
+            if (retryRes.status >= 400) {
+              const errMsg = retryJson.detail || retryJson.title || retryJson.error || `Rejeição da API do X (HTTP ${retryRes.status}).`;
+              return { provider: 'x', externalId: null, externalState: 'confirmed_failed', retrySafe: retryRes.status !== 401, statusCode: retryRes.status, error: errMsg };
+            }
+            if (retryJson.data?.id) {
+              return { provider: 'x', externalId: String(retryJson.data.id), externalState: 'confirmed_success', retrySafe: false, statusCode: retryRes.status };
+            }
+            return { provider: 'x', externalId: null, externalState: 'unknown', retrySafe: false, statusCode: retryRes.status, error: 'Resposta do X sem ID do tweet.' };
+          } catch {
+            await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+            return { provider: 'x', externalId: null, externalState: 'confirmed_failed', retrySafe: false, statusCode: 401, error: 'A autenticação com o X expirou e a renovação de token falhou. Reconecte a conta.' };
+          }
+        }
+
+        await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+        return {
+          provider: 'x',
+          externalId: null,
+          externalState: 'confirmed_failed',
+          retrySafe: false,
+          statusCode: 401,
+          error: 'A autenticação com o X expirou. Reconecte a conta.'
         };
       }
 
@@ -1188,6 +1311,78 @@ export async function publishText(data: {
           retrySafe: false,
           statusCode: response.status,
           error: `Erro interno do LinkedIn (HTTP ${response.status}).`
+        };
+      }
+
+      if (response.status === 401) {
+        let rawRefresh = '';
+        if (connection.encryptedRefreshToken) {
+          try {
+            rawRefresh = decrypt(connection.encryptedRefreshToken);
+          } catch {
+            // ignore
+          }
+        }
+
+        if (rawRefresh) {
+          try {
+            const refreshed = await refreshSocialAccessToken('linkedin', rawRefresh);
+            await connDoc.ref.update({
+              encryptedAccessToken: encrypt(refreshed.accessToken),
+              encryptedRefreshToken: refreshed.refreshToken ? encrypt(refreshed.refreshToken) : connection.encryptedRefreshToken,
+              expiresAt: new Date(refreshed.expiresAt).toISOString(),
+              status: 'connected',
+              updatedAt: nowIso()
+            });
+
+            const retryRes = await fetch('https://api.linkedin.com/rest/posts', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${refreshed.accessToken}`,
+                'Content-Type': 'application/json',
+                'LinkedIn-Version': config.social.linkedin.apiVersion,
+                'X-Restli-Protocol-Version': '2.0.0'
+              },
+              body: JSON.stringify({
+                author: `urn:li:person:${connection.accountId}`,
+                commentary: trimmedText,
+                visibility: 'PUBLIC',
+                distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+                lifecycleState: 'PUBLISHED',
+                isReshareDisabledByAuthor: false
+              })
+            });
+
+            if (retryRes.status >= 500) {
+              return { provider: 'linkedin', externalId: null, externalState: 'unknown', retrySafe: false, statusCode: retryRes.status, error: `Erro interno do LinkedIn (HTTP ${retryRes.status}).` };
+            }
+            if (retryRes.status >= 400) {
+              const textErr = await retryRes.text().catch(() => '');
+              return { provider: 'linkedin', externalId: null, externalState: 'confirmed_failed', retrySafe: retryRes.status !== 401, statusCode: retryRes.status, error: textErr.slice(0, 300) || `Rejeição da API do LinkedIn (HTTP ${retryRes.status}).` };
+            }
+            const headerId = retryRes.headers.get('x-restli-id') || retryRes.headers.get('x-linkedin-id');
+            if (headerId && headerId.trim()) {
+              return { provider: 'linkedin', externalId: headerId.trim(), externalState: 'confirmed_success', retrySafe: false, statusCode: retryRes.status };
+            }
+            const retryJson = await retryRes.json().catch(() => ({} as any));
+            if (retryJson.id) {
+              return { provider: 'linkedin', externalId: String(retryJson.id), externalState: 'confirmed_success', retrySafe: false, statusCode: retryRes.status };
+            }
+            return { provider: 'linkedin', externalId: null, externalState: 'unknown', retrySafe: false, statusCode: retryRes.status, error: 'LinkedIn retornou HTTP 200 sem ID confiável.' };
+          } catch {
+            await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+            return { provider: 'linkedin', externalId: null, externalState: 'confirmed_failed', retrySafe: false, statusCode: 401, error: 'A autenticação com o LinkedIn expirou e a renovação falhou. Reconecte a conta.' };
+          }
+        }
+
+        await connDoc.ref.update({ status: 'token_expired', updatedAt: nowIso() }).catch(() => undefined);
+        return {
+          provider: 'linkedin',
+          externalId: null,
+          externalState: 'confirmed_failed',
+          retrySafe: false,
+          statusCode: 401,
+          error: 'A autenticação com o LinkedIn expirou. Reconecte a conta.'
         };
       }
 
@@ -1486,5 +1681,417 @@ export async function getTikTokUploadStatus(data: {
     isDraftDelivered,
     message: userFriendlyMessage
   };
+}
+
+export async function initTikTokDraftUpload(data: {
+  userId: string;
+  companyId: string;
+  videoSize: number;
+  title?: string;
+}): Promise<{
+  publishId: string;
+  uploadUrl: string;
+}> {
+  if (data.videoSize <= 0) throw new Error('Tamanho de vídeo inválido.');
+  if (data.videoSize > MAX_TIKTOK_SANDBOX_VIDEO_SIZE) {
+    throw new Error('O vídeo excede o limite de 4 MB desta fase do TikTok.');
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'tiktok')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Conta TikTok não conectada para esta empresa.');
+  }
+
+  const token = await ensureValidSocialAccessToken(snap.docs[0].id);
+
+  const initEndpoint = 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/';
+  const initBody = {
+    source_info: {
+      source: 'FILE_UPLOAD',
+      video_size: data.videoSize,
+      chunk_size: data.videoSize,
+      total_chunk_count: 1
+    }
+  };
+
+  const initResponse = await fetch(initEndpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=UTF-8'
+    },
+    body: JSON.stringify(initBody)
+  });
+
+  const initJson = await initResponse.json().catch(() => ({} as any));
+  if (!initResponse.ok || (initJson.error?.code && initJson.error.code !== 'ok')) {
+    const errorMsg = initJson.error?.message || initJson.message || `Erro ${initResponse.status} do TikTok.`;
+    throw new Error(`Falha ao inicializar rascunho no TikTok: ${errorMsg}`);
+  }
+
+  const publishId = initJson.data?.publish_id;
+  const uploadUrl = initJson.data?.upload_url;
+
+  if (!publishId || !uploadUrl) {
+    throw new Error('TikTok não retornou publish_id e upload_url.');
+  }
+
+  // Registrar histórico de envio
+  const draftRecordId = stableId(`${data.userId}:${data.companyId}:${publishId}`);
+  await firestore().collection('socialDraftUploads').doc(draftRecordId).set({
+    id: draftRecordId,
+    userId: data.userId,
+    companyId: data.companyId,
+    provider: 'tiktok',
+    publishId,
+    videoSize: data.videoSize,
+    title: data.title || null,
+    status: 'draft_initialized',
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  }, { merge: true }).catch(() => undefined);
+
+  return { publishId, uploadUrl };
+}
+
+export async function publishInstagramMedia(data: {
+  userId: string;
+  companyId: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  caption?: string;
+  contentItemId?: string;
+}): Promise<{
+  success: boolean;
+  externalId: string;
+  externalState: 'confirmed_success';
+  message: string;
+}> {
+  if (!data.imageUrl && !data.videoUrl) {
+    throw new Error('É necessário fornecer imageUrl ou videoUrl para publicar no Instagram.');
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'instagram')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Conta Instagram não conectada para esta empresa.');
+  }
+
+  const connection = snap.docs[0].data() as any;
+  const igUserId = connection.accountId || connection.pageId;
+  if (!igUserId) {
+    throw new Error('Identificador da conta profissional do Instagram não encontrado na conexão.');
+  }
+
+  const token = await ensureValidSocialAccessToken(snap.docs[0].id);
+
+  // 1. Criar container de mídia: POST /{ig-user-id}/media
+  const containerEndpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(igUserId)}/media`;
+  const containerParams: Record<string, string> = {
+    access_token: token,
+    caption: (data.caption || '').slice(0, 2200)
+  };
+
+  if (data.videoUrl) {
+    containerParams.media_type = 'REELS';
+    containerParams.video_url = data.videoUrl;
+  } else if (data.imageUrl) {
+    containerParams.image_url = data.imageUrl;
+  }
+
+  const containerRes = await fetch(containerEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(containerParams).toString()
+  });
+
+  const containerJson = await containerRes.json().catch(() => ({} as any));
+  if (!containerRes.ok || !containerJson.id) {
+    const errorMsg = containerJson.error?.message || `Erro ${containerRes.status} ao criar container no Instagram.`;
+    throw new Error(`Falha ao criar container no Instagram: ${errorMsg}`);
+  }
+
+  const creationId = containerJson.id;
+
+  // 2. Publicar container: POST /{ig-user-id}/media_publish
+  const publishEndpoint = `https://graph.facebook.com/${config.social.meta.graphVersion}/${encodeURIComponent(igUserId)}/media_publish`;
+  const publishRes = await fetch(publishEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ creation_id: creationId, access_token: token }).toString()
+  });
+
+  const publishJson = await publishRes.json().catch(() => ({} as any));
+  if (!publishRes.ok || !publishJson.id) {
+    const errorMsg = publishJson.error?.message || `Erro ${publishRes.status} ao publicar no Instagram.`;
+    throw new Error(`Falha ao publicar mídia no Instagram: ${errorMsg}`);
+  }
+
+  return {
+    success: true,
+    externalId: String(publishJson.id),
+    externalState: 'confirmed_success',
+    message: 'Mídia publicada no Instagram com sucesso.'
+  };
+}
+
+export async function initYouTubeResumableUpload(data: {
+  userId: string;
+  companyId: string;
+  title: string;
+  description?: string;
+  privacyStatus?: 'private' | 'unlisted' | 'public';
+  videoSize?: number;
+  mimeType?: string;
+}): Promise<{
+  uploadUrl: string;
+}> {
+  if (!data.title?.trim()) {
+    throw new Error('Título do vídeo no YouTube é obrigatório.');
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'youtube')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Canal YouTube não conectado para esta empresa.');
+  }
+
+  const token = await ensureValidSocialAccessToken(snap.docs[0].id);
+
+  // Iniciar sessão de upload resumível do YouTube Data API v3
+  const initEndpoint = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
+  const metadata = {
+    snippet: {
+      title: data.title.trim().slice(0, 100),
+      description: (data.description || '').slice(0, 5000),
+      categoryId: '22'
+    },
+    status: {
+      privacyStatus: data.privacyStatus || 'unlisted',
+      selfDeclaredMadeForKids: false
+    }
+  };
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json; charset=UTF-8',
+    'X-Upload-Content-Type': data.mimeType || 'video/mp4'
+  };
+  if (data.videoSize && data.videoSize > 0) {
+    headers['X-Upload-Content-Length'] = String(data.videoSize);
+  }
+
+  const initRes = await fetch(initEndpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(metadata)
+  });
+
+  if (!initRes.ok) {
+    const errJson = await initRes.json().catch(() => ({} as any));
+    const errorMsg = errJson.error?.message || `Erro HTTP ${initRes.status} ao iniciar sessão no YouTube.`;
+    throw new Error(`Falha ao iniciar upload no YouTube: ${errorMsg}`);
+  }
+
+  const uploadUrl = initRes.headers.get('location');
+  if (!uploadUrl) {
+    throw new Error('A API do YouTube não retornou o header Location com o endpoint de upload resumível.');
+  }
+
+  return { uploadUrl };
+}
+
+export async function getPinterestBoards(data: {
+  userId: string;
+  companyId: string;
+}): Promise<Array<{ id: string; name: string; description?: string }>> {
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'pinterest')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Conta Pinterest não conectada para esta empresa.');
+  }
+
+  const token = await ensureValidSocialAccessToken(snap.docs[0].id);
+
+  const res = await fetch('https://api.pinterest.com/v5/boards?page_size=50', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const json = await res.json().catch(() => ({} as any));
+
+  if (!res.ok) {
+    const errorMsg = json.message || json.error || `Erro HTTP ${res.status} ao listar pastas do Pinterest.`;
+    throw new Error(errorMsg);
+  }
+
+  const items = Array.isArray(json.items) ? json.items : [];
+  return items.map((b: any) => ({
+    id: String(b.id),
+    name: String(b.name || 'Pasta'),
+    description: b.description || ''
+  }));
+}
+
+export async function createPinterestPin(data: {
+  userId: string;
+  companyId: string;
+  boardId: string;
+  title: string;
+  description?: string;
+  link?: string;
+  imageUrl: string;
+}): Promise<{
+  success: boolean;
+  pinId: string;
+  externalId: string;
+  message: string;
+}> {
+  if (!data.boardId || !data.title?.trim() || !data.imageUrl) {
+    throw new Error('Pasta (boardId), título e URL da imagem são obrigatórios para criar Pin no Pinterest.');
+  }
+
+  const snap = await firestore()
+    .collection(COLLECTIONS.socialConnections)
+    .where('userId', '==', data.userId)
+    .where('companyId', '==', data.companyId)
+    .where('provider', '==', 'pinterest')
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error('Conta Pinterest não conectada para esta empresa.');
+  }
+
+  const token = await ensureValidSocialAccessToken(snap.docs[0].id);
+
+  const pinBody: any = {
+    board_id: data.boardId,
+    title: data.title.trim().slice(0, 100),
+    description: (data.description || '').slice(0, 800),
+    media_source: {
+      source_type: 'image_url',
+      url: data.imageUrl
+    }
+  };
+  if (data.link?.trim()) {
+    pinBody.link = data.link.trim();
+  }
+
+  const res = await fetch('https://api.pinterest.com/v5/pins', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(pinBody)
+  });
+
+  const json = await res.json().catch(() => ({} as any));
+  if (!res.ok || !json.id) {
+    const errorMsg = json.message || json.error || `Erro HTTP ${res.status} ao criar Pin no Pinterest.`;
+    throw new Error(`Falha ao criar Pin: ${errorMsg}`);
+  }
+
+  return {
+    success: true,
+    pinId: String(json.id),
+    externalId: String(json.id),
+    message: 'Pin criado com sucesso no Pinterest.'
+  };
+}
+
+export function isProviderConfigured(provider: SocialProvider): { configured: boolean; clientIdPresent: boolean; clientSecretPresent: boolean } {
+  const creds = providerCredentials(provider);
+  const clientIdPresent = Boolean(creds.clientId);
+  const clientSecretPresent = Boolean(creds.clientSecret);
+  return {
+    configured: clientIdPresent && clientSecretPresent,
+    clientIdPresent,
+    clientSecretPresent
+  };
+}
+
+export async function getSocialReadiness(companyId: string, userId?: string): Promise<Record<string, any>> {
+  const db = firestore();
+  let query: any = db.collection(COLLECTIONS.socialConnections).where('companyId', '==', companyId);
+  if (userId) {
+    query = query.where('userId', '==', userId);
+  }
+  const connectionsSnap = await query.get();
+
+  const connections = connectionsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })) as any[];
+  const findConn = (p: SocialProvider) => connections.find((c) => c.provider === p);
+
+  const providers: SocialProvider[] = ['facebook', 'instagram', 'linkedin', 'x', 'tiktok', 'youtube', 'pinterest'];
+  const readiness: Record<string, any> = {
+    companyId,
+    healthy: true,
+    checkedAt: nowIso(),
+    connectedCount: 0,
+    summary: '',
+    scheduler: {
+      cronSecretConfigured: Boolean(config.cronSecret),
+      nativeCronConfigured: false
+    },
+    linkedinApiVersionConfigured: Boolean(config.social.linkedin.apiVersion)
+  };
+
+  const capabilitiesMap: Record<SocialProvider, string> = {
+    facebook: 'text_publish',
+    instagram: 'media_publish',
+    linkedin: 'text_publish',
+    x: 'text_publish',
+    tiktok: 'draft_video',
+    youtube: 'video_upload',
+    pinterest: 'pin_publish'
+  };
+
+  let connectedCount = 0;
+  for (const p of providers) {
+    const conn = findConn(p);
+    const { configured } = isProviderConfigured(p);
+    const isConnected = Boolean(conn && conn.status === 'connected');
+    if (isConnected) connectedCount++;
+    readiness[p] = {
+      oauthConfigured: configured,
+      connected: isConnected,
+      status: conn?.status || 'disconnected',
+      accountId: conn?.accountId || conn?.pageId || null,
+      accountName: conn?.accountName || null,
+      expiresAt: conn?.expiresAt || null,
+      capability: capabilitiesMap[p]
+    };
+  }
+
+  readiness.connectedCount = connectedCount;
+  readiness.summary = connectedCount > 0
+    ? `${connectedCount} canal(is) configurado(s) e operacional(is) para esta empresa.`
+    : 'Nenhum canal social conectado para esta empresa.';
+
+  return readiness;
 }
 

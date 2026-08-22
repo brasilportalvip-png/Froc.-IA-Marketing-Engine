@@ -592,9 +592,9 @@ test('Scheduler: Falha HTTP 4xx confirmada marca externalState=confirmed_failed 
   });
 
   const originalFetch = globalThis.fetch;
-  // Simula HTTP 400 OAuthException
+  // Simula HTTP 400 com erro de parâmetro (não expirado)
   globalThis.fetch = async () => {
-    return new Response(JSON.stringify({ error: { message: 'Permissions error or expired token', code: 190 } }), {
+    return new Response(JSON.stringify({ error: { message: 'Invalid parameter or character length exceeded', code: 100 } }), {
       status: 400,
       headers: { 'content-type': 'application/json' }
     });
@@ -609,6 +609,73 @@ test('Scheduler: Falha HTTP 4xx confirmada marca externalState=confirmed_failed 
     assert.equal(data.status, 'failed');
     assert.equal(data.publicationResults[0].externalState, 'confirmed_failed');
     assert.equal(data.publicationResults[0].retrySafe, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Scheduler: Falha Facebook Code 190 marca externalState=confirmed_failed, retrySafe=false e token_expired', async () => {
+  resetMemoryDb();
+  const db = firestore();
+
+  const userId = 'usr_fb190_test';
+  const companyId = 'comp_fb190_test';
+  const contentId = 'content_fb190_123';
+  const schedId = 'sched_fb190_123';
+
+  await db.collection(COLLECTIONS.wallets).doc(userId).set({ userId, planId: 'pro', creditsBalance: 50 });
+  await db.collection(COLLECTIONS.users).doc(userId).set({ id: userId, email: 'fb190@empresa.com', role: 'admin' });
+  await db.collection(COLLECTIONS.companies).doc(companyId).set({ id: companyId, userId, name: 'Empresa FB 190' });
+
+  await db.collection(COLLECTIONS.contentItems).doc(contentId).set({
+    id: contentId,
+    userId,
+    companyId,
+    headline: 'Post de Teste 190',
+    body: 'Verificando expiração de token',
+    status: 'scheduled'
+  });
+
+  await db.collection(COLLECTIONS.socialConnections).doc('conn_fb_190').set({
+    id: 'conn_fb_190',
+    userId,
+    companyId,
+    provider: 'facebook',
+    pageId: '10987654321',
+    accessToken: encrypt('mock_fb_token'),
+    status: 'connected'
+  });
+
+  await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).set({
+    id: schedId,
+    userId,
+    companyId,
+    contentItemId: contentId,
+    platforms: ['Facebook'],
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    status: 'scheduled'
+  });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    return new Response(JSON.stringify({ error: { message: 'Error validating access token: Session has expired', code: 190, error_subcode: 463 } }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const processed = await processScheduledPosts();
+    assert.equal(processed, 1);
+
+    const snap = await db.collection(COLLECTIONS.scheduledPosts).doc(schedId).get();
+    const data = snap.data() as any;
+    assert.equal(data.status, 'failed');
+    assert.equal(data.publicationResults[0].externalState, 'confirmed_failed');
+    assert.equal(data.publicationResults[0].retrySafe, false);
+
+    const connSnap = await db.collection(COLLECTIONS.socialConnections).doc('conn_fb_190').get();
+    assert.equal(connSnap.data()?.status, 'token_expired');
   } finally {
     globalThis.fetch = originalFetch;
   }

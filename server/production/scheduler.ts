@@ -307,6 +307,22 @@ export async function processScheduledPosts(): Promise<number> {
           continue;
         }
 
+        // Se uma falha anterior não for retrySafe (ex: erro definitivo de auth/escopo já registrado), reaproveita a falha sem re-chamar a API
+        const prevUnsafeFail = existingResults.find(
+          (r: any) =>
+            (r?.platform === platform || normalizeProvider(r?.platform) === provider) &&
+            !r?.success &&
+            r?.retrySafe === false
+        );
+        if (prevUnsafeFail) {
+          publicationResults.push({
+            ...prevUnsafeFail,
+            externalState: prevUnsafeFail.externalState || 'confirmed_failed',
+            retrySafe: false
+          });
+          continue;
+        }
+
         const text = [content.headline, content.body, content.cta, ...(content.hashtags || [])].filter(Boolean).join('\n\n');
         const result = await publishText({ userId: post.userId, companyId: post.companyId, provider, text });
 
