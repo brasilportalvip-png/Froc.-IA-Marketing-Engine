@@ -13,6 +13,16 @@
       "use": "@vercel/node"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/cron/process",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/social",
+      "schedule": "*/10 * * * *"
+    }
+  ],
   "routes": [
     {
       "src": "^/$",

@@ -458,7 +458,7 @@ export async function resolveMetaAccount(
   const pagesJson = await pagesResponse.json().catch(() => ({} as any));
   const pages = Array.isArray(pagesJson.data) ? pagesJson.data : [];
 
-  const instagramCandidates: Array<{ id: string; name: string; username: string; pageName: string; accessToken: string }> = [];
+  const instagramCandidates: Array<{ id: string; name: string; username: string; pageName: string; pageId: string; accessToken: string }> = [];
   for (const p of pages) {
     if (p?.instagram_business_account?.id && p?.access_token) {
       instagramCandidates.push({
@@ -466,6 +466,7 @@ export async function resolveMetaAccount(
         username: String(p.instagram_business_account.username || p.instagram_business_account.name || 'Instagram Account'),
         name: String(p.instagram_business_account.name || p.instagram_business_account.username || p.name || 'Instagram Business'),
         pageName: String(p.name || 'Facebook Page'),
+        pageId: String(p.id),
         accessToken: String(p.access_token)
       });
     }
@@ -486,7 +487,7 @@ export async function resolveMetaAccount(
       id: ig.id,
       name: ig.username,
       accessToken: ig.accessToken,
-      pageId: ig.id,
+      pageId: ig.pageId,
       expiresIn: longLivedExpiresIn,
       multiplePages: false
     };
@@ -497,6 +498,7 @@ export async function resolveMetaAccount(
       multiplePages: true,
       pages: uniqueIgCandidates.map((ig) => ({
         id: ig.id,
+        pageId: ig.pageId,
         name: `@${ig.username} (${ig.pageName})`,
         accessToken: ig.accessToken
       })),

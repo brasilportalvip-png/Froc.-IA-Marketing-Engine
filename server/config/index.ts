@@ -8,7 +8,8 @@ const isProduction = nodeEnv === 'production';
 const isTest = nodeEnv === 'test';
 
 function env(name: string, fallback = ''): string {
-  return (process.env[name] ?? fallback).trim();
+  const val = (process.env[name] ?? '').trim();
+  return val ? val : fallback;
 }
 
 function required(name: string, fallback = ''): string {
