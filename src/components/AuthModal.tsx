@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldAlert, ShieldCheck, Sparkles, User as UserIcon, X } from 'lucide-react';
-import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, updateProfile, type User as FirebaseUser } from 'firebase/auth';
+import { createUserWithEmailAndPassword, GoogleAuthProvider, sendPasswordResetEmail, signInWithCredential, signInWithEmailAndPassword, signInWithPopup, updateProfile, type User as FirebaseUser } from 'firebase/auth';
 import { auth, googleAuthProvider } from '../lib/firebase';
 import { apiRequest } from '../lib/api';
 import { getClientSecurityFingerprint, markBonusClaimedOnThisDevice } from '../lib/security';
@@ -52,12 +54,13 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
   };
 
   const friendlyError = (err: any) => {
-    const code = String(err?.code || '');
+    const code = String(err?.code || '').toLowerCase();
     if (code.includes('email-already-in-use')) return 'Este e-mail já possui uma conta.';
     if (code.includes('invalid-credential')) return 'E-mail ou senha inválidos.';
     if (code.includes('weak-password')) return 'Use uma senha com pelo menos 6 caracteres.';
     if (code.includes('too-many-requests')) return 'Muitas tentativas. Aguarde e tente novamente.';
-    if (code.includes('popup-closed')) return 'Login com Google cancelado.';
+    if (code.includes('popup-closed') || code.includes('cancelled') || code.includes('canceled')) return 'Login com Google cancelado.';
+    if (code.includes('missing-google-id-token')) return 'O Google não retornou um token de autenticação válido.';
     return err?.message || 'Não foi possível concluir a autenticação.';
   };
 
@@ -94,11 +97,30 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
   const google = async () => {
     setError(''); setSuccess(''); setSecurityNotice(null); setLoading(true);
     try {
-      const credential = await signInWithPopup(auth, googleAuthProvider);
+      let fbUser: FirebaseUser;
+
+      if (Capacitor.isNativePlatform()) {
+        const nativeResult = await FirebaseAuthentication.signInWithGoogle();
+        const idToken = nativeResult.credential?.idToken;
+
+        if (!idToken) {
+          const tokenError = new Error('O Google não retornou um token de autenticação válido.') as Error & { code: string };
+          tokenError.code = 'auth/missing-google-id-token';
+          throw tokenError;
+        }
+
+        const nativeCredential = GoogleAuthProvider.credential(idToken);
+        const credential = await signInWithCredential(auth, nativeCredential);
+        fbUser = credential.user;
+      } else {
+        const credential = await signInWithPopup(auth, googleAuthProvider);
+        fbUser = credential.user;
+      }
+
       const isExplicitConsent = terms && privacy;
-      await sync(credential.user, {
-        name: credential.user.displayName || '',
-        avatarUrl: credential.user.photoURL || '',
+      await sync(fbUser, {
+        name: fbUser.displayName || '',
+        avatarUrl: fbUser.photoURL || '',
         ...(isExplicitConsent ? { termsAccepted: true, privacyAccepted: true, termsVersion: '2026.1', privacyVersion: '2026.1' } : {})
       });
     } catch (err: any) { setError(friendlyError(err)); }
@@ -150,4 +172,3 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
     </div>
   );
 };
-

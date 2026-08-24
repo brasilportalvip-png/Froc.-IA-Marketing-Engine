@@ -25,10 +25,31 @@ const appUrl = (isProduction
   ? env('APP_URL')
   : env('APP_URL', 'http://localhost:3000')).replace(/\/$/, '');
 
-const corsOrigins = env('CORS_ORIGINS', `${appUrl || 'http://localhost:3000'},capacitor://localhost,https://localhost,http://localhost`)
-  .split(',')
-  .map((value) => value.trim().replace(/\/$/, ''))
-  .filter(Boolean);
+const CAPACITOR_CORS_ORIGINS = [
+  'capacitor://localhost',
+  'https://localhost',
+  'http://localhost'
+] as const;
+
+export function resolveCorsOrigins(
+  configuredOrigins: string,
+  applicationUrl: string
+): string[] {
+  const normalized = [
+    applicationUrl,
+    ...configuredOrigins.split(','),
+    ...CAPACITOR_CORS_ORIGINS
+  ]
+    .map((value) => value.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+
+  return [...new Set(normalized)];
+}
+
+const corsOrigins = resolveCorsOrigins(
+  env('CORS_ORIGINS'),
+  appUrl || 'http://localhost:3000'
+);
 
 export const config = {
   port: Number(process.env.PORT || 3000),
