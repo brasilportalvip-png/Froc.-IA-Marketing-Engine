@@ -8,8 +8,8 @@ function jsonLd(value: any): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 function absolute(value?: string): string {
-  if (!value) return `${config.appUrl}/og-froc.png`;
-  try { return new URL(value, config.appUrl).toString(); } catch { return `${config.appUrl}/og-froc.png`; }
+  if (!value) return `${config.appUrl}/og-froc.jpg`;
+  try { return new URL(value, config.appUrl).toString(); } catch { return `${config.appUrl}/og-froc.jpg`; }
 }
 function description(value: any, fallback: string): string {
   return String(value || fallback).replace(/\s+/g, ' ').trim().slice(0, 180);
@@ -92,7 +92,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
     title: 'Froc.IA — A IA que traz clientes pelo Google e redes sociais',
     description: 'Converse com a Froc.IA e ela cria seus anúncios, posts diários, SEO local por cidade e bairro e coloca sua marca na Vitrine. Tráfego orgânico sem complicação.',
     canonical: `${base}${pathname === '/' ? '/' : pathname}`,
-    image: `${base}/og-froc.png`, type: 'website', status: 200,
+    image: `${base}/og-froc.jpg`, type: 'website', status: 200,
     schema: [website, { '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: 'Froc.IA', applicationCategory: 'BusinessApplication', operatingSystem: 'Web', url: `${base}/`, offers: { '@type': 'AggregateOffer', priceCurrency: 'BRL', lowPrice: '49.00', highPrice: '399.90' } }],
     prerender: `<h1>Froc.IA — inteligência artificial que traz clientes</h1><p>Converse com a IA, diga o que você vende e onde estão seus clientes (país, cidade, bairro ou rua). A Froc.IA cria o anúncio, publica um post estratégico por dia na Vitrine e otimiza tudo para o Google.</p><p><a href="/vitrine">Ver a Vitrine Froc.IA</a> · <a href="/planos">Planos</a> · <a href="/blog">Froc Magazine</a></p>`
   };

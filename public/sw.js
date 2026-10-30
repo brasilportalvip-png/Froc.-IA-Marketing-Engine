@@ -1,5 +1,5 @@
-const CACHE = 'froc-shell-v2.0.0-rei-organico';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/og-froc.png'];
+const CACHE = 'froc-shell-v2.0.1-logo-oficial';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/og-froc.jpg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
