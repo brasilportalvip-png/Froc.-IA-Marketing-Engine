@@ -85,22 +85,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       isMounted = false;
     };
   }, [user?.id, selectedCompany?.id, plan, hasAutopilotAccess, currentTab]);
+  // Ferramentas ficam escondidas: a Froc.IA executa tudo pela conversa.
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'empresa', label: 'Minha Empresa', icon: Building2 },
+    { id: 'home', label: 'Falar com a Froc.IA', icon: Sparkles, badge: 'IA' },
     { id: 'vitrine', label: 'Vitrine', icon: Store },
-    { id: 'froc-ia', label: 'Froc IA', icon: Sparkles, badge: 'Central' },
-    { id: 'criar-conteudo', label: 'Criar Conteúdo', icon: PenTool },
-    { id: 'criar-imagem', label: 'Criar Imagem', icon: ImageIcon },
-    { id: 'criar-video', label: 'Criar Vídeo', icon: Video },
-    { id: 'criar-artigo', label: 'Criar Artigo', icon: FileText },
-    { id: 'seo', label: 'SEO Inteligente', icon: Search },
-    { id: 'estrategia', label: 'Estratégia', icon: Compass },
-    { id: 'campanhas', label: 'Campanhas', icon: Megaphone },
-    { id: 'calendario', label: 'Calendário', icon: Calendar },
-    { id: 'redes-sociais', label: 'Redes Sociais', icon: Share2 },
-    { id: 'conteudos', label: 'Conteúdos', icon: FolderOpen },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'dashboard', label: 'Meu Painel', icon: LayoutDashboard },
+    { id: 'empresa', label: 'Minha Marca', icon: Building2 },
+    { id: 'conteudos', label: 'Minhas Criações', icon: FolderOpen },
+    { id: 'analytics', label: 'Resultados', icon: BarChart3 },
+    { id: 'redes-sociais', label: 'Conectar Redes', icon: Share2 },
     { id: 'creditos', label: 'Créditos', icon: Coins },
     { id: 'planos', label: 'Planos e Pagamentos', icon: CreditCard },
     { id: 'perfil', label: 'Perfil', icon: User },
@@ -109,15 +102,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
-      className={`fixed left-0 top-0 h-screen bg-[#080D1A]/95 backdrop-blur-xl border-r border-white/[0.08] flex flex-col z-30 transition-all duration-300 ${
+      className={`fixed left-0 top-0 h-screen bg-[#070707]/95 backdrop-blur-xl border-r border-white/[0.08] flex flex-col z-30 transition-all duration-300 ${
         isCollapsed ? 'w-20' : 'w-64'
       }`}
     >
       {/* Top Header & Logo */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-white/[0.08] bg-[#070B14]/80 backdrop-blur-md">
+      <div className="h-16 flex items-center justify-between px-4 border-b border-white/[0.08] bg-[#030303]/80 backdrop-blur-md">
         <div
           className="flex items-center gap-3 cursor-pointer overflow-hidden"
-          onClick={() => onSelectTab('dashboard')}
+          onClick={() => onSelectTab('home')}
         >
           <BrandLogo size="md" showText={!isCollapsed} />
         </div>
@@ -180,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Bottom User & Credits Footer */}
-      <div className="p-3 border-t border-white/[0.08] bg-[#070B14]/80 backdrop-blur-md space-y-2">
+      <div className="p-3 border-t border-white/[0.08] bg-[#030303]/80 backdrop-blur-md space-y-2">
         {!isCollapsed && (
           <>
             {/* Saldo de Créditos */}

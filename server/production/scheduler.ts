@@ -3,6 +3,8 @@ import { generateAutopilotPost, generatePlatformArticle, generatePost, processPe
 import { cleanupStaleReservations, getEffectiveWallet, getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
+import { processVitrineDailyPosts } from './vitrineDaily.js';
+import { baseUrl, pingIndexNow } from './seoEngine.js';
 import {
   getProviderAutoPublishReason,
   isTextAutoPublishSupported,
@@ -663,6 +665,7 @@ async function processAutoBlog(): Promise<number> {
     if (!post.title || !post.content) throw new Error('A IA não retornou artigo completo.');
     await db.collection(COLLECTIONS.blogPosts).doc(id).set(post);
     await settingsRef.set({ lastPublishedDate: today, lastPublishedPostId: id, completedAt: nowIso(), lastError: null }, { merge: true });
+    await pingIndexNow([`${baseUrl()}/blog/${encodeURIComponent(slug)}`, `${baseUrl()}/blog`], 'auto_blog');
     return 1;
   } catch (error) {
     await settingsRef.set({ lastError: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500), failedAt: nowIso() }, { merge: true });
@@ -866,6 +869,7 @@ export async function processSchedulerTick() {
   let videoJobs: { checked: number; completed: number; failed: number } | number = 0;
   let autopilot = 0;
   let autoBlog = 0;
+  let vitrineDaily: { created: number; pending: number; errors: number } = { created: 0, pending: 0, errors: 0 };
 
   try {
     // Step 1: Cleanup stale reservations
@@ -916,6 +920,14 @@ export async function processSchedulerTick() {
       console.error('[Scheduler] Erro em processAutoBlog:', err);
     }
 
+    // Step 7: Post diário estratégico para cada projeto da Vitrine (+ ping IndexNow)
+    try {
+      vitrineDaily = await processVitrineDailyPosts();
+    } catch (err: any) {
+      errors.vitrineDaily = err?.message || String(err);
+      console.error('[Scheduler] Erro em processVitrineDailyPosts:', err);
+    }
+
     return {
       skipped: false,
       releasedReservations,
@@ -924,6 +936,7 @@ export async function processSchedulerTick() {
       videoJobs,
       autopilot,
       autoBlog,
+      vitrineDaily,
       errors: Object.keys(errors).length > 0 ? errors : undefined,
       processedAt: nowIso()
     };

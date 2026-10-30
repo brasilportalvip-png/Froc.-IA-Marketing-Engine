@@ -4,6 +4,7 @@ import cors from 'cors';
 import { config, assertProductionConfig } from './config/index.js';
 import productionRouter, { buildRobotsTxt, buildSitemapXml } from './production/router.js';
 import { renderPrivateAppPage, renderPublicPage } from './production/publicPages.js';
+import { buildGroupSitemapXml, buildRssFeed, buildSitemapTxt, buildSitemapXsl, indexNowKeyFromPath, parseSitemapPath } from './production/seoEngine.js';
 import { consumeRateLimit } from './production/store.js';
 
 assertProductionConfig();
@@ -49,6 +50,12 @@ function rateLimitPolicy(req: Request): RateLimitPolicy | null {
   }
   if (path === '/api/payments/checkout' || path === '/api/payments/subscription/cancel') {
     return { group: 'payments-mutation', limit: 20, windowMs: 10 * 60_000 };
+  }
+  if (req.method === 'POST' && path === '/api/concierge/chat') {
+    return { group: 'concierge-chat', limit: 60, windowMs: 10 * 60_000 };
+  }
+  if (req.method === 'POST' && path === '/api/concierge/execute') {
+    return { group: 'concierge-execute', limit: 15, windowMs: 10 * 60_000 };
   }
   if (req.method === 'POST' && path.startsWith('/api/ai/')) {
     return { group: 'ai-generation', limit: 120, windowMs: 10 * 60_000 };
@@ -211,18 +218,65 @@ export function createApp() {
     parameterLimit: 100
   }));
 
-  app.get('/sitemap.xml', async (_req, res, next) => {
+  // ── Froc.IA SEO Engine: sitemaps (padrão Yoast), sitemap.txt, feed, XSL e IndexNow ──
+  const seoCache = (res: Response) => res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600, stale-while-revalidate=3600');
+  app.get(['/sitemap.xml', '/sitemap_index.xml'], async (_req, res, next) => {
     try {
+      seoCache(res);
+      res.setHeader('X-Robots-Tag', 'noindex, follow');
       res.type('application/xml').send(await buildSitemapXml());
     } catch (error) {
       next(error);
     }
   });
-  app.get('/robots.txt', (_req, res) => res.type('text/plain').send(buildRobotsTxt()));
+  app.get(/^\/(?:page|post|vitrine|vitrine-post)-sitemap\d*\.xml$/, async (req, res, next) => {
+    try {
+      const parsed = parseSitemapPath(req.path);
+      const xml = parsed ? await buildGroupSitemapXml(parsed.group, parsed.page) : null;
+      if (!xml) {
+        res.status(404).type('text/plain').send('Sitemap não encontrado.');
+        return;
+      }
+      seoCache(res);
+      res.setHeader('X-Robots-Tag', 'noindex, follow');
+      res.type('application/xml').send(xml);
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/sitemap.txt', async (_req, res, next) => {
+    try {
+      seoCache(res);
+      res.type('text/plain').send(await buildSitemapTxt());
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/main-sitemap.xsl', (_req, res) => {
+    seoCache(res);
+    res.type('text/xsl').send(buildSitemapXsl());
+  });
+  app.get(['/feed.xml', '/feed', '/rss.xml'], async (_req, res, next) => {
+    try {
+      seoCache(res);
+      res.type('application/rss+xml').send(await buildRssFeed());
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/robots.txt', (_req, res) => {
+    seoCache(res);
+    res.type('text/plain').send(buildRobotsTxt());
+  });
+  app.get('/indexnow-key.txt', (req, res, next) => {
+    const key = indexNowKeyFromPath(req.path);
+    if (!key) return next();
+    res.type('text/plain').send(key);
+  });
 
-  // Shell SEO dinâmico para páginas públicas.
+  // Shell SEO dinâmico para páginas públicas (com conteúdo pré-renderizado para robôs).
   app.get(
-    ['/', '/vitrine', '/vitrine/:slug', '/blog', '/blog/:slug', '/planos', '/termos', '/privacidade'],
+    ['/', '/vitrine', '/vitrine/:slug', '/vitrine/:slug/:postSlug', '/blog', '/blog/:slug', '/planos', '/termos', '/privacidade'],
     async (req, res, next) => {
       if (!config.isProduction) return next();
       try {

@@ -1,17 +1,17 @@
 import React from 'react';
-import { Bot, CalendarDays, Home, PlusCircle, UserRound } from 'lucide-react';
+import { FolderOpen, LayoutDashboard, Sparkles, Store, UserRound } from 'lucide-react';
 
 interface Props { currentTab: string; onNavigate: (tab: string) => void; }
 const items = [
-  { tab: 'dashboard', label: 'Início', icon: Home },
-  { tab: 'criar-conteudo', label: 'Criar', icon: PlusCircle },
-  { tab: 'froc-ia', label: 'Froc IA', icon: Bot },
-  { tab: 'calendario', label: 'Agenda', icon: CalendarDays },
+  { tab: 'home', label: 'IA', icon: Sparkles },
+  { tab: 'vitrine', label: 'Vitrine', icon: Store },
+  { tab: 'dashboard', label: 'Painel', icon: LayoutDashboard },
+  { tab: 'conteudos', label: 'Criações', icon: FolderOpen },
   { tab: 'perfil', label: 'Conta', icon: UserRound }
 ];
 
 export const BottomNav: React.FC<Props> = ({ currentTab, onNavigate }) => (
-  <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-800/90 bg-[#0B0F19]/95 px-[max(10px,env(safe-area-inset-left))] pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden" aria-label="Navegação principal">
+  <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-800/90 bg-[#050505]/95 px-[max(10px,env(safe-area-inset-left))] pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden" aria-label="Navegação principal">
     <div className="mx-auto grid max-w-xl grid-cols-5 gap-1">
       {items.map(({ tab, label, icon: Icon }) => {
         const active = currentTab === tab || (tab === 'froc-ia' && currentTab === 'estrategia');

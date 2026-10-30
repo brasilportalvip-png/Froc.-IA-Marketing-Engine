@@ -83,7 +83,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
   return (
     <div className="space-y-6 animate-fadeIn max-w-5xl">
       {/* Top Banner */}
-      <div className="p-6 md:p-8 rounded-3xl bg-gradient-to-r from-blue-950 via-[#0F172A] to-slate-900 border border-blue-500/40 relative overflow-hidden shadow-2xl">
+      <div className="p-6 md:p-8 rounded-3xl bg-gradient-to-r from-blue-950 via-[#0d0d0d] to-slate-900 border border-blue-500/40 relative overflow-hidden shadow-2xl">
         <div className="flex items-center gap-4 mb-2">
           <BrandLogo size="md" showText={false} />
           <div>
@@ -113,7 +113,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
       </div>
 
       {/* Main Input Box */}
-      <div className="p-6 rounded-3xl bg-[#0F172A] border border-[#334155] space-y-4">
+      <div className="p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626] space-y-4">
         <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
           O que o Froc.IA deve criar para você hoje?
         </label>
@@ -123,7 +123,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
           value={promptInput}
           onChange={(e) => setPromptInput(e.target.value)}
           placeholder="Ex: Divulgue meu restaurante durante esta semana com foco nos pratos especiais de almoço e entrega rápida..."
-          className="w-full bg-[#1E293B] border border-slate-700 rounded-2xl p-4 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 leading-relaxed shadow-inner"
+          className="w-full bg-[#171717] border border-slate-700 rounded-2xl p-4 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 leading-relaxed shadow-inner"
         />
 
         {/* Quick prompt suggestions */}
@@ -134,7 +134,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
               <button
                 key={i}
                 onClick={() => setPromptInput(qp)}
-                className="text-[11px] px-3 py-1.5 rounded-xl bg-[#1E293B] border border-slate-700/80 hover:border-slate-500 text-slate-300 hover:text-white transition-colors text-left"
+                className="text-[11px] px-3 py-1.5 rounded-xl bg-[#171717] border border-slate-700/80 hover:border-slate-500 text-slate-300 hover:text-white transition-colors text-left"
               >
                 {qp}
               </button>
@@ -149,7 +149,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
             <select
               value={timeframe}
               onChange={(e) => setTimeframe(e.target.value as any)}
-              className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+              className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
             >
               <option value="semana">1 Semana Intensiva (5 a 7 Ações)</option>
               <option value="mes">1 Mês Completo (Roadmap Estratégico)</option>
@@ -158,7 +158,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-400 mb-1">Modelo de IA</label>
-            <div className="px-3 py-2 rounded-xl bg-[#1E293B] border border-slate-700 text-xs text-cyan-300 font-medium flex items-center justify-between">
+            <div className="px-3 py-2 rounded-xl bg-[#171717] border border-slate-700 text-xs text-cyan-300 font-medium flex items-center justify-between">
               <span>Google Gemini 2.5 Pro</span>
               <span className="text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">Alta Precisão</span>
             </div>
@@ -192,7 +192,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
       {/* Confirmation Modal */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-[#0F172A] border border-[#334155] rounded-3xl p-6 shadow-2xl space-y-4">
+          <div className="w-full max-w-md bg-[#0d0d0d] border border-[#262626] rounded-3xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
                 <Coins size={20} />
@@ -203,7 +203,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-[#1E293B] border border-slate-700 text-xs text-slate-300 space-y-2">
+            <div className="p-4 rounded-2xl bg-[#171717] border border-slate-700 text-xs text-slate-300 space-y-2">
               <p>
                 Essa ação utilizará aproximadamente <strong className="text-amber-400">{estimatedCredits} créditos</strong> do seu saldo.
               </p>
@@ -216,7 +216,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2 rounded-xl bg-[#1E293B] text-slate-300 hover:text-white text-xs font-semibold"
+                className="px-4 py-2 rounded-xl bg-[#171717] text-slate-300 hover:text-white text-xs font-semibold"
               >
                 Cancelar
               </button>
@@ -233,7 +233,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
 
       {/* Generated Strategy Display */}
       {generatedStrategy && (
-        <div className="p-6 md:p-8 rounded-3xl bg-[#0F172A] border border-cyan-500/40 space-y-6 shadow-2xl animate-fadeIn">
+        <div className="p-6 md:p-8 rounded-3xl bg-[#0d0d0d] border border-cyan-500/40 space-y-6 shadow-2xl animate-fadeIn">
           <div className="flex items-center justify-between border-b border-slate-800 pb-4">
             <div>
               <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">Estratégia Produzida por Froc IA</span>
@@ -247,7 +247,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
             </button>
           </div>
 
-          <p className="text-xs text-slate-200 leading-relaxed bg-[#1E293B] p-4 rounded-2xl border border-slate-700">
+          <p className="text-xs text-slate-200 leading-relaxed bg-[#171717] p-4 rounded-2xl border border-slate-700">
             {generatedStrategy.strategySummary}
           </p>
 
@@ -259,7 +259,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {generatedStrategy.contentPillars.map((pillar: string, idx: number) => (
-                  <div key={idx} className="p-3 rounded-2xl bg-[#1E293B]/70 border border-slate-700 text-xs text-slate-300">
+                  <div key={idx} className="p-3 rounded-2xl bg-[#171717]/70 border border-slate-700 text-xs text-slate-300">
                     <span className="text-[10px] text-cyan-400 font-bold block mb-1">Pilar {idx + 1}</span>
                     {pillar}
                   </div>
@@ -278,7 +278,7 @@ export const FrocIaPage: React.FC<FrocIaPageProps> = ({
                 {generatedStrategy.actionPlan.map((action: any, i: number) => (
                   <div
                     key={i}
-                    className="p-4 rounded-2xl bg-[#1E293B]/50 border border-slate-700/80 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                    className="p-4 rounded-2xl bg-[#171717]/50 border border-slate-700/80 flex flex-col md:flex-row md:items-center justify-between gap-3"
                   >
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">

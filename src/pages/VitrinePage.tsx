@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import { Company, BlogPost } from '../types';
 import { apiRequest } from '../lib/api';
+import { VitrineShowcase } from '../components/vitrine/VitrineShowcase';
+import { VitrinePostView } from '../components/vitrine/VitrinePostView';
+import { CompanyDailyPosts } from '../components/vitrine/CompanyDailyPosts';
 
 interface VitrinePageProps {
   onNavigate: (tab: string) => void;
@@ -308,8 +311,24 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
     }
   };
 
-  if (loading) {
+  const dailyPostMatch = path.match(/^\/vitrine\/([^/]+)\/([^/]+)$/);
+  if (dailyPostMatch) {
     return (
+      <VitrinePostView
+        companySlug={decodeURIComponent(dailyPostMatch[1])}
+        postSlug={decodeURIComponent(dailyPostMatch[2])}
+        onBack={navigatePublic}
+        onStart={() => onNavigate('home')}
+      />
+    );
+  }
+
+  const shell = (node: React.ReactNode) => (
+    <div className="px-3 pb-16 pt-[calc(96px+env(safe-area-inset-top))] sm:px-6">{node}</div>
+  );
+
+  if (loading) {
+    return shell(
       <div className="flex min-h-[50vh] items-center justify-center">
         <span className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-400/20 border-t-cyan-400" />
       </div>
@@ -317,7 +336,7 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
   }
 
   if (error) {
-    return (
+    return shell(
       <div className="mx-auto max-w-3xl froc-panel text-center">
         <Store className="mx-auto mb-3 text-slate-500" size={38} />
         <h2 className="text-lg font-bold text-white">Conteúdo indisponível</h2>
@@ -338,7 +357,7 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
     const isPhysical = company.businessType === 'physical';
     const isHybrid = company.businessType === 'hybrid';
 
-    return (
+    return shell(
       <div className="mx-auto max-w-5xl space-y-6 animate-fadeIn">
         <button onClick={() => navigatePublic('/vitrine')} className="froc-secondary inline-flex items-center gap-2">
           <ArrowLeft size={14} />
@@ -531,12 +550,13 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
             </aside>
           </div>
         </section>
+        <CompanyDailyPosts slug={company.slug} onOpen={navigatePublic} />
       </div>
     );
   }
 
   if (post) {
-    return (
+    return shell(
       <div className="mx-auto max-w-4xl space-y-6 animate-fadeIn">
         <button onClick={() => navigatePublic('/blog')} className="froc-secondary inline-flex items-center gap-2">
           <ArrowLeft size={14} />
@@ -570,7 +590,7 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
   }
 
   if (path.startsWith('/blog')) {
-    return (
+    return shell(
       <div className="mx-auto max-w-6xl space-y-6 animate-fadeIn">
         <section className="rounded-3xl border border-blue-500/30 bg-gradient-to-br from-blue-950 via-slate-950 to-cyan-950/30 p-7 md:p-10">
           <span className="text-xs font-bold uppercase tracking-widest text-cyan-400">Froc Magazine</span>
@@ -605,153 +625,11 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 animate-fadeIn">
-      <section className="rounded-3xl border border-blue-500/30 bg-gradient-to-br from-blue-950 via-slate-950 to-cyan-950/30 p-7 md:p-10">
-        <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-cyan-400">
-          <Store size={14} />
-          Vitrine Pública Froc
-        </span>
-        <h1 className="mt-2 text-3xl font-black text-white">Encontre empresas online, lojas e serviços</h1>
-        <p className="mt-2 max-w-2xl text-sm text-slate-300">
-          Descubra negócios digitais de todo o Brasil e comércios locais participantes do ecossistema Froc.IA.
-        </p>
-        <button onClick={() => navigatePublic('/blog')} className="froc-secondary mt-5 inline-flex items-center gap-2">
-          <FileText size={14} />
-          Abrir Froc Magazine
-        </button>
-      </section>
-
-      {/* FILTROS DE BUSCA E TIPO DE OPERAÇÃO */}
-      <div className="froc-panel space-y-4">
-        <div className="relative">
-          <Search className="absolute left-3.5 top-3.5 text-slate-500" size={15} />
-          <input
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar empresa online, produto, serviço ou palavra-chave…"
-            className="froc-input pl-10"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-3">
-          {/* Tipo de Operação Tabs */}
-          <div className="flex flex-wrap gap-1.5">
-            {[
-              { id: 'all', label: 'Todos os modelos' },
-              { id: 'online', label: '🌐 100% Online' },
-              { id: 'physical', label: '🏬 Presencial / Físico' },
-              { id: 'hybrid', label: '🔄 Híbrido' }
-            ].map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTypeFilter(t.id as any)}
-                className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                  typeFilter === t.id
-                    ? 'bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20'
-                    : 'border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700 hover:text-white'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Categorias */}
-          <div className="flex flex-wrap gap-1.5">
-            {categories.map((category) => (
-              <button
-                key={category}
-                onClick={() => setSelectedCategory(category)}
-                className={`rounded-xl px-2.5 py-1 text-xs font-medium ${
-                  selectedCategory === category
-                    ? 'bg-blue-600 text-white font-semibold'
-                    : 'bg-slate-900/60 text-slate-400 hover:text-white'
-                }`}
-              >
-                {category === 'all' ? 'Todas categorias' : category}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {filteredCompanies.length ? (
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {filteredCompanies.map((item) => {
-            const isItemOnline = item.businessType === 'online' || !item.businessType;
-            const isItemPhysical = item.businessType === 'physical';
-            const isItemHybrid = item.businessType === 'hybrid';
-
-            return (
-              <button
-                key={item.id}
-                onClick={() => navigatePublic(`/vitrine/${encodeURIComponent(item.slug)}`)}
-                className="froc-panel group flex flex-col text-left transition-all hover:border-cyan-500/40 hover:shadow-xl hover:shadow-cyan-950/20"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-cyan-400">{item.category}</span>
-                  {isItemOnline && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
-                      <Laptop size={10} /> Online
-                    </span>
-                  )}
-                  {isItemPhysical && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-                      <Store size={10} /> Física
-                    </span>
-                  )}
-                  {isItemHybrid && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] font-bold text-purple-300">
-                      <Layers size={10} /> Híbrida
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 font-black text-cyan-300">
-                    {item.logoUrl ? (
-                      <img src={item.logoUrl} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      item.name?.[0]?.toUpperCase()
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <h2 className="truncate text-sm font-bold text-white group-hover:text-cyan-300">{item.name}</h2>
-                    <span className="text-[11px] text-slate-400">
-                      {isItemOnline
-                        ? `🌐 ${item.coverageRegion || 'Atende todo o Brasil'}`
-                        : `📍 ${[item.city, item.state].filter(Boolean).join(' - ') || 'Local'}`}
-                    </span>
-                  </div>
-                </div>
-
-                <p className="mt-3 line-clamp-3 flex-1 text-xs leading-5 text-slate-400">
-                  {item.description || 'Conheça esta empresa na Vitrine Froc.IA.'}
-                </p>
-
-                <div className="mt-4 flex items-center justify-between border-t border-slate-800/80 pt-3">
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-cyan-300">
-                    <Building2 size={13} />
-                    Ver perfil
-                  </span>
-                  {item.whatsapp && (
-                    <span className="text-[11px] text-emerald-400 font-medium">WhatsApp ativo</span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="froc-panel text-center">
-          <Store className="mx-auto mb-3 text-slate-600" size={36} />
-          <h2 className="text-sm font-bold text-white">Nenhuma empresa encontrada com esses filtros</h2>
-          <p className="mt-1 text-xs text-slate-500">Tente ajustar o termo de busca ou o modelo de operação.</p>
-          <button onClick={() => onNavigate('empresa')} className="froc-primary mt-4">
-            Cadastrar minha empresa
-          </button>
-        </div>
-      )}
-    </div>
+    <VitrineShowcase
+      companies={companies}
+      onOpenCompany={(slug) => navigatePublic(`/vitrine/${encodeURIComponent(slug)}`)}
+      onOpenPost={(companySlug, postSlug) => navigatePublic(`/vitrine/${encodeURIComponent(companySlug)}/${encodeURIComponent(postSlug)}`)}
+      onStart={() => onNavigate('home')}
+    />
   );
 };

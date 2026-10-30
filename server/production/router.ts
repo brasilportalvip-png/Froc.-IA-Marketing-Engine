@@ -11,6 +11,10 @@ import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoC
 import { createOAuthUrl, createPinterestPin, disconnectSocial, getFacebookPageSelectionCandidates, getPinterestBoards, getProviderAutoPublishReason, getSocialReadiness, getTikTokUploadStatus, handleOAuthCallback, initTikTokDraftUpload, initYouTubeResumableUpload, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, publishInstagramMedia, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
 import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
 import multer from 'multer';
+import { allIndexableUrls, buildRobotsTxt, buildSitemapIndexXml, getSeoEngineStatus, pingIndexNow } from './seoEngine.js';
+import { conciergeChat, executeConciergePlan, sanitizeMessages } from './concierge.js';
+import { processVitrineDailyPosts, sanitizePublicVitrinePost } from './vitrineDaily.js';
+import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents.js';
 import { COLLECTIONS, cleanObject, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
 
 const router = Router();
@@ -1468,6 +1472,92 @@ router.get('/vitrine/:slug', asyncRoute(async (req, res) => {
   res.status(404).json({ error: 'Empresa não encontrada ou não está visível na Vitrine Pública.' });
 }));
 
+
+// ───────────── Froc.IA Concierge (IA conversacional que executa tudo) ─────────────
+async function optionalAuth(req: AuthenticatedRequest, res: Response, next: () => void): Promise<void> {
+  const header = typeof req.headers.authorization === 'string' ? req.headers.authorization.trim() : '';
+  if (!header) { next(); return; }
+  await requireAuth(req, res, next as any);
+}
+
+router.get('/agents', (_req, res) => {
+  res.json({ total: FROC_AGENTS.length, squads: FROC_SQUADS.map(({ id, name, color, mission, roles }) => ({ id, name, color, mission, agents: roles.length })), agents: FROC_AGENTS });
+});
+
+router.post('/concierge/chat', optionalAuth as any, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const messages = sanitizeMessages(req.body?.messages);
+  if (!messages.length || messages[messages.length - 1].role !== 'user') return res.status(400).json({ error: 'Envie uma mensagem para a Froc.IA.' });
+  const company = req.user ? await ownedCompany(req.user.id, safeString(req.body?.companyId, 200)) : undefined;
+  const turn = await conciergeChat({ messages, collected: req.body?.collected, company, authenticated: Boolean(req.user) });
+  res.json({ ...turn, needsAuth: !req.user });
+}));
+
+router.post('/concierge/execute', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  if (!req.body?.collected || !Array.isArray(req.body?.actions)) return res.status(400).json({ error: 'Plano inválido. Confirme o resumo com a Froc.IA novamente.' });
+  const outcome = await executeConciergePlan({ userId: req.user!.id, companyId: safeString(req.body?.companyId, 200), collected: req.body.collected, actions: req.body.actions });
+  res.json({ ...outcome, wallet: await getWallet(req.user!.id) });
+}));
+
+// ───────────── Posts diários da Vitrine (público + painel) ─────────────
+router.get('/vitrine-posts', asyncRoute(async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit || 24), 1), 100);
+  const [postsSnap, companiesSnap] = await Promise.all([
+    firestore().collection(COLLECTIONS.vitrinePosts).where('status', '==', 'published').get(),
+    firestore().collection(COLLECTIONS.companies).get()
+  ]);
+  const publicIds = new Set(queryData<any>(companiesSnap).filter((c) => parseStrictBoolean(c.isPublicInVitrine)).map((c) => c.id));
+  const posts = queryData<any>(postsSnap).filter((p) => publicIds.has(p.companyId))
+    .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, limit)
+    .map((p) => ({ ...sanitizePublicVitrinePost(p), content: undefined }));
+  res.json({ posts });
+}));
+
+router.get('/vitrine-posts/mine', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const snap = await firestore().collection(COLLECTIONS.vitrinePosts).where('userId', '==', req.user!.id).get();
+  const companyId = safeString(req.query.companyId, 200);
+  const posts = queryData<any>(snap).filter((p) => !companyId || p.companyId === companyId)
+    .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 60).map(sanitizePublicVitrinePost);
+  res.json({ posts });
+}));
+
+router.get('/vitrine/:slug/posts', asyncRoute(async (req, res) => {
+  const slug = safeString(req.params.slug, 200);
+  const companySnap = await firestore().collection(COLLECTIONS.companies).where('slug', '==', slug).limit(1).get();
+  if (companySnap.empty || !parseStrictBoolean((companySnap.docs[0].data() as any).isPublicInVitrine)) return res.status(404).json({ error: 'Empresa não encontrada na vitrine.' });
+  const snap = await firestore().collection(COLLECTIONS.vitrinePosts).where('companyId', '==', companySnap.docs[0].id).get();
+  const posts = queryData<any>(snap).filter((p) => p.status === 'published')
+    .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 60)
+    .map((p) => ({ ...sanitizePublicVitrinePost(p), content: undefined }));
+  res.json({ posts });
+}));
+
+router.get('/vitrine/:slug/posts/:postSlug', asyncRoute(async (req, res) => {
+  const slug = safeString(req.params.slug, 200);
+  const postSlug = safeString(req.params.postSlug, 200);
+  const snap = await firestore().collection(COLLECTIONS.vitrinePosts).where('slug', '==', postSlug).limit(1).get();
+  if (snap.empty) return res.status(404).json({ error: 'Post não encontrado.' });
+  const post = { id: snap.docs[0].id, ...snap.docs[0].data() } as any;
+  const companySnap = await firestore().collection(COLLECTIONS.companies).doc(post.companyId).get();
+  const company = companySnap.exists ? { id: companySnap.id, ...companySnap.data() } as any : null;
+  if (!company || company.slug !== slug || !parseStrictBoolean(company.isPublicInVitrine) || post.status !== 'published') return res.status(404).json({ error: 'Post não encontrado.' });
+  res.json({ post: sanitizePublicVitrinePost(post), company: sanitizePublicVitrineCompany(company) });
+}));
+
+// ───────────── Admin: Motor SEO e Vitrine diária ─────────────
+router.get('/admin/seo/status', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  res.json(await getSeoEngineStatus());
+}));
+router.post('/admin/seo/ping-all', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const result = await pingIndexNow(await allIndexableUrls(), 'admin_full_ping');
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'seo_ping_all', details: { status: result.status, submitted: result.submitted } });
+  res.json(result);
+}));
+router.post('/admin/vitrine/generate-daily', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const result = await processVitrineDailyPosts({ force: true, limit: Math.min(Math.max(Number(req.body?.limit || 10), 1), 25) });
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'vitrine_generate_daily', details: result });
+  res.json(result);
+}));
+
 // Admin
 router.get('/admin/overview', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
   const db = firestore();
@@ -1542,7 +1632,9 @@ router.patch('/admin/blog/:id', requireAdmin, asyncRoute(async (req: Authenticat
   if (req.body?.tags !== undefined) patch.tags=stringArray(req.body.tags,12);
   if (req.body?.slug !== undefined) patch.slug=slugify(req.body.slug);
   if (req.body?.status !== undefined) { if (!['draft','published','archived'].includes(req.body.status)) return res.status(400).json({ error:'Status inválido.' }); patch.status=req.body.status; if (req.body.status==='published'&&!current.publishedAt) patch.publishedAt=nowIso(); }
-  await ref.set(patch,{merge:true}); const fresh=await ref.get(); res.json({ post:{id:fresh.id,...fresh.data()} });
+  await ref.set(patch,{merge:true}); const fresh=await ref.get(); const freshData:any=fresh.data()||{};
+  if (freshData.status==='published' && freshData.slug) { const base=config.appUrl.replace(/\/$/,''); await pingIndexNow([`${base}/blog/${encodeURIComponent(freshData.slug)}`, `${base}/blog`], 'admin_blog_publish'); }
+  res.json({ post:{id:fresh.id,...freshData} });
 }));
 router.delete('/admin/blog/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const ref=firestore().collection(COLLECTIONS.blogPosts).doc(req.params.id); const snap=await ref.get(); if(!snap.exists)return res.status(404).json({error:'Artigo não encontrado.'}); await ref.delete(); await writeAdminLog({operatorId:req.user!.id,operatorEmail:req.user!.email,action:'delete_blog',details:{postId:req.params.id}}); res.json({message:'Artigo removido.'});
@@ -1585,57 +1677,12 @@ router.get('/plans', (_req, res) => res.json({ plans: config.plans, gatewayConfi
 router.get('/sitemap.xml', asyncRoute(async (_req, res) => res.type('application/xml').send(await buildSitemapXml())));
 router.get('/robots.txt', (_req, res) => res.type('text/plain').send(buildRobotsTxt()));
 
+// Compatibilidade: /sitemap.xml passa a servir o índice (padrão Yoast/Google).
 export async function buildSitemapXml(): Promise<string> {
-  const base = config.appUrl.replace(/\/$/, '');
-  const urls: Array<{ loc: string; lastmod?: string }> = [
-    { loc: `${base}/` },
-    { loc: `${base}/vitrine` },
-    { loc: `${base}/blog` },
-    { loc: `${base}/planos` },
-    { loc: `${base}/termos` },
-    { loc: `${base}/privacidade` }
-  ];
-  try {
-    const [blogSnap, companiesSnap] = await Promise.all([
-      firestore().collection(COLLECTIONS.blogPosts).where('status', '==', 'published').get(),
-      firestore().collection(COLLECTIONS.companies).get()
-    ]);
-    for (const doc of blogSnap.docs) {
-      const item = doc.data() as any;
-      if (item.slug) urls.push({ loc: `${base}/blog/${encodeURIComponent(item.slug)}`, lastmod: item.updatedAt || item.publishedAt });
-    }
-    for (const doc of companiesSnap.docs) {
-      const item = doc.data() as any;
-      const isPublic = item.isPublicInVitrine === true || item.isPublicInVitrine === 'true';
-      if (isPublic && item.slug) urls.push({ loc: `${base}/vitrine/${encodeURIComponent(item.slug)}`, lastmod: item.updatedAt });
-    }
-  } catch (error) {
-    console.warn('[Froc Sitemap] Não foi possível carregar dados dinâmicos do Firestore, usando páginas base:', error);
-  }
-  const escapeXml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-  const safeLastmod = (value?: string) => {
-    if (!value) return '';
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? '' : date.toISOString();
-  };
-  const body = urls.map((item) => { const lastmod = safeLastmod(item.lastmod); return `  <url>\n    <loc>${escapeXml(item.loc)}</loc>${lastmod ? `\n    <lastmod>${escapeXml(lastmod)}</lastmod>` : ''}\n  </url>`; }).join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>\n`;
+  return buildSitemapIndexXml();
 }
 
-export function buildRobotsTxt(): string {
-  const blocked = ['/api/','/admin','/dashboard','/empresa','/froc-ia','/autopilot','/criar-conteudo','/criar-imagem','/criar-video','/criar-artigo','/seo','/campanhas','/calendario','/redes-sociais','/conteudos','/analytics','/creditos','/perfil','/configuracoes','/suporte'];
-  return `User-agent: *
-Allow: /
-Allow: /blog
-Allow: /vitrine
-Allow: /planos
-Allow: /termos
-Allow: /privacidade
-${blocked.map((path) => `Disallow: ${path}`).join('\n')}
-
-Sitemap: ${config.appUrl.replace(/\/$/, '')}/sitemap.xml
-`;
-}
+export { buildRobotsTxt };
 
 export { router };
 export default router;

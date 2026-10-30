@@ -408,7 +408,10 @@ export const COLLECTIONS = {
   securityEvents: 'securityEvents',
   deviceRegistrations: 'deviceRegistrations',
   mediaGenerationJobs: 'mediaGenerationJobs',
-  rateLimits: 'rateLimits'
+  rateLimits: 'rateLimits',
+  vitrinePosts: 'vitrinePosts',
+  conciergeSessions: 'conciergeSessions',
+  seoPings: 'seoPings'
 } as const;
 
 export type DatabaseHealth = {

@@ -43,9 +43,9 @@ const plans = [
 ] as const;
 
 export const LandingPage: React.FC<Props> = ({ authenticated, onOpenAuth, onNavigate }) => (
-  <div className="min-h-[100dvh] overflow-hidden bg-[#070B14] text-white selection:bg-cyan-500 selection:text-slate-950">
+  <div className="min-h-[100dvh] overflow-hidden bg-[#030303] text-white selection:bg-cyan-500 selection:text-slate-950">
     {/* Navigation Bar */}
-    <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#070B14]/85 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#030303]/85 backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3.5 sm:px-6 lg:px-8">
         <a href="/" className="flex items-center gap-3">
           <BrandLogo size="md" showText={true} />
@@ -118,7 +118,7 @@ export const LandingPage: React.FC<Props> = ({ authenticated, onOpenAuth, onNavi
           {/* Interactive Card Mockup */}
           <div className="relative mx-auto w-full max-w-lg">
             <div className="absolute -inset-4 -z-10 rounded-3xl bg-gradient-to-r from-blue-600/20 to-cyan-500/20 blur-2xl" />
-            <div className="rounded-3xl border border-white/[0.12] bg-[#0A101E]/90 p-5 shadow-2xl backdrop-blur-2xl sm:p-7">
+            <div className="rounded-3xl border border-white/[0.12] bg-[#080808]/90 p-5 shadow-2xl backdrop-blur-2xl sm:p-7">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <div className="flex items-center gap-2.5">
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400" />
@@ -197,7 +197,7 @@ export const LandingPage: React.FC<Props> = ({ authenticated, onOpenAuth, onNavi
       </section>
 
       {/* Pricing Section */}
-      <section id="planos" className="border-y border-white/[0.08] bg-[#0A0F1D]/80 backdrop-blur-xl py-24">
+      <section id="planos" className="border-y border-white/[0.08] bg-[#080808]/80 backdrop-blur-xl py-24">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-2xl mx-auto">
             <span className="text-xs font-extrabold uppercase tracking-wider text-cyan-400 bg-cyan-500/10 px-3 py-1 rounded-full border border-cyan-500/20">
@@ -254,7 +254,7 @@ export const LandingPage: React.FC<Props> = ({ authenticated, onOpenAuth, onNavi
     </main>
 
     {/* Footer */}
-    <footer className="border-t border-white/[0.08] bg-[#070B14]">
+    <footer className="border-t border-white/[0.08] bg-[#030303]">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-10 text-xs text-slate-400 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
         <div className="flex items-center gap-3">
           <BrandLogo size="sm" showText={true} />

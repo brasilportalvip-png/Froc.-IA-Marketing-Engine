@@ -380,7 +380,7 @@ export const CalendarPage: React.FC<Props> = ({
       {/* Modal de Agendamento */}
       {modal && (
         <div className="fixed inset-0 z-[90] grid place-items-center bg-black/80 p-3 backdrop-blur-sm animate-fadeIn">
-          <form onSubmit={submit} className="max-h-[calc(100dvh-24px)] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-700 bg-[#0F172A] p-5 sm:p-6 shadow-2xl">
+          <form onSubmit={submit} className="max-h-[calc(100dvh-24px)] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-700 bg-[#0d0d0d] p-5 sm:p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-black text-white">Agendamento & Planejamento</h3>

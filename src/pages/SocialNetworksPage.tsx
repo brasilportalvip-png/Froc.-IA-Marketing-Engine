@@ -303,7 +303,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     {message&&<div className="flex gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200"><CheckCircle2 size={17} className="shrink-0"/>{message}</div>}
 
     {readiness && selectedCompany && (
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#0F172A] p-4 text-xs">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#0d0d0d] p-4 text-xs">
         <div className="flex items-center gap-3">
           <div className={`grid h-9 w-9 place-items-center rounded-xl ${readiness.healthy && readiness.connectedCount > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
             <ShieldCheck size={20} />
@@ -321,9 +321,9 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
       </div>
     )}
 
-    {!selectedCompany?<div className="rounded-3xl border border-slate-800 bg-[#0F172A] p-10 text-center"><p className="text-sm font-bold text-white">Selecione uma empresa para gerenciar conexões.</p><button onClick={()=>onNavigate('empresa')} className="mt-4 rounded-xl bg-cyan-500 px-5 py-3 text-xs font-extrabold text-slate-950">Ir para Minha Empresa</button></div>:
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{networks.map(net=>{const conn=byProvider.get(net.id);const connected=conn?.status==='connected';const expired=conn?.expiresAt&&new Date(conn.expiresAt).getTime()<Date.now();return <article key={net.id} className="flex min-h-[270px] flex-col justify-between rounded-3xl border border-[#334155] bg-[#0F172A] p-5 shadow-xl shadow-black/10 transition hover:border-cyan-500/40">
-      <div><div className="flex items-start justify-between gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl border border-slate-700 bg-[#1E293B] text-xl">{net.icon}</div>{connected&&!expired?<span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300"><CheckCircle2 size={11}/>Conectado</span>:<span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] text-slate-400">{expired?'Expirado':'Desconectado'}</span>}</div>
+    {!selectedCompany?<div className="rounded-3xl border border-slate-800 bg-[#0d0d0d] p-10 text-center"><p className="text-sm font-bold text-white">Selecione uma empresa para gerenciar conexões.</p><button onClick={()=>onNavigate('empresa')} className="mt-4 rounded-xl bg-cyan-500 px-5 py-3 text-xs font-extrabold text-slate-950">Ir para Minha Empresa</button></div>:
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{networks.map(net=>{const conn=byProvider.get(net.id);const connected=conn?.status==='connected';const expired=conn?.expiresAt&&new Date(conn.expiresAt).getTime()<Date.now();return <article key={net.id} className="flex min-h-[270px] flex-col justify-between rounded-3xl border border-[#262626] bg-[#0d0d0d] p-5 shadow-xl shadow-black/10 transition hover:border-cyan-500/40">
+      <div><div className="flex items-start justify-between gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl border border-slate-700 bg-[#171717] text-xl">{net.icon}</div>{connected&&!expired?<span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300"><CheckCircle2 size={11}/>Conectado</span>:<span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] text-slate-400">{expired?'Expirado':'Desconectado'}</span>}</div>
       <h3 className="mt-4 text-sm font-bold text-white">{net.name}</h3><p className="mt-1 text-xs font-semibold text-cyan-300">{net.capability}</p><p className="mt-2 text-[11px] leading-relaxed text-slate-400">{net.note}</p>
       {conn&&<div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-[11px]"><p className="truncate font-semibold text-slate-200">{conn.accountName||'Conta conectada'}</p>{conn.scopes?.length>0&&<p className="mt-1 line-clamp-2 text-slate-500">Escopos: {conn.scopes.join(', ')}</p>}</div>}</div>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -355,10 +355,10 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     {/* Facebook Page Selection Modal */}
     {isPageSelectModalOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-sm animate-fadeIn">
-        <div className="relative flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#334155] bg-[#0F172A] shadow-2xl shadow-black/80">
+        <div className="relative flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#262626] bg-[#0d0d0d] shadow-2xl shadow-black/80">
           <div className="flex items-center justify-between border-b border-slate-800 p-4 sm:p-5">
             <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#1E293B] text-lg">📘</div>
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#171717] text-lg">📘</div>
               <div>
                 <h3 className="text-sm font-bold text-white">Selecionar Página do Facebook</h3>
                 <p className="text-[11px] text-slate-400">Escolha a Página gerenciada para conectar à empresa</p>
@@ -387,7 +387,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
                 <p className="text-xs text-slate-400">Carregando Páginas autorizadas...</p>
               </div>
             ) : pageCandidates.length === 0 ? (
-              <div className="rounded-2xl border border-slate-800 bg-[#1E293B]/40 p-6 text-center space-y-2">
+              <div className="rounded-2xl border border-slate-800 bg-[#171717]/40 p-6 text-center space-y-2">
                 <Info size={24} className="mx-auto text-amber-400" />
                 <p className="text-xs font-bold text-white">Nenhuma Página disponível</p>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
@@ -406,7 +406,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
                       className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition ${
                         selectedPageId === page.id
                           ? 'border-cyan-400 bg-cyan-500/10'
-                          : 'border-slate-800 bg-[#1E293B]/60 hover:border-slate-700'
+                          : 'border-slate-800 bg-[#171717]/60 hover:border-slate-700'
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -467,11 +467,11 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
     {/* TikTok Draft Upload Modal */}
     {isTikTokModalOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-sm animate-fadeIn">
-        <div className="relative flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#334155] bg-[#0F172A] shadow-2xl shadow-black/80">
+        <div className="relative flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#262626] bg-[#0d0d0d] shadow-2xl shadow-black/80">
           {/* Modal Header */}
           <div className="flex items-center justify-between border-b border-slate-800 p-4 sm:p-5">
             <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#1E293B] text-lg">🎵</div>
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#171717] text-lg">🎵</div>
               <div>
                 <h3 className="text-sm font-bold text-white">Enviar rascunho ao TikTok</h3>
                 <p className="text-[11px] text-slate-400">Content Posting API · scope video.upload</p>
@@ -572,7 +572,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
                     value={tiktokVideoTitle}
                     onChange={(e) => setTiktokVideoTitle(e.target.value)}
                     placeholder="Ex: Roteiro 3 Dicas de Vendas"
-                    className="min-h-11 w-full rounded-xl border border-slate-700 bg-[#1E293B] px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                    className="min-h-11 w-full rounded-xl border border-slate-700 bg-[#171717] px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
                   />
                 </div>
 
@@ -589,7 +589,7 @@ export const SocialNetworksPage:React.FC<SocialNetworksPageProps> = ({ selectedC
                   />
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-[#1E293B]/60 p-6 text-center cursor-pointer transition hover:border-cyan-400/60 hover:bg-[#1E293B]"
+                    className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-[#171717]/60 p-6 text-center cursor-pointer transition hover:border-cyan-400/60 hover:bg-[#171717]"
                   >
                     {tiktokVideoFile ? (
                       <div className="space-y-1 text-center">

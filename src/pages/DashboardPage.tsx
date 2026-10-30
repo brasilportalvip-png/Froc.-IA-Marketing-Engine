@@ -3,6 +3,7 @@ import { ArrowRight, Bot, Building2, Calendar, Coins, FileText, Image as ImageIc
 import { BrandLogo } from '../components/BrandLogo';
 import type { Campaign, Company, ScheduledPost, User, Wallet } from '../types';
 import { apiRequest } from '../lib/api';
+import { DashboardBoost } from '../components/DashboardBoost';
 
 interface Props {
   user: User | null;
@@ -103,7 +104,7 @@ export const DashboardPage: React.FC<Props> = ({
   return (
     <div className="space-y-7 animate-fadeIn">
       {/* Welcome Hero Banner */}
-      <section className="relative overflow-hidden rounded-3xl border border-blue-500/30 bg-gradient-to-r from-blue-950/80 via-[#0F172A] to-slate-900 p-6 shadow-2xl md:p-8">
+      <section className="relative overflow-hidden rounded-3xl border border-blue-500/30 bg-gradient-to-r from-blue-950/80 via-[#0d0d0d] to-slate-900 p-6 shadow-2xl md:p-8">
         <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10 max-w-3xl">
           <div className="flex items-center gap-3 mb-2">
@@ -146,6 +147,8 @@ export const DashboardPage: React.FC<Props> = ({
           </div>
         </div>
       </section>
+
+      <DashboardBoost selectedCompany={selectedCompany} onNavigate={onNavigate} />
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">

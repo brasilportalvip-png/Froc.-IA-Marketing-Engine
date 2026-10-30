@@ -139,7 +139,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Form */}
-        <div className="lg:col-span-5 p-6 rounded-3xl bg-[#0F172A] border border-[#334155] space-y-4">
+        <div className="lg:col-span-5 p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626] space-y-4">
           <form onSubmit={handleGenerate} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">Tema Principal do Artigo *</label>
@@ -149,7 +149,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder="Ex: Guia definitivo para escolher o melhor sistema de automação para pequenos negócios em 2026..."
-                className="w-full bg-[#1E293B] border border-slate-700 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                className="w-full bg-[#171717] border border-slate-700 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
               />
             </div>
 
@@ -160,7 +160,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                 value={primaryKeyword}
                 onChange={(e) => setPrimaryKeyword(e.target.value)}
                 placeholder="Ex: automação de marketing para restaurantes"
-                className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
               />
             </div>
 
@@ -171,7 +171,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                 value={targetAudience}
                 onChange={(e) => setTargetAudience(e.target.value)}
                 placeholder="Ex: Proprietários de pequenas empresas e gestores"
-                className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
               />
             </div>
 
@@ -180,7 +180,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
               <select
                 value={tone}
                 onChange={(e) => setTone(e.target.value)}
-                className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
               >
                 <option value="Educativo, Autoritário e Otimizado para SEO">Educativo, Autoritário & SEO</option>
                 <option value="Jornalístico / Revista Digital">Jornalístico / Froc Magazine</option>
@@ -210,7 +210,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
         </div>
 
         {/* Right Preview */}
-        <div className="lg:col-span-7 p-6 rounded-3xl bg-[#0F172A] border border-[#334155] flex flex-col justify-between min-h-[480px]">
+        <div className="lg:col-span-7 p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626] flex flex-col justify-between min-h-[480px]">
           {generatedArticle ? (
             <div className="space-y-4 animate-fadeIn">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -236,27 +236,27 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
               {/* Title & Meta */}
               <div>
                 <span className="text-[10px] text-amber-400 uppercase font-bold block mb-1">Título H1 Otimizado</span>
-                <h3 className="text-sm font-bold text-white bg-[#1E293B] p-3 rounded-xl border border-slate-700">
+                <h3 className="text-sm font-bold text-white bg-[#171717] p-3 rounded-xl border border-slate-700">
                   {cleanHeading(generatedArticle.title)}
                 </h3>
               </div>
 
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">Meta Description</span>
-                <p className="text-xs text-slate-300 bg-[#1E293B] p-2.5 rounded-xl border border-slate-700 italic">
+                <p className="text-xs text-slate-300 bg-[#171717] p-2.5 rounded-xl border border-slate-700 italic">
                   {generatedArticle.metaDescription}
                 </p>
               </div>
 
               {/* Article Content Preview */}
               <div className="max-h-72 overflow-y-auto space-y-3 pr-1 text-xs leading-relaxed text-slate-200">
-                <div className="bg-[#1E293B]/70 p-3 rounded-xl border border-slate-700/80">
+                <div className="bg-[#171717]/70 p-3 rounded-xl border border-slate-700/80">
                   <h4 className="text-xs font-bold text-cyan-300 mb-1">Introdução</h4>
                   <p>{generatedArticle.introduction}</p>
                 </div>
 
                 {generatedArticle.sections?.map((sec, idx) => (
-                  <div key={idx} className="bg-[#1E293B]/70 p-3 rounded-xl border border-slate-700/80 space-y-1.5">
+                  <div key={idx} className="bg-[#171717]/70 p-3 rounded-xl border border-slate-700/80 space-y-1.5">
                     <h4 className="text-xs font-bold text-white flex items-center gap-2">
                       <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-bold">H2</span>
                       <span>{cleanHeading(sec.h2)}</span>
@@ -276,7 +276,7 @@ export const CreateArticlePage: React.FC<CreateArticlePageProps> = ({
                 ))}
 
                 {generatedArticle.faqSection && generatedArticle.faqSection.length > 0 && (
-                  <div className="bg-[#1E293B]/70 p-3 rounded-xl border border-slate-700/80 space-y-2">
+                  <div className="bg-[#171717]/70 p-3 rounded-xl border border-slate-700/80 space-y-2">
                     <h4 className="text-xs font-bold text-amber-300">FAQ Schema</h4>
                     {generatedArticle.faqSection.map((faq, i) => (
                       <div key={i} className="text-[11px]">

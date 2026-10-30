@@ -98,6 +98,18 @@ export const config = {
     autoEnabled: env('AUTO_BLOG_ENABLED', 'false').toLowerCase() === 'true',
     author: env('BLOG_AUTHOR', 'Equipe Froc.IA')
   },
+  seoEngine: {
+    // Chave IndexNow (Bing, Yandex, Seznam, Naver, Yep). 8-128 caracteres [a-zA-Z0-9-].
+    indexNowKey: env('INDEXNOW_KEY', isTest ? 'froctestindexnowkey123' : ''),
+    indexNowEnabled: env('INDEXNOW_ENABLED', 'true').toLowerCase() === 'true',
+    googleSiteVerification: env('GOOGLE_SITE_VERIFICATION', 'WgcZ29owPWh-IYCntXdzzCadEoHsfk7NA7rx65_NRE4'),
+    bingSiteVerification: env('BING_SITE_VERIFICATION'),
+    urlsPerSitemap: Math.min(Math.max(Number(env('SITEMAP_URLS_PER_FILE', '1000')) || 1000, 50), 50_000)
+  },
+  vitrineDaily: {
+    enabled: env('VITRINE_DAILY_POSTS_ENABLED', 'true').toLowerCase() === 'true',
+    perTick: Math.min(Math.max(Number(env('VITRINE_DAILY_POSTS_PER_TICK', '4')) || 4, 1), 25)
+  },
   social: {
     meta: {
       clientId: env('META_APP_ID', isTest ? 'mock_meta_app_id' : ''),

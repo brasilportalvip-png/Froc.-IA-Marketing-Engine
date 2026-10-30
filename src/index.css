@@ -1,14 +1,41 @@
 @import "tailwindcss";
 
+/*
+ * Froc.IA — Identidade "Rei do Orgânico"
+ * Paleta oficial: preto, branco, amarelo, rosa pink e verde.
+ * Os tons legados (cyan/blue/indigo/emerald/slate…) são remapeados aqui,
+ * então todas as telas existentes herdam a nova identidade automaticamente.
+ */
+@theme {
+  --color-froc-black: #050505;
+  --color-froc-white: #ffffff;
+  --color-froc-yellow: #FFD400;
+  --color-froc-pink: #FF2D87;
+  --color-froc-green: #00E676;
+
+  --color-cyan-50: #fffbe6; --color-cyan-100: #fff4bf; --color-cyan-200: #ffea80; --color-cyan-300: #ffe14d; --color-cyan-400: #FFD400; --color-cyan-500: #f5c400; --color-cyan-600: #d6a800; --color-cyan-700: #a88400; --color-cyan-800: #7a6000; --color-cyan-900: #4d3c00; --color-cyan-950: #2b2200;
+  --color-sky-50: #fffbe6; --color-sky-100: #fff4bf; --color-sky-200: #ffea80; --color-sky-300: #ffe14d; --color-sky-400: #FFD400; --color-sky-500: #f5c400; --color-sky-600: #d6a800; --color-sky-700: #a88400; --color-sky-800: #7a6000; --color-sky-900: #4d3c00; --color-sky-950: #2b2200;
+  --color-amber-50: #fffbe6; --color-amber-100: #fff4bf; --color-amber-200: #ffea80; --color-amber-300: #ffe14d; --color-amber-400: #FFD400; --color-amber-500: #f5c400; --color-amber-600: #d6a800; --color-amber-700: #a88400; --color-amber-800: #7a6000; --color-amber-900: #4d3c00; --color-amber-950: #2b2200;
+  --color-blue-50: #fff0f6; --color-blue-100: #ffd6e8; --color-blue-200: #ffadd1; --color-blue-300: #ff7ab3; --color-blue-400: #ff4d98; --color-blue-500: #FF2D87; --color-blue-600: #e0146c; --color-blue-700: #b30d55; --color-blue-800: #800a3d; --color-blue-900: #4d0624; --color-blue-950: #2e0316;
+  --color-indigo-50: #fff0f6; --color-indigo-100: #ffd6e8; --color-indigo-200: #ffadd1; --color-indigo-300: #ff7ab3; --color-indigo-400: #ff4d98; --color-indigo-500: #FF2D87; --color-indigo-600: #e0146c; --color-indigo-700: #b30d55; --color-indigo-800: #800a3d; --color-indigo-900: #4d0624; --color-indigo-950: #2e0316;
+  --color-violet-50: #fff0f6; --color-violet-100: #ffd6e8; --color-violet-200: #ffadd1; --color-violet-300: #ff7ab3; --color-violet-400: #ff4d98; --color-violet-500: #FF2D87; --color-violet-600: #e0146c; --color-violet-700: #b30d55; --color-violet-800: #800a3d; --color-violet-900: #4d0624; --color-violet-950: #2e0316;
+  --color-purple-50: #fff0f6; --color-purple-100: #ffd6e8; --color-purple-200: #ffadd1; --color-purple-300: #ff7ab3; --color-purple-400: #ff4d98; --color-purple-500: #FF2D87; --color-purple-600: #e0146c; --color-purple-700: #b30d55; --color-purple-800: #800a3d; --color-purple-900: #4d0624; --color-purple-950: #2e0316;
+  --color-fuchsia-300: #ff7ab3; --color-fuchsia-400: #ff4d98; --color-fuchsia-500: #FF2D87; --color-fuchsia-600: #e0146c;
+  --color-emerald-50: #e6fff2; --color-emerald-100: #b3ffd6; --color-emerald-200: #80ffbb; --color-emerald-300: #4dff9f; --color-emerald-400: #1aff84; --color-emerald-500: #00E676; --color-emerald-600: #00b85e; --color-emerald-700: #008a47; --color-emerald-800: #005c2f; --color-emerald-900: #002e18; --color-emerald-950: #001a0d;
+  --color-teal-300: #4dff9f; --color-teal-400: #1aff84; --color-teal-500: #00E676; --color-teal-600: #00b85e;
+  --color-green-300: #4dff9f; --color-green-400: #1aff84; --color-green-500: #00E676; --color-green-600: #00b85e;
+  --color-slate-50: #fafafa; --color-slate-100: #f5f5f5; --color-slate-200: #e5e5e5; --color-slate-300: #d4d4d4; --color-slate-400: #a3a3a3; --color-slate-500: #737373; --color-slate-600: #525252; --color-slate-700: #333333; --color-slate-800: #1f1f1f; --color-slate-900: #121212; --color-slate-950: #080808;
+}
+
 :root {
   color-scheme: dark;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  background: #070B14;
+  background: #050505;
 }
 
 * { box-sizing: border-box; }
 html {
-  background: #070B14;
+  background: #050505;
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
 }
@@ -18,11 +45,11 @@ body {
   min-width: 320px;
   min-height: 100dvh;
   overflow-x: hidden;
-  background: #070B14;
-  background-image: 
-    radial-gradient(at 10% 10%, rgba(37, 99, 235, 0.08) 0px, transparent 50%),
-    radial-gradient(at 90% 0%, rgba(6, 182, 212, 0.06) 0px, transparent 50%),
-    radial-gradient(at 50% 90%, rgba(15, 23, 42, 0.5) 0px, transparent 100%);
+  background: #050505;
+  background-image:
+    radial-gradient(at 10% 10%, rgba(255, 45, 135, 0.07) 0px, transparent 50%),
+    radial-gradient(at 90% 0%, rgba(255, 212, 0, 0.06) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(0, 230, 118, 0.04) 0px, transparent 60%);
   color: #f1f5f9;
   letter-spacing: -0.01em;
 }
@@ -30,7 +57,7 @@ body {
 button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 2px solid #06b6d4;
+  outline: 2px solid #FFD400;
   outline-offset: 2px;
 }
 img, svg, video, canvas { max-width: 100%; }
@@ -51,7 +78,7 @@ img, svg, video, canvas { max-width: 100%; }
 .froc-input:focus {
   border-color: #06b6d4;
   background: rgba(15, 23, 42, 0.95);
-  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.15), 0 0 20px rgba(6, 182, 212, 0.1);
+  box-shadow: 0 0 0 4px rgba(255, 212, 0, 0.15), 0 0 20px rgba(255, 212, 0, 0.1);
   outline: none;
 }
 
@@ -63,13 +90,13 @@ img, svg, video, canvas { max-width: 100%; }
   min-height: 44px;
   border: 0;
   border-radius: 14px;
-  background: linear-gradient(135deg, #2563eb 0%, #06b6d4 100%);
+  background: linear-gradient(135deg, #FF2D87 0%, #FFD400 100%);
   padding: 10px 22px;
-  color: white;
+  color: #050505;
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.02em;
-  box-shadow: 0 8px 24px -4px rgba(6, 182, 212, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 24px -4px rgba(255, 212, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.3);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
   position: relative;
@@ -77,7 +104,7 @@ img, svg, video, canvas { max-width: 100%; }
 }
 .froc-primary:hover:not(:disabled) {
   transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 12px 32px -4px rgba(6, 182, 212, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+  box-shadow: 0 12px 32px -4px rgba(255, 212, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.4);
 }
 .froc-primary:active:not(:disabled) {
   transform: translateY(0) scale(0.99);
@@ -102,7 +129,7 @@ img, svg, video, canvas { max-width: 100%; }
   cursor: pointer;
 }
 .froc-secondary:hover:not(:disabled) {
-  border-color: rgba(6, 182, 212, 0.5);
+  border-color: rgba(255, 212, 0, 0.5);
   color: #fff;
   background: rgba(30, 41, 59, 0.8);
   transform: translateY(-1px);
@@ -122,7 +149,7 @@ img, svg, video, canvas { max-width: 100%; }
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .froc-panel:hover {
-  border-color: rgba(6, 182, 212, 0.2);
+  border-color: rgba(255, 212, 0, 0.2);
 }
 
 .froc-section-title {
@@ -174,4 +201,62 @@ img, svg, video, canvas { max-width: 100%; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+
+/* ════════════ Froc.IA — efeitos premium (Tela da IA + Vitrine) ════════════ */
+.froc-prerender { max-width: 860px; margin: 0 auto; padding: 32px 20px; color: #e5e5e5; line-height: 1.7; }
+.froc-prerender h1 { color: #FFD400; font-size: 2rem; font-weight: 900; }
+.froc-prerender a { color: #FF2D87; }
+
+.froc-text-gradient { background: linear-gradient(100deg, #FFD400 0%, #FF2D87 45%, #00E676 90%); -webkit-background-clip: text; background-clip: text; color: transparent; background-size: 200% auto; animation: frocShine 6s linear infinite; }
+@keyframes frocShine { to { background-position: 200% center; } }
+
+.froc-aurora { position: absolute; inset: -20%; pointer-events: none; filter: blur(70px); opacity: .55; background:
+  radial-gradient(35% 35% at 20% 30%, rgba(255,45,135,.55), transparent 70%),
+  radial-gradient(30% 30% at 80% 20%, rgba(255,212,0,.45), transparent 70%),
+  radial-gradient(35% 35% at 60% 80%, rgba(0,230,118,.35), transparent 70%);
+  animation: frocAurora 18s ease-in-out infinite alternate; }
+@keyframes frocAurora { 0% { transform: translate3d(0,0,0) rotate(0deg) scale(1); } 50% { transform: translate3d(4%,-3%,0) rotate(8deg) scale(1.08); } 100% { transform: translate3d(-4%,3%,0) rotate(-6deg) scale(1); } }
+
+.froc-grid-bg { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 48px 48px; mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%); }
+
+.froc-spotlight { position: absolute; top: -40%; width: 40%; height: 180%; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,.18), transparent 70%); filter: blur(30px); transform-origin: top center; animation: frocSweep 9s ease-in-out infinite; }
+.froc-spotlight.left { left: 5%; transform: rotate(18deg); }
+.froc-spotlight.right { right: 5%; transform: rotate(-18deg); animation-delay: -4.5s; }
+@keyframes frocSweep { 0%,100% { opacity: .25; } 50% { opacity: .65; } }
+
+.froc-glow-card { position: relative; border-radius: 28px; background: linear-gradient(#0b0b0b, #0b0b0b) padding-box, conic-gradient(from var(--froc-angle, 0deg), #FFD400, #FF2D87, #00E676, #FFD400) border-box; border: 1.5px solid transparent; animation: frocSpin 6s linear infinite; }
+@property --froc-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes frocSpin { to { --froc-angle: 360deg; } }
+
+.froc-marquee { display: flex; width: max-content; animation: frocMarquee 40s linear infinite; }
+.froc-marquee:hover { animation-play-state: paused; }
+@keyframes frocMarquee { to { transform: translateX(-50%); } }
+
+.froc-float { animation: frocFloat 6s ease-in-out infinite; }
+@keyframes frocFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+
+.froc-pulse-dot { position: relative; }
+.froc-pulse-dot::after { content: ''; position: absolute; inset: -4px; border-radius: 9999px; border: 2px solid currentColor; animation: frocPing 1.8s cubic-bezier(0,0,.2,1) infinite; }
+@keyframes frocPing { 75%,100% { transform: scale(1.8); opacity: 0; } }
+
+.froc-shimmer { position: relative; overflow: hidden; }
+.froc-shimmer::before { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent); animation: frocShimmer 2.6s infinite; }
+@keyframes frocShimmer { to { transform: translateX(100%); } }
+
+.froc-typing span { display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 9999px; background: #FFD400; animation: frocBounce 1.2s infinite ease-in-out; }
+.froc-typing span:nth-child(2) { background: #FF2D87; animation-delay: .15s; }
+.froc-typing span:nth-child(3) { background: #00E676; animation-delay: .3s; }
+@keyframes frocBounce { 0%,80%,100% { transform: scale(.6); opacity: .5; } 40% { transform: scale(1); opacity: 1; } }
+
+.froc-prose h2 { margin: 1.8em 0 .6em; font-size: 1.45rem; font-weight: 900; color: #fff; }
+.froc-prose h3 { margin: 1.4em 0 .5em; font-size: 1.12rem; font-weight: 800; color: #FFD400; }
+.froc-prose p { margin: .8em 0; color: #d4d4d4; line-height: 1.8; }
+.froc-prose ul { margin: .8em 0; padding-left: 1.2em; list-style: disc; color: #d4d4d4; }
+.froc-prose li { margin: .35em 0; }
+.froc-prose strong { color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .froc-aurora, .froc-spotlight, .froc-glow-card, .froc-marquee, .froc-float, .froc-text-gradient, .froc-shimmer::before, .froc-pulse-dot::after { animation: none !important; }
 }

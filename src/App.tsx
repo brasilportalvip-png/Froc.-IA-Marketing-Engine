@@ -30,7 +30,8 @@ import { ProfilePage } from './pages/ProfilePage';
 import { SupportPage } from './pages/SupportPage';
 import { AdminPage } from './pages/AdminPage';
 import { LegalPage } from './pages/LegalPage';
-import { LandingPage } from './pages/LandingPage';
+import { ConciergeHome } from './pages/ConciergeHome';
+import { PublicTopBar } from './components/PublicTopBar';
 import type { Campaign, Company, ContentItem, ScheduledPost, User, Wallet } from './types';
 import { ApiRequestError, apiRequest, isApiAbortError } from './lib/api';
 import { auth } from './lib/firebase';
@@ -466,7 +467,7 @@ export default function App() {
   const content = useMemo(() => {
     switch (guardedTab) {
       case 'home':
-        return <LandingPage authenticated={Boolean(user)} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate}/>;
+        return <ConciergeHome user={user} wallet={wallet} selectedCompany={selectedCompany} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate} onRefreshWallet={() => { void refreshWallet(); }} onRefreshCompanies={() => { void refreshCompanies(); }}/>;
       case 'dashboard':
         return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} campaigns={campaigns} scheduledPosts={scheduledPosts} onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>;
       case 'empresa':
@@ -510,7 +511,7 @@ export default function App() {
       case 'admin':
         return <AdminPage onNavigate={navigate}/>;
       default:
-        return <LandingPage authenticated={Boolean(user)} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate}/>;
+        return <ConciergeHome user={user} wallet={wallet} selectedCompany={selectedCompany} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate} onRefreshWallet={() => { void refreshWallet(); }} onRefreshCompanies={() => { void refreshCompanies(); }}/>;
     }
   }, [
     campaigns,
@@ -540,19 +541,20 @@ export default function App() {
     )
   );
 
-  if (guardedTab === 'home') {
-    return <>
+  if (guardedTab === 'home' || guardedTab === 'vitrine') {
+    return <div className="min-h-[100dvh] bg-[#050505] text-white selection:bg-[#FF2D87] selection:text-white">
       <OfflineBanner/>
       <PwaInstallPrompt/>
+      {guardedTab === 'vitrine' && <PublicTopBar user={user} wallet={wallet} current="vitrine" onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>}
       {content}
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSuccess={authSuccess}/>
       <TermsConsentModal isOpen={needsTermsConsent} onConsentSuccess={authSuccess} onLogout={logout}/>
-    </>;
+    </div>;
   }
 
   const pageIsolationKey = `${user?.id || 'public'}:${selectedCompany?.id || 'none'}:${guardedTab}`;
 
-  return <div className="min-h-[100dvh] bg-[#0B0F19] text-slate-100 selection:bg-cyan-500 selection:text-slate-950">
+  return <div className="min-h-[100dvh] bg-[#050505] text-slate-100 selection:bg-[#FF2D87] selection:text-white">
     <OfflineBanner/>
     <PwaInstallPrompt/>
     <div className="hidden lg:block">
