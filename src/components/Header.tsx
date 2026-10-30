@@ -51,7 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header
-      className={`fixed top-0 right-0 h-16 bg-[#070B14]/85 backdrop-blur-xl border-b border-white/[0.08] z-20 flex items-center justify-between px-6 transition-all duration-300 ${
+      className={`fixed top-0 right-0 h-16 bg-[#030303]/85 backdrop-blur-xl border-b border-white/[0.08] z-20 flex items-center justify-between px-6 transition-all duration-300 ${
         isSidebarCollapsed ? 'left-20' : 'left-64'
       }`}
     >
@@ -139,7 +139,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="relative">
           <button
             onClick={() => setShowNotifications(!showNotifications)}
-            className="p-2 rounded-xl bg-[#1E293B] text-slate-300 hover:text-white border border-slate-700 hover:border-slate-600 transition-colors relative"
+            className="p-2 rounded-xl bg-[#171717] text-slate-300 hover:text-white border border-slate-700 hover:border-slate-600 transition-colors relative"
             title="Notificações"
           >
             <Bell size={17} />
@@ -147,13 +147,13 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {showNotifications && (
-            <div className="absolute right-0 mt-2 w-80 bg-[#1E293B] border border-slate-700 rounded-2xl shadow-2xl p-3 z-50">
+            <div className="absolute right-0 mt-2 w-80 bg-[#171717] border border-slate-700 rounded-2xl shadow-2xl p-3 z-50">
               <div className="flex items-center justify-between pb-2 border-b border-slate-700">
                 <span className="text-xs font-bold text-white">Notificações do Sistema</span>
                 <span className="text-[10px] text-slate-400">Em tempo real</span>
               </div>
               <div className="py-2 text-xs text-slate-300 space-y-2">
-                <div className="p-2 rounded-xl bg-[#0F172A] border border-slate-800">
+                <div className="p-2 rounded-xl bg-[#0d0d0d] border border-slate-800">
                   <p className="font-semibold text-cyan-300 text-xs">Froc Autopilot Operacional 🚀</p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     O motor de inteligência artificial está pronto para criar campanhas e postagens para suas marcas.
@@ -169,7 +169,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center gap-2 p-1.5 rounded-xl bg-[#1E293B] border border-slate-700 hover:border-slate-500 transition-colors"
+              className="flex items-center gap-2 p-1.5 rounded-xl bg-[#171717] border border-slate-700 hover:border-slate-500 transition-colors"
             >
               <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-blue-600 to-cyan-500 text-white flex items-center justify-center font-bold text-xs">
                 {user.name ? user.name[0].toUpperCase() : 'U'}
@@ -178,7 +178,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {showUserMenu && (
-              <div className="absolute right-0 mt-2 w-56 bg-[#1E293B] border border-slate-700 rounded-2xl shadow-2xl p-2 z-50">
+              <div className="absolute right-0 mt-2 w-56 bg-[#171717] border border-slate-700 rounded-2xl shadow-2xl p-2 z-50">
                 <div className="px-3 py-2 border-b border-slate-700/80">
                   <p className="text-xs font-bold text-white truncate">{user.name}</p>
                   <p className="text-[11px] text-slate-400 truncate">{user.email}</p>

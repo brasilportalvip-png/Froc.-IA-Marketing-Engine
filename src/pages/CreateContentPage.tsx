@@ -279,7 +279,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Form (5 cols) */}
-        <div className="lg:col-span-5 p-6 rounded-3xl bg-[#0F172A] border border-[#334155] space-y-4">
+        <div className="lg:col-span-5 p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626] space-y-4">
           {/* Format Picker */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">Formato Desejado</label>
@@ -297,7 +297,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
                   className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all ${
                     contentType === f.id
                       ? 'bg-blue-600/30 text-cyan-300 border-blue-500'
-                      : 'bg-[#1E293B] text-slate-400 border-slate-700 hover:text-white'
+                      : 'bg-[#171717] text-slate-400 border-slate-700 hover:text-white'
                   }`}
                 >
                   {f.label}
@@ -313,7 +313,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               value={topic}
               onChange={(e) => handleTopicChange(e.target.value)}
               placeholder="Ex: Como nosso método inovador reduz o tempo de entrega pela metade..."
-              className="w-full bg-[#1E293B] border border-slate-700 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+              className="w-full bg-[#171717] border border-slate-700 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
             />
           </div>
 
@@ -323,7 +323,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               <select
                 value={platform}
                 onChange={(e) => handlePlatformChange(e.target.value)}
-                className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
               >
                 <option value="Instagram">Instagram</option>
                 <option value="LinkedIn">LinkedIn</option>
@@ -339,7 +339,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               <select
                 value={tone}
                 onChange={(e) => handleToneChange(e.target.value)}
-                className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
               >
                 <option value="Persuasivo e Profissional">Persuasivo & Profissional</option>
                 <option value="Autoritário e Educativo">Autoritário & Educativo</option>
@@ -356,7 +356,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               value={goal}
               onChange={(e) => handleGoalChange(e.target.value)}
               placeholder="Ex: Quebrar objeções e levar para o WhatsApp"
-              className="w-full bg-[#1E293B] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+              className="w-full bg-[#171717] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
             />
           </div>
 
@@ -384,7 +384,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
         </div>
 
         {/* Right Output Card (7 cols) */}
-        <div className="lg:col-span-7 p-6 rounded-3xl bg-[#0F172A] border border-[#334155] flex flex-col justify-between min-h-[450px]">
+        <div className="lg:col-span-7 p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626] flex flex-col justify-between min-h-[450px]">
           {generatedPost ? (
             <div className="space-y-4 animate-fadeIn">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -403,7 +403,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               {/* Headline */}
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">Headline Magnética</span>
-                <p className="text-sm font-bold text-white bg-[#1E293B] p-3 rounded-xl border border-slate-700">
+                <p className="text-sm font-bold text-white bg-[#171717] p-3 rounded-xl border border-slate-700">
                   {generatedPost.headline}
                 </p>
               </div>
@@ -411,18 +411,18 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               {/* Body */}
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">Texto Principal do Post</span>
-                <div className="text-xs text-slate-200 whitespace-pre-line leading-relaxed bg-[#1E293B] p-4 rounded-xl border border-slate-700 max-h-56 overflow-y-auto">
+                <div className="text-xs text-slate-200 whitespace-pre-line leading-relaxed bg-[#171717] p-4 rounded-xl border border-slate-700 max-h-56 overflow-y-auto">
                   {generatedPost.body}
                 </div>
               </div>
 
               {/* CTA & Hashtags */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-[#1E293B] p-3 rounded-xl border border-slate-700">
+                <div className="bg-[#171717] p-3 rounded-xl border border-slate-700">
                   <span className="text-[10px] text-amber-400 uppercase font-bold block mb-1">Chamada para Ação (CTA)</span>
                   <p className="text-xs text-slate-200 font-semibold">{generatedPost.cta}</p>
                 </div>
-                <div className="bg-[#1E293B] p-3 rounded-xl border border-slate-700">
+                <div className="bg-[#171717] p-3 rounded-xl border border-slate-700">
                   <span className="text-[10px] text-cyan-400 uppercase font-bold block mb-1">Hashtags Estratégicas</span>
                   <p className="text-[11px] text-cyan-300 font-mono">{generatedPost.hashtags.join(' ')}</p>
                 </div>
@@ -455,7 +455,7 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
                 <button
                   type="button"
                   onClick={handleGenerate}
-                  className="px-3 py-2 rounded-xl bg-[#1E293B] hover:bg-slate-800 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
+                  className="px-3 py-2 rounded-xl bg-[#171717] hover:bg-slate-800 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
                 >
                   <RefreshCw size={13} /> Gerar Outra Versão
                 </button>
@@ -468,14 +468,14 @@ export const CreateContentPage: React.FC<CreateContentPageProps> = ({
               </h3>
               <div className="space-y-3 max-h-80 overflow-y-auto">
                 {generatedCarousel.slides?.map((slide: any, idx: number) => (
-                  <div key={idx} className="p-3 rounded-xl bg-[#1E293B] border border-slate-700 space-y-1">
+                  <div key={idx} className="p-3 rounded-xl bg-[#171717] border border-slate-700 space-y-1">
                     <span className="text-[10px] font-bold text-amber-400 uppercase">Slide {slide.slideNumber}</span>
                     <h5 className="text-xs font-bold text-white">{slide.title}</h5>
                     <p className="text-xs text-slate-300">{slide.text}</p>
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-slate-400 italic bg-[#1E293B] p-3 rounded-xl">
+              <p className="text-xs text-slate-400 italic bg-[#171717] p-3 rounded-xl">
                 Legenda: {generatedCarousel.caption}
               </p>
               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800">

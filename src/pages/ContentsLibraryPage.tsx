@@ -91,14 +91,14 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
         </div>
       )}
 
-      <div className="flex flex-col gap-3 rounded-3xl border border-[#334155] bg-[#0F172A] p-4 md:flex-row md:items-center">
+      <div className="flex flex-col gap-3 rounded-3xl border border-[#262626] bg-[#0d0d0d] p-4 md:flex-row md:items-center">
         <div className="relative flex-1">
           <Search size={15} className="absolute left-3.5 top-3.5 text-slate-500" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar conteúdo por título ou texto…"
-            className="min-h-11 w-full rounded-xl border border-slate-700 bg-[#1E293B] pl-10 pr-4 text-xs text-white outline-none focus:border-cyan-400"
+            className="min-h-11 w-full rounded-xl border border-slate-700 bg-[#171717] pl-10 pr-4 text-xs text-white outline-none focus:border-cyan-400"
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -114,7 +114,7 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
               key={id}
               onClick={() => setFilter(id)}
               className={`min-h-10 rounded-xl px-3 text-xs font-semibold ${
-                filter === id ? 'bg-blue-600 text-white' : 'border border-slate-700 bg-[#1E293B] text-slate-400'
+                filter === id ? 'bg-blue-600 text-white' : 'border border-slate-700 bg-[#171717] text-slate-400'
               }`}
             >
               {label}
@@ -128,7 +128,7 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
           {items.map((item) => (
             <article
               key={item.id}
-              className="overflow-hidden rounded-3xl border border-[#334155] bg-[#0F172A] shadow-xl shadow-black/10 flex flex-col justify-between"
+              className="overflow-hidden rounded-3xl border border-[#262626] bg-[#0d0d0d] shadow-xl shadow-black/10 flex flex-col justify-between"
             >
               {/* Media Preview: Video / Image */}
               {item.videoUrl ? (
@@ -233,7 +233,7 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
           ))}
         </div>
       ) : (
-        <div className="rounded-3xl border border-[#334155] bg-[#0F172A] p-12 text-center">
+        <div className="rounded-3xl border border-[#262626] bg-[#0d0d0d] p-12 text-center">
           <FolderOpen size={42} className="mx-auto text-slate-700" />
           <h3 className="mt-3 text-sm font-bold text-slate-300">Nenhum conteúdo encontrado</h3>
           <p className="mt-1 text-xs text-slate-500">Crie sua primeira peça ou altere os filtros.</p>

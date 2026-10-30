@@ -155,7 +155,7 @@ export const AutopilotPage: React.FC<Props> = ({ selectedCompany, wallet, onNavi
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 animate-fadeIn">
-      <header className="rounded-3xl border border-cyan-500/30 bg-gradient-to-r from-blue-950 via-[#0F172A] to-slate-900 p-6 md:p-8">
+      <header className="rounded-3xl border border-cyan-500/30 bg-gradient-to-r from-blue-950 via-[#0d0d0d] to-slate-900 p-6 md:p-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="grid h-12 w-12 place-items-center rounded-2xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">

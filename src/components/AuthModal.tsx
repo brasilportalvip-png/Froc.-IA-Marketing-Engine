@@ -129,7 +129,7 @@ export const AuthModal: React.FC<Props> = ({ isOpen, onClose, onSuccess }) => {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 p-3 backdrop-blur-xl" role="dialog" aria-modal="true">
-      <div className="relative max-h-[calc(100dvh-24px)] w-full max-w-md overflow-y-auto rounded-[28px] border border-slate-700/80 bg-[#0F172A] p-6 shadow-2xl md:p-8">
+      <div className="relative max-h-[calc(100dvh-24px)] w-full max-w-md overflow-y-auto rounded-[28px] border border-slate-700/80 bg-[#0d0d0d] p-6 shadow-2xl md:p-8">
         <button onClick={onClose} aria-label="Fechar" className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18}/></button>
         <div className="mb-6 text-center">
           <div className="flex justify-center mb-3">

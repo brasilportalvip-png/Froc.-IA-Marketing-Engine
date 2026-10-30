@@ -658,7 +658,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 {/* Cenas */}
                 <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                   {generatedScript.scenes?.map((scene, idx) => (
-                    <div key={idx} className="p-3.5 rounded-2xl bg-[#1E293B] border border-slate-700 space-y-1.5 text-xs">
+                    <div key={idx} className="p-3.5 rounded-2xl bg-[#171717] border border-slate-700 space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-[10px]">
                         <span className="font-bold text-cyan-300 uppercase">Cena {scene.sceneNumber}</span>
                         <span className="text-slate-400 flex items-center gap-1">
@@ -679,7 +679,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({
                 </div>
 
                 {/* CTA */}
-                <div className="p-3 rounded-2xl bg-[#1E293B] border border-slate-700 text-xs space-y-1">
+                <div className="p-3 rounded-2xl bg-[#171717] border border-slate-700 text-xs space-y-1">
                   <span className="text-[10px] font-bold text-cyan-400 uppercase">Chamada Final (CTA)</span>
                   <p className="text-white font-semibold">{generatedScript.callToAction}</p>
                 </div>

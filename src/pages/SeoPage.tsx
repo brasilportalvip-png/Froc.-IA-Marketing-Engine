@@ -78,7 +78,7 @@ export const SeoPage: React.FC<SeoPageProps> = ({
       </div>
 
       {/* Input Box */}
-      <div className="p-6 rounded-3xl bg-[#0F172A] border border-[#334155]">
+      <div className="p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626]">
         <form onSubmit={handleAnalyze} className="flex flex-col md:flex-row items-center gap-3">
           <div className="relative flex-1 w-full">
             <Globe size={16} className="absolute left-3.5 top-3.5 text-slate-400" />
@@ -88,7 +88,7 @@ export const SeoPage: React.FC<SeoPageProps> = ({
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
               placeholder="https://suaempresa.com.br"
-              className="w-full bg-[#1E293B] border border-slate-700 rounded-xl pl-10 pr-4 py-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+              className="w-full bg-[#171717] border border-slate-700 rounded-xl pl-10 pr-4 py-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
             />
           </div>
 
@@ -142,7 +142,7 @@ export const SeoPage: React.FC<SeoPageProps> = ({
 
           {/* Criteria Breakdown Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-5 rounded-3xl bg-[#0F172A] border border-[#334155] space-y-3">
+            <div className="p-5 rounded-3xl bg-[#0d0d0d] border border-[#262626] space-y-3">
               <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-2">
                 Checklist Técnico de Indexação
               </h4>
@@ -157,7 +157,7 @@ export const SeoPage: React.FC<SeoPageProps> = ({
                   { label: 'Segurança HTTPS Ativa', pass: report.criteriaBreakdown.hasHttps },
                   { label: 'Tag Canonical Configurada', pass: report.criteriaBreakdown.hasCanonical }
                 ].map((item, i) => (
-                  <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-[#1E293B]">
+                  <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-[#171717]">
                     <span className="text-slate-300">{item.label}</span>
                     {item.pass ? (
                       <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
@@ -174,13 +174,13 @@ export const SeoPage: React.FC<SeoPageProps> = ({
             </div>
 
             {/* Keyword Frequency */}
-            <div className="p-5 rounded-3xl bg-[#0F172A] border border-[#334155] space-y-3">
+            <div className="p-5 rounded-3xl bg-[#0d0d0d] border border-[#262626] space-y-3">
               <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-2">
                 Palavras-chave Mais Frequentes no Conteúdo
               </h4>
               <div className="space-y-2">
                 {report.keywords.map((kw, i) => (
-                  <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-[#1E293B] text-xs">
+                  <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-[#171717] text-xs">
                     <span className="font-semibold text-white capitalize">{kw.word}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-400">{kw.count}x ocorrências</span>
@@ -195,13 +195,13 @@ export const SeoPage: React.FC<SeoPageProps> = ({
           </div>
 
           {/* AI Actionable Recommendations */}
-          <div className="p-6 rounded-3xl bg-[#0F172A] border border-cyan-500/30 space-y-4">
+          <div className="p-6 rounded-3xl bg-[#0d0d0d] border border-cyan-500/30 space-y-4">
             <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <Sparkles size={15} className="text-cyan-400" /> Recomendações Práticas Geradas por IA
             </h4>
             <div className="space-y-2">
               {report.recommendations.map((rec, i) => (
-                <div key={i} className="p-3 rounded-xl bg-[#1E293B] text-xs text-slate-200 flex items-start gap-2 border border-slate-700">
+                <div key={i} className="p-3 rounded-xl bg-[#171717] text-xs text-slate-200 flex items-start gap-2 border border-slate-700">
                   <ArrowRight size={14} className="text-cyan-400 shrink-0 mt-0.5" />
                   <span>{rec}</span>
                 </div>
@@ -211,13 +211,13 @@ export const SeoPage: React.FC<SeoPageProps> = ({
 
           {/* FAQ Suggestions */}
           {report.faqSuggestions && report.faqSuggestions.length > 0 && (
-            <div className="p-6 rounded-3xl bg-[#0F172A] border border-[#334155] space-y-4">
+            <div className="p-6 rounded-3xl bg-[#0d0d0d] border border-[#262626] space-y-4">
               <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
                 <HelpCircle size={15} className="text-amber-400" /> Perguntas Frequentes (FAQ Schema) Sugeridas
               </h4>
               <div className="space-y-3">
                 {report.faqSuggestions.map((faq, i) => (
-                  <div key={i} className="p-4 rounded-2xl bg-[#1E293B] border border-slate-700 space-y-1 text-xs">
+                  <div key={i} className="p-4 rounded-2xl bg-[#171717] border border-slate-700 space-y-1 text-xs">
                     <p className="font-bold text-cyan-300">Q: {faq.question}</p>
                     <p className="text-slate-300 text-[11px]">{faq.answer}</p>
                   </div>

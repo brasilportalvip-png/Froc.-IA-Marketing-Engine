@@ -169,7 +169,7 @@ if (isFinanciallyConfirmed) {
     <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
       {loading ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-96 animate-pulse rounded-3xl bg-slate-900"/>) : plans.map(plan => {
         const active = wallet?.planId === plan.id;
-        return <article key={plan.id} className={`relative flex flex-col rounded-3xl border p-5 ${plan.popular ? 'border-cyan-400/60 bg-gradient-to-b from-cyan-950/30 to-[#0F172A] shadow-xl shadow-cyan-500/10' : 'border-slate-700 bg-[#0F172A]'}`}>
+        return <article key={plan.id} className={`relative flex flex-col rounded-3xl border p-5 ${plan.popular ? 'border-cyan-400/60 bg-gradient-to-b from-cyan-950/30 to-[#0d0d0d] shadow-xl shadow-cyan-500/10' : 'border-slate-700 bg-[#0d0d0d]'}`}>
           {plan.popular && <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-cyan-400 px-3 py-1 text-[10px] font-black text-slate-950">MAIS POPULAR</div>}
           <div className="mb-4"><div className="text-xs font-black tracking-widest text-cyan-300">{plan.name}</div><div className="mt-2 flex items-end gap-1"><span className="text-3xl font-black text-white">R$ {plan.price.toFixed(2).replace('.', ',')}</span><span className="pb-1 text-xs text-slate-500">/{plan.period.replace('/', '')}</span></div></div>
           <div className="mb-5 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-3"><div className="flex items-center gap-2 text-sm font-black text-amber-300"><Coins size={17}/>{plan.totalCredits} créditos</div><div className="mt-1 text-[10px] text-amber-100/70">{plan.credits} base + {plan.bonusCredits} bônus</div></div>

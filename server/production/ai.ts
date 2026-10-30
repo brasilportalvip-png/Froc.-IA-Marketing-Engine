@@ -328,7 +328,7 @@ ${ctaInstruction}
 7. SUGESTÕES VS FATOS: Se for propor uma ideia ou canal não cadastrado, use EXPLICITAMENTE linguagem de recomendação ("Sugestão: ...", "Uma possibilidade seria...", "Você pode considerar..."). NUNCA afirme como fato estabelecido da empresa.`;
 }
 
-async function generateRaw(data: {
+export async function generateRaw(data: {
   prompt: string;
   systemInstruction?: string;
   useProModel?: boolean;

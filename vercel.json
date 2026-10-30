@@ -61,11 +61,11 @@
       "dest": "/api/index.ts"
     },
     {
-      "src": "^/sitemap\\.xml$",
+      "src": "^/(?:sitemap(?:_index)?\\.xml|sitemap\\.txt|(?:page|post|vitrine|vitrine-post)-sitemap\\d*\\.xml|main-sitemap\\.xsl|feed(?:\\.xml)?|rss\\.xml)$",
       "dest": "/api/index.ts"
     },
     {
-      "src": "^/robots\\.txt$",
+      "src": "^/(?:robots\\.txt|indexnow-key\\.txt)$",
       "dest": "/api/index.ts"
     },
     {
