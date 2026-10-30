@@ -86,7 +86,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
   const base = config.appUrl.replace(/\/$/, '');
   const website = {
     '@context': 'https://schema.org', '@type': 'WebSite', name: 'Froc.IA', url: `${base}/`, inLanguage: 'pt-BR',
-    publisher: { '@type': 'Organization', name: 'Froc.IA', url: `${base}/`, logo: { '@type': 'ImageObject', url: `${base}/icons/icon-512.png` } }
+    publisher: { '@type': 'Organization', name: 'Froc.IA', url: `${base}/`, logo: { '@type': 'ImageObject', url: `${base}/brand/logo-froc-1024.png` } }
   };
   const fallback: PublicMeta = {
     title: 'Froc.IA — A IA que traz clientes pelo Google e redes sociais',
@@ -135,7 +135,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
         {
           '@context': 'https://schema.org', '@type': 'BlogPosting', headline: String(post.title).slice(0, 110), description: post.summary,
           image: [absolute(post.imageUrl || company.logoUrl)], datePublished: post.publishedAt, dateModified: post.updatedAt || post.publishedAt,
-          author: { '@type': 'Organization', name: company.name, url: companyUrl }, publisher: { '@type': 'Organization', name: 'Froc.IA', logo: { '@type': 'ImageObject', url: `${base}/icons/icon-512.png` } },
+          author: { '@type': 'Organization', name: company.name, url: companyUrl }, publisher: { '@type': 'Organization', name: 'Froc.IA', logo: { '@type': 'ImageObject', url: `${base}/brand/logo-froc-1024.png` } },
           mainEntityOfPage: canonical, keywords: Array.isArray(post.keywords) ? post.keywords.join(', ') : undefined, inLanguage: 'pt-BR',
           about: { '@id': `${companyUrl}#org` }
         },
@@ -193,7 +193,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
           image: post.featuredImageUrl ? [absolute(post.featuredImageUrl)] : undefined,
           datePublished: post.publishedAt || post.createdAt, dateModified: post.updatedAt || post.publishedAt || post.createdAt,
           author: { '@type': 'Organization', name: post.author || 'Equipe Froc.IA' },
-          publisher: { '@type': 'Organization', name: 'Froc.IA', logo: { '@type': 'ImageObject', url: `${base}/icons/icon-512.png` } },
+          publisher: { '@type': 'Organization', name: 'Froc.IA', logo: { '@type': 'ImageObject', url: `${base}/brand/logo-froc-1024.png` } },
           mainEntityOfPage: canonical
         }],
         prerender: `<article><h1>${esc(post.title)}</h1><p>${esc(post.summary || '')}</p>${markdownToSafeHtml(post.content)}</article>`
@@ -231,6 +231,8 @@ ${robots}
 <link rel="alternate" type="application/rss+xml" title="Froc.IA — Vitrine e Magazine" href="${esc(base)}/feed.xml" />
 <link rel="sitemap" type="application/xml" href="/sitemap_index.xml" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" type="image/png" sizes="96x96" href="/brand/favicon-96.png" />
 <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <meta property="og:locale" content="pt_BR" />
@@ -246,7 +248,7 @@ ${robots}
 <meta name="twitter:image" content="${esc(meta.image)}" />
 ${meta.schema.map((item) => `<script type="application/ld+json">${jsonLd(item)}</script>`).join('\n')}
 <link rel="stylesheet" href="/assets/app.css" />
-</head><body class="bg-[#050505] text-white antialiased"><div id="root"><div class="froc-prerender">${meta.prerender || ''}</div></div><noscript>O Froc.IA precisa de JavaScript habilitado para a experiência completa.</noscript><script type="module" src="/assets/app.js"></script></body></html>`;
+</head><body class="bg-[#050505] text-white antialiased"><div id="root"><div class="froc-prerender"><a href="/" aria-label="Froc.IA — início"><img src="/brand/logo-froc.webp" alt="Froc.IA — inteligência artificial de marketing" width="96" height="96" style="display:block;margin:0 auto 20px;border-radius:9999px" /></a>${meta.prerender || ''}</div></div><noscript>O Froc.IA precisa de JavaScript habilitado para a experiência completa.</noscript><script type="module" src="/assets/app.js"></script></body></html>`;
   return { html, status: meta.status };
 }
 
@@ -261,6 +263,8 @@ export function renderPrivateAppPage(pathname: string): { html: string; status: 
 <title>${esc(title)}</title>
 <meta name="description" content="Área autenticada do Froc.IA." />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" type="image/png" sizes="96x96" href="/brand/favicon-96.png" />
 <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <link rel="stylesheet" href="/assets/app.css" />

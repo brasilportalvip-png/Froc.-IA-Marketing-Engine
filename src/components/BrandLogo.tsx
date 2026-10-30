@@ -13,7 +13,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   size = 'md',
   showText = true,
   className = '',
-  subtitle = 'Marketing Engine'
+  subtitle = 'Rei do Orgânico'
 }) => {
   const [imageError, setImageError] = useState(false);
 

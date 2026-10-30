@@ -84,7 +84,7 @@ export const DashboardPage: React.FC<Props> = ({
       <div className="mx-auto max-w-5xl space-y-6 animate-fadeIn">
         <section className="relative overflow-hidden rounded-3xl border border-blue-500/30 bg-gradient-to-br from-blue-950 via-slate-950 to-cyan-950/30 p-8 md:p-12 shadow-2xl">
           <div className="flex items-center gap-3 mb-6">
-            <BrandLogo size="lg" showText={true} subtitle="Marketing Intelligence" />
+            <BrandLogo size="lg" showText={true} subtitle="Rei do Orgânico" />
           </div>
           <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-5xl">
             Marketing com IA, conteúdo, SEO e automação em uma única operação.

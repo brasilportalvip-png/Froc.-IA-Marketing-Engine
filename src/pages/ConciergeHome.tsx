@@ -260,6 +260,9 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto pb-44 pt-[calc(80px+env(safe-area-inset-top))]">
         {empty ? (
           <section className="mx-auto flex max-w-4xl flex-col items-center px-4 pt-6 text-center sm:pt-14">
+            <div className="froc-logo-hero froc-float mb-6">
+              <img src="/brand/logo-froc-512.webp" alt="Froc.IA — inteligência artificial de marketing" width={176} height={176} className="relative z-10 h-32 w-32 rounded-full sm:h-44 sm:w-44" fetchPriority="high" />
+            </div>
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#00E676]/30 bg-[#00E676]/[0.07] px-4 py-1.5 text-[11px] font-bold text-[#00E676]">
               <span className="froc-pulse-dot h-2 w-2 rounded-full bg-[#00E676] text-[#00E676]" />
               {liveAgents} de {FROC_AGENTS.length} agentes trabalhando agora

@@ -1,4 +1,4 @@
-const CACHE = 'froc-shell-v2.0.1-logo-oficial';
+const CACHE = 'froc-shell-v2.0.2-logo-index';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/og-froc.jpg'];
 
 self.addEventListener('install', (event) => {

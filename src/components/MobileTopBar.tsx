@@ -9,7 +9,7 @@ export const MobileTopBar: React.FC<Props> = ({ user, wallet, menuOpen, onToggle
     <div className="flex w-full items-center justify-between gap-3">
       <button onClick={onToggleMenu} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-800 bg-slate-900 text-slate-200" aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'}>{menuOpen ? <X size={20}/> : <Menu size={20}/>}</button>
       <button onClick={() => onNavigate('dashboard')} className="min-w-0 flex-1 text-left">
-        <BrandLogo size="sm" showText={true} subtitle="Marketing Intelligence" />
+        <BrandLogo size="sm" showText={true} subtitle="Rei do Orgânico" />
       </button>
       {user ? <button onClick={() => onNavigate('creditos')} className="flex h-10 items-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-400/10 px-3 text-xs font-bold text-amber-300"><Coins size={15}/>{wallet?.balance ?? 0}</button> : <button onClick={onOpenAuth} className="froc-primary text-xs px-3.5 py-2">Entrar</button>}
     </div>

@@ -566,7 +566,7 @@ export default function App() {
     <div className={`min-h-[100dvh] transition-[margin] duration-300 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'}`}>
       <main className="mx-auto w-full max-w-[1600px] px-3 pb-[calc(92px+env(safe-area-inset-bottom))] pt-[calc(72px+env(safe-area-inset-top))] sm:px-5 lg:px-8 lg:pb-10 lg:pt-24">
         {loading
-          ? <div className="grid min-h-[60vh] place-items-center"><div className="text-center"><span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-cyan-400/20 border-t-cyan-400"/><p className="mt-3 text-xs text-slate-400">Carregando Froc.IA…</p></div></div>
+          ? <div className="grid min-h-[60vh] place-items-center"><div className="text-center"><div className="froc-logo-hero mx-auto"><img src="/brand/logo-froc.webp" alt="Froc.IA" width={80} height={80} className="relative z-10 h-20 w-20 animate-pulse rounded-full"/></div><p className="mt-5 text-xs text-slate-400">Carregando Froc.IA…</p></div></div>
           : <React.Fragment key={pageIsolationKey}>{content}</React.Fragment>}
       </main>
     </div>
