@@ -194,7 +194,14 @@ img, svg, video, canvas { max-width: 100%; }
   .overflow-x-auto { -webkit-overflow-scrolling: touch; }
 }
 
+/* Logo oficial em destaque: halo pulsante + anel giratório nas cores da marca */
+.froc-logo-hero { position: relative; display: inline-grid; place-items: center; }
+.froc-logo-hero::before { content: ''; position: absolute; inset: -18%; border-radius: 9999px; background: radial-gradient(circle, rgba(45,107,255,.55) 0%, rgba(255,45,135,.25) 45%, transparent 70%); filter: blur(18px); animation: frocHalo 4s ease-in-out infinite; }
+.froc-logo-hero::after { content: ''; position: absolute; inset: -6px; border-radius: 9999px; padding: 3px; background: conic-gradient(from var(--froc-angle, 0deg), #FFD400, #FF2D87, #2d6bff, #00E676, #FFD400); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: frocSpin 5s linear infinite; }
+@keyframes frocHalo { 0%,100% { opacity: .7; transform: scale(.95); } 50% { opacity: 1; transform: scale(1.06); } }
+
 @media (prefers-reduced-motion: reduce) {
+  .froc-logo-hero::before, .froc-logo-hero::after { animation: none !important; }
   *, *::before, *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;

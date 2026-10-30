@@ -85,6 +85,9 @@ export const VitrineShowcase: React.FC<Props> = ({ companies, onOpenCompany, onO
         <div className="froc-spotlight left" />
         <div className="froc-spotlight right" />
         <div className="relative mx-auto max-w-4xl">
+          <div className="froc-logo-hero froc-float mx-auto mb-6 w-fit">
+            <img src="/brand/logo-froc-512.webp" alt="Froc.IA" width={128} height={128} className="relative z-10 h-24 w-24 rounded-full sm:h-32 sm:w-32" />
+          </div>
           <div className="mx-auto mb-6 inline-flex items-center gap-2 rounded-full border border-[#FFD400]/40 bg-[#FFD400]/10 px-4 py-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-[#FFD400]">
             <Crown size={13} /> Vitrine Froc.IA
           </div>

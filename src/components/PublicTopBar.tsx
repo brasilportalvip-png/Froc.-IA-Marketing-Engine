@@ -28,9 +28,9 @@ export const PublicTopBar: React.FC<Props> = ({ user, wallet, current, onNavigat
 
   return (
     <header className="fixed inset-x-0 top-0 z-40 border-b border-white/[0.06] bg-black/60 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4">
+      <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between gap-3 px-4">
         <button onClick={() => onNavigate('home')} className="shrink-0" aria-label="Froc.IA início">
-          <BrandLogo size="sm" showText subtitle="Rei do Orgânico" />
+          <BrandLogo size="md" showText subtitle="Rei do Orgânico" />
         </button>
         <nav className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] p-1">
           {link('home', 'Falar com a IA', Sparkles)}
