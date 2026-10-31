@@ -7,12 +7,12 @@ interface MyPost { id: string; companySlug: string; title: string; slug: string;
 
 export const DashboardBoost: React.FC<{ selectedCompany: Company | null; onNavigate: (tab: string) => void }> = ({ selectedCompany, onNavigate }) => {
   const [posts, setPosts] = useState<MyPost[]>([]);
-  const [clicks, setClicks] = useState<{ total: number; site: number; app: number; whatsapp: number } | null>(null);
+  const [clicks, setClicks] = useState<{ total: number; oferta?: number; site: number; app: number; whatsapp: number } | null>(null);
 
   useEffect(() => {
     let active = true;
     if (!selectedCompany?.id) { setClicks(null); return; }
-    apiRequest<{ clicks: { total: number; site: number; app: number; whatsapp: number } }>(`/api/vitrine-clicks/mine?companyId=${encodeURIComponent(selectedCompany.id)}`)
+    apiRequest<{ clicks: { total: number; oferta?: number; site: number; app: number; whatsapp: number } }>(`/api/vitrine-clicks/mine?companyId=${encodeURIComponent(selectedCompany.id)}`)
       .then((data) => { if (active) setClicks(data.clicks); })
       .catch(() => undefined);
     return () => { active = false; };
@@ -49,8 +49,8 @@ export const DashboardBoost: React.FC<{ selectedCompany: Company | null; onNavig
           )}
         </div>
         {inVitrine && clicks && (
-          <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-            {[['Cliques', clicks.total, '#ffffff'], ['Site', clicks.site, '#FFD400'], ['App', clicks.app, '#00E676'], ['WhatsApp', clicks.whatsapp, '#FF2D87']].map(([label, value, color]) => (
+          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 text-center">
+            {[['Cliques', clicks.total, '#ffffff'], ...(selectedCompany?.salesUrl || clicks.oferta ? [['Oferta', clicks.oferta || 0, '#FFD400']] : []), ['Site', clicks.site, '#FFD400'], ['App', clicks.app, '#00E676'], ['WhatsApp', clicks.whatsapp, '#FF2D87']].map(([label, value, color]) => (
               <div key={String(label)} className="rounded-xl bg-white/[0.04] px-2 py-2">
                 <p className="text-lg font-black" style={{ color: String(color) }}>{Number(value).toLocaleString('pt-BR')}</p>
                 <p className="text-[10px] text-neutral-500">{label}</p>

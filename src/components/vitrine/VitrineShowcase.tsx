@@ -228,13 +228,15 @@ export const VitrineShowcase: React.FC<Props> = ({ companies, onOpenCompany, onO
                         : <span className="grid h-12 w-12 place-items-center rounded-xl text-sm font-black text-black" style={{ background: accent }}>{initials(company.name)}</span>}
                       <div className="min-w-0">
                         <p className="truncate font-black text-white">{company.name}</p>
-                        <p className="truncate text-[11px] text-neutral-400">{company.category || 'Marca'}{company.city ? ` · ${company.city}` : ''}</p>
+                        <p className="truncate text-[11px] text-neutral-400">{company.category || 'Marca'}{company.city && !['nacional', 'internacional'].includes((company as any).reachScope) ? ` · ${company.city}` : ''}</p>
                       </div>
                     </div>
                     <p className="mt-3 line-clamp-3 text-xs leading-5 text-neutral-400">{company.description || 'Conheça esta marca na Vitrine Froc.IA.'}</p>
                     <div className="mt-4 flex items-center gap-2 text-[10px] font-bold">
                       <span className="inline-flex items-center gap-1 rounded-full bg-[#00E676]/10 px-2 py-1 text-[#00E676]"><Zap size={10} /> Post diário</span>
                       {(company.androidApp || company.iosApp) && <span className="inline-flex items-center gap-1 rounded-full bg-[#FFD400]/10 px-2 py-1 text-[#FFD400]">📱 App</span>}
+                      {['digital', 'afiliado', 'ecommerce'].includes((company as any).offerType) && <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-white">{(company as any).offerType === 'afiliado' ? '🔗 Indicação' : (company as any).offerType === 'ecommerce' ? '📦 Loja online' : '💻 Digital'}</span>}
+                      {(company as any).reachScope === 'nacional' && <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-white">🇧🇷 Brasil todo</span>}
                       {daily > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-[#FF2D87]/10 px-2 py-1 text-[#ff7ab3]"><TrendingUp size={10} /> {daily} recentes</span>}
                     </div>
                   </TiltCard>

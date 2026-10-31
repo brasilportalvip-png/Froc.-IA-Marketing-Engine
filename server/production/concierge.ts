@@ -13,6 +13,7 @@ import { brazilNow, firstName } from '../../shared/brazilTime.js';
 import { generateArticle, generateChatStream, generateMarketingImage, generatePost, generateRaw, generateStrategy, generateVideoScript, parseAiJson } from './ai.js';
 import { getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
+import { detectOfferPlatform, OFFER_TYPES, offerOf, offerTypeLabel, REACH_SCOPES, safeOfferUrl, scopeLabel, type OfferType, type ReachScope } from './appLinks.js';
 import { enterVitrine, vitrinePostUrl } from './vitrineDaily.js';
 import { vitrineDailyCost } from './vitrineBilling.js';
 import { COLLECTIONS, cleanObject, firestore, newId, nowIso, queryData, slugify } from './store.js';
@@ -77,6 +78,13 @@ export interface ConciergeCollected {
   instagram: string;
   androidApp: string;
   iosApp: string;
+  /** Tipo de oferta: local, servico_online, digital, afiliado, ecommerce, app. */
+  offerType: OfferType | '';
+  /** Alcance: local, regional, nacional (Brasil/país todo) ou internacional. */
+  reachScope: ReachScope | '';
+  /** Link de venda, checkout ou link de afiliado (Hotmart, Kiwify, Amazon...). */
+  salesUrl: string;
+  isAffiliate: boolean;
   colors: string;
   targeting: ConciergeTargeting;
 }
@@ -124,6 +132,10 @@ export function normalizeCollected(raw: any, previous?: Partial<ConciergeCollect
     instagram: pick('instagram', 200),
     androidApp: pick('androidApp', 300),
     iosApp: pick('iosApp', 300),
+    offerType: ((OFFER_TYPES as string[]).includes(s(raw?.offerType, 30)) ? s(raw?.offerType, 30) : (OFFER_TYPES as string[]).includes(s(prev.offerType, 30)) ? s(prev.offerType, 30) : '') as ConciergeCollected['offerType'],
+    reachScope: ((REACH_SCOPES as string[]).includes(s(raw?.reachScope, 30)) ? s(raw?.reachScope, 30) : (REACH_SCOPES as string[]).includes(s(prev.reachScope, 30)) ? s(prev.reachScope, 30) : '') as ConciergeCollected['reachScope'],
+    salesUrl: safeOfferUrl(pick('salesUrl', 1000)) || '',
+    isAffiliate: raw?.isAffiliate === true || (raw?.isAffiliate === undefined && prev.isAffiliate === true) || detectOfferPlatform(pick('salesUrl', 1000)).affiliate,
     colors: pick('colors', 200),
     targeting: {
       country: s(t.country, 80) || s(pt.country, 80),
@@ -177,7 +189,12 @@ COMO VOCÊ TRABALHA:
 - Use a data e a hora atuais informadas (horário de Brasília) para cumprimentar certo ("Bom dia", "Boa tarde", "Boa noite") na primeira mensagem ou quando a pessoa cumprimentar, e para falar de prazos, dias da semana, mês e datas comemorativas com precisão. Nunca invente outra data.
 - Responda cumprimentos e conversas leves ("oi", "tudo bem?", "obrigado") com simpatia antes de voltar ao objetivo.
 - Objetivo: entender a necessidade, coletar os dados essenciais, confirmar e criar a automação.
-- Dados essenciais: nome do negócio, o que vende (oferta), objetivo, público, REGIÃO (país, estado, cidade, bairros, ruas e raio em km — pergunte sempre a região quando for negócio local), formato desejado (foto, vídeo, texto ou carrossel), canais de contato reais (WhatsApp, site, Instagram) e cores/estilo se for criar imagem.
+- Dados essenciais: nome do negócio, o que vende (oferta), TIPO DE OFERTA, objetivo, público, ALCANCE, formato desejado (foto, vídeo, texto ou carrossel), canais reais (link de venda, site, WhatsApp, Instagram) e cores/estilo se for criar imagem.
+- TIPO DE OFERTA (collected.offerType): "local" (loja, restaurante, salão, clínica de bairro), "servico_online" (consultoria, aulas, freelancer que atende pela internet), "digital" (curso online, e-book, mentoria, comunidade, assinatura, template, software/SaaS), "afiliado" (a pessoa divulga produto de outro com link de afiliado: Hotmart, Kiwify, Eduzz, Monetizze, Braip, Amazon, Shopee, Mercado Livre, Magalu...), "ecommerce" (loja virtual que entrega para o país) ou "app". Muita gente hoje vende produto digital ou é afiliada: entenda isso de primeira, com naturalidade e sem estranhar.
+- ALCANCE (collected.reachScope): "local" (cidade/bairros/ruas), "regional" (estado/região), "nacional" (Brasil todo ou o país inteiro) ou "internacional". Produto digital, afiliado, e-commerce e app normalmente são "nacional": NÃO peça bairro, rua nem raio para eles — pergunte apenas se é o Brasil todo (ou o país) e, se fizer sentido, o público (idade, interesse, dor). Só pergunte cidade/bairro/rua quando for negócio local.
+- LINK DE VENDA (collected.salesUrl): para produto digital, afiliado ou e-commerce peça o link de venda/checkout ou o link de afiliado (ex.: go.hotmart.com/..., pay.kiwify.com.br/..., amzn.to/...). Esse link vira o botão "Quero agora" dos posts e da Vitrine, com contagem de cliques. Marque collected.isAffiliate=true quando for link de afiliado.
+- PRODUTO DIGITAL E AFILIADO — o que funciona no orgânico: conteúdo que resolve a dor do público (tutorial, checklist, "como fazer", erros comuns, comparativo honesto, review sincero, "vale a pena?"), palavras-chave de intenção de compra nacionais (ex.: "curso de confeitaria online vale a pena", "melhor fone bluetooth custo-benefício"), prova social só se for real, bônus e garantia só se a pessoa informar. Proibido prometer renda, resultado garantido, "dinheiro fácil" ou cura; proibido inventar depoimentos. Link de afiliado sempre identificado como "link de afiliado" (regra do Google e do CONAR).
+- Para negócio local, a região manda; para digital/afiliado/e-commerce, o link de venda e a dor do público mandam.
 - Pergunte uma vez, de forma leve, se a empresa tem APLICATIVO na Google Play ou App Store (é opcional). Se tiver, peça o link: os posts passam a direcionar para o site e para o app.
 - Assim que tiver o suficiente, apresente um RESUMO claro e pergunte "Posso criar?". Só marque readyToConfirm=true quando o resumo estiver pronto para confirmação.
 - Ações disponíveis para o plano: save_company, publish_vitrine, first_daily_post, generate_post, generate_image, generate_video_script, generate_strategy, generate_article.
@@ -188,7 +205,7 @@ COMO VOCÊ TRABALHA:
 - quickReplies: 2 a 4 respostas curtas que o cliente pode tocar para responder rápido.
 
 Responda SOMENTE JSON válido neste formato:
-{"reply":"","quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`; }
+{"reply":"","quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","offerType":"","reachScope":"","salesUrl":"","isAffiliate":false,"colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`; }
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
 
@@ -202,7 +219,8 @@ export function sanitizeMessages(value: any): ChatMessage[] {
 
 function companyBrief(company?: any): string {
   if (!company) return 'O cliente ainda não tem empresa cadastrada (será criada com save_company).';
-  return `Empresa já cadastrada: ${company.name} | categoria: ${company.category || '-'} | cidade: ${company.city || '-'} | site: ${company.website || '-'} | WhatsApp: ${company.whatsapp || '-'} | na vitrine: ${company.isPublicInVitrine ? 'sim' : 'não'} | descrição: ${s(company.description, 400)}`;
+  const offer = offerOf(company);
+  return `Empresa já cadastrada: ${company.name} | tipo: ${offerTypeLabel(offer.type)} | alcance: ${scopeLabel(offer.scope, company.country)} | categoria: ${company.category || '-'} | cidade: ${company.city || '-'} | site: ${company.website || '-'} | link de venda: ${offer.url ? `${offer.url}${offer.affiliate ? ` (afiliado${offer.platform ? ` ${offer.platform}` : ''})` : ''}` : '-'} | WhatsApp: ${company.whatsapp || '-'} | na vitrine: ${company.isPublicInVitrine ? 'sim' : 'não'} | descrição: ${s(company.description, 400)}`;
 }
 
 type ChatInput = { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean; userName?: string; now?: Date; account?: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean } };
@@ -283,7 +301,7 @@ function streamSystemPrompt(): string {
   return `${rules}FORMATO DA RESPOSTA (obrigatório):
 1) Primeiro escreva SOMENTE a sua fala para o cliente, em texto normal (pode usar **negrito**), começando já pela primeira frase — sem título, sem JSON, sem rótulos.
 2) Depois, numa linha sozinha, escreva exatamente ${STREAM_DATA_MARK}
-3) Em seguida, um JSON válido com: {"quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
+3) Em seguida, um JSON válido com: {"quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","offerType":"","reachScope":"","salesUrl":"","isAffiliate":false,"colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
 }
 
 /** Separa fala e dados de um texto de streaming completo. */
@@ -352,8 +370,12 @@ function httpUrl(value: string): string {
 }
 
 function topicFrom(collected: ConciergeCollected, company: any): string {
-  const where = [collected.targeting.neighborhoods.join(', '), collected.targeting.city, collected.targeting.state].filter(Boolean).join(' - ');
-  return `${collected.offer || company.description || company.name}${where ? ` para clientes em ${where}` : ''}. Objetivo: ${collected.objective || 'atrair novos clientes'}.`;
+  const offer = offerOf({ ...company, offerType: collected.offerType || company.offerType, reachScope: collected.reachScope || company.reachScope, salesUrl: collected.salesUrl || company.salesUrl, isAffiliate: collected.isAffiliate || company.isAffiliate });
+  const where = offer.scope === 'local' || offer.scope === 'regional'
+    ? [collected.targeting.neighborhoods.join(', '), collected.targeting.city, collected.targeting.state].filter(Boolean).join(' - ')
+    : scopeLabel(offer.scope, collected.targeting.country || company.country);
+  const kind = offer.type !== 'local' ? ` (${offerTypeLabel(offer.type)}${offer.affiliate ? ', divulgado com link de afiliado' : ''})` : '';
+  return `${collected.offer || company.description || company.name}${kind}${where ? ` para clientes em ${where}` : ''}. Objetivo: ${collected.objective || (offer.digital ? 'gerar vendas pelo link' : 'atrair novos clientes')}.`;
 }
 
 async function saveContent(item: Record<string, any>) {
@@ -375,6 +397,10 @@ async function ensureCompany(userId: string, companyId: string, collected: Conci
     whatsapp: collected.whatsapp || undefined,
     androidApp: /play\.google\.com/i.test(collected.androidApp) ? httpUrl(collected.androidApp) || undefined : undefined,
     iosApp: /apps?\.apple\.com|itunes\.apple\.com/i.test(collected.iosApp) ? httpUrl(collected.iosApp) || undefined : undefined,
+    salesUrl: collected.salesUrl || undefined,
+    offerType: collected.offerType || undefined,
+    reachScope: collected.reachScope || (['digital', 'afiliado', 'ecommerce', 'app'].includes(collected.offerType) ? 'nacional' : undefined),
+    isAffiliate: collected.salesUrl ? collected.isAffiliate : undefined,
     city: targeting.city || undefined,
     state: targeting.state || undefined,
     country: targeting.country || undefined,
@@ -409,8 +435,9 @@ async function ensureCompany(userId: string, companyId: string, collected: Conci
   const id = newId('company');
   const company = cleanObject({
     id, userId, name, slug: `${slugify(name)}-${id.slice(-6)}`,
-    businessType: targeting.city || targeting.neighborhoods.length ? 'hybrid' : 'online',
-    category: 'Comércio & Serviços', products: [], services: collected.offer ? [collected.offer.slice(0, 200)] : [], keywords: [],
+    businessType: ['digital', 'afiliado', 'ecommerce', 'app', 'servico_online'].includes(collected.offerType) || collected.reachScope === 'nacional' || collected.reachScope === 'internacional' ? 'online' : targeting.city || targeting.neighborhoods.length ? 'hybrid' : 'online',
+    category: collected.offerType === 'digital' ? 'Produtos Digitais' : collected.offerType === 'afiliado' ? 'Ofertas de Afiliados' : collected.offerType === 'ecommerce' ? 'Loja Virtual' : collected.offerType === 'app' ? 'Aplicativos' : 'Comércio & Serviços',
+    products: [], services: collected.offer ? [collected.offer.slice(0, 200)] : [], keywords: [],
     isPublicInVitrine: false, createdAt: nowIso(), ...patch
   });
   await db.collection(COLLECTIONS.companies).doc(id).set(company);

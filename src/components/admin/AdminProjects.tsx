@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { BadgeDollarSign, Eye, EyeOff, FolderKanban, Loader2, Pencil, PlusCircle, Power, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 
-interface AdminCompany { id: string; name: string; slug: string; userId: string; ownerName: string; ownerEmail: string; category: string; city: string; state: string; website: string; whatsapp: string; androidApp: string; iosApp: string; description: string; isPublicInVitrine: boolean; dailyPostsEnabled?: boolean; vitrineBillingExempt?: boolean; vitrineRemovedReason?: string | null; vitrinePosts: number; clicks?: { total: number; site: number; app: number; whatsapp: number }; updatedAt: string }
+interface AdminCompany { id: string; name: string; slug: string; userId: string; ownerName: string; ownerEmail: string; category: string; city: string; state: string; website: string; whatsapp: string; androidApp: string; iosApp: string; salesUrl?: string; offerType?: string; reachScope?: string; isAffiliate?: boolean; description: string; isPublicInVitrine: boolean; dailyPostsEnabled?: boolean; vitrineBillingExempt?: boolean; vitrineRemovedReason?: string | null; vitrinePosts: number; clicks?: { total: number; oferta?: number; site: number; app: number; whatsapp: number }; updatedAt: string }
 interface UserOption { id: string; name: string; email: string }
 
-const EMPTY = { name: '', userId: '', description: '', website: '', whatsapp: '', androidApp: '', iosApp: '', city: '', state: '', category: '', isPublicInVitrine: true };
+const EMPTY = { name: '', userId: '', description: '', website: '', whatsapp: '', androidApp: '', iosApp: '', salesUrl: '', offerType: '', reachScope: '', city: '', state: '', category: '', isPublicInVitrine: true };
 
 export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> = ({ onFeedback }) => {
   const [companies, setCompanies] = useState<AdminCompany[]>([]);
@@ -46,7 +46,7 @@ export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> 
   const startEdit = (c: AdminCompany) => {
     setEditing(c.id);
     setShowForm(true);
-    setForm({ name: c.name, userId: c.userId, description: c.description, website: c.website, whatsapp: c.whatsapp, androidApp: c.androidApp || '', iosApp: c.iosApp || '', city: c.city, state: c.state, category: c.category, isPublicInVitrine: c.isPublicInVitrine });
+    setForm({ name: c.name, userId: c.userId, description: c.description, website: c.website, whatsapp: c.whatsapp, androidApp: c.androidApp || '', iosApp: c.iosApp || '', salesUrl: c.salesUrl || '', offerType: c.offerType || '', reachScope: c.reachScope || '', city: c.city, state: c.state, category: c.category, isPublicInVitrine: c.isPublicInVitrine });
   };
 
   const save = async (event: React.FormEvent) => {
@@ -96,6 +96,13 @@ export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> 
             {field('whatsapp', 'WhatsApp')}
             {field('androidApp', 'App na Google Play (opcional)')}
             {field('iosApp', 'App na App Store (opcional)')}
+            {field('salesUrl', 'Link de venda / afiliado (opcional)')}
+            <select value={form.offerType} onChange={(e) => setForm((f) => ({ ...f, offerType: e.target.value }))} className="froc-input" aria-label="Tipo de oferta">
+              <option value="">Tipo: automático</option><option value="local">Negócio local</option><option value="servico_online">Serviço online</option><option value="digital">Produto digital</option><option value="afiliado">Afiliado</option><option value="ecommerce">E-commerce</option><option value="app">Aplicativo</option>
+            </select>
+            <select value={form.reachScope} onChange={(e) => setForm((f) => ({ ...f, reachScope: e.target.value }))} className="froc-input" aria-label="Alcance">
+              <option value="">Alcance: automático</option><option value="local">Cidade/bairros</option><option value="regional">Estado/região</option><option value="nacional">Brasil todo</option><option value="internacional">Vários países</option>
+            </select>
             {field('city', 'Cidade')}
             {field('state', 'Estado')}
             {field('category', 'Categoria')}
@@ -114,7 +121,7 @@ export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> 
                 {c.isPublicInVitrine && <span className={`ml-1 rounded px-1.5 text-[9px] font-black ${c.dailyPostsEnabled === false ? 'bg-[#FF2D87]/15 text-[#ff7ab3]' : 'bg-[#FFD400]/15 text-[#FFD400]'}`}>{c.dailyPostsEnabled === false ? 'POST DIÁRIO OFF' : 'POST DIÁRIO ON'}</span>}
                 {c.vitrineBillingExempt && <span className="ml-1 rounded bg-white/10 px-1.5 text-[9px] font-black text-white">ISENTO</span>}
                 {!c.isPublicInVitrine && c.vitrineRemovedReason && <span className="ml-1 rounded bg-[#FF2D87]/15 px-1.5 text-[9px] font-black text-[#ff7ab3]">{c.vitrineRemovedReason === 'no_credits' ? 'SAIU: SEM CRÉDITOS' : 'SAIU: SEM PLANO'}</span>}</p>
-              <p className="text-[11px] text-slate-500">{c.ownerName || '—'} · {c.ownerEmail} · {[c.city, c.state].filter(Boolean).join(' - ') || 'sem cidade'} · {c.vitrinePosts} posts · {c.clicks?.total || 0} cliques (site {c.clicks?.site || 0} · app {c.clicks?.app || 0} · WhatsApp {c.clicks?.whatsapp || 0}){(c.androidApp || c.iosApp) ? ' · 📱 tem app' : ''}</p>
+              <p className="text-[11px] text-slate-500">{c.ownerName || '—'} · {c.ownerEmail} · {[c.city, c.state].filter(Boolean).join(' - ') || 'sem cidade'} · {c.vitrinePosts} posts · {c.clicks?.total || 0} cliques (site {c.clicks?.site || 0} · app {c.clicks?.app || 0} · WhatsApp {c.clicks?.whatsapp || 0}){(c.androidApp || c.iosApp) ? ' · 📱 tem app' : ''}{c.salesUrl ? ` · 🛍️ oferta${c.isAffiliate ? ' (afiliado)' : ''}: ${c.clicks?.oferta || 0} cliques` : ''}{c.reachScope === 'nacional' ? ' · 🇧🇷 Brasil todo' : ''}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               {c.isPublicInVitrine && <a href={`/vitrine/${encodeURIComponent(c.slug)}`} target="_blank" rel="noreferrer" className="froc-secondary text-[11px]">Ver</a>}

@@ -18,7 +18,7 @@ import { closeConversation, deleteConversation, getConversation, listConversatio
 import { cleanSpeechText, createLiveTranscriptionToken, diagnoseVoice, NEURAL_SPEECH_CHANNELS, NEURAL_SPEECH_SAMPLE_RATE, synthesizeSpeech, synthesizeSpeechStream } from './speech.js';
 import { enterVitrine, processVitrineDailyPosts, sanitizePublicVitrinePost } from './vitrineDaily.js';
 import { listAllPublicPosts } from './posts.js';
-import { appLinksOf } from './appLinks.js';
+import { appLinksOf, offerOf, OFFER_TYPES, REACH_SCOPES, safeOfferUrl } from './appLinks.js';
 import { backfillPostImages, createPostImage, resetFailedPostImages } from './postImages.js';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents.js';
 import { COLLECTIONS, cleanObject, consumeRateLimit, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
@@ -99,7 +99,10 @@ function normalizeCompanyField(key: string, value: any): any {
   if (key === 'onlineChannels') return stringArray(value);
   if (key === 'socialLinks') return sanitizedSocialLinks(value);
   if (['products','services','competitors','keywords'].includes(key)) return stringArray(value);
-  if (key === 'isPublicInVitrine' || key === 'dailyPostsEnabled' || key === 'vitrineBillingExempt') {
+  if (key === 'offerType') return (OFFER_TYPES as string[]).includes(String(value)) ? String(value) : undefined;
+  if (key === 'reachScope') return (REACH_SCOPES as string[]).includes(String(value)) ? String(value) : undefined;
+  if (key === 'salesUrl') return safeOfferUrl(value) || '';
+  if (key === 'isPublicInVitrine' || key === 'dailyPostsEnabled' || key === 'vitrineBillingExempt' || key === 'isAffiliate') {
     return parseStrictBoolean(value);
   }
   if (key === 'marketingProfile') return value && typeof value === 'object' ? cleanObject(value) : undefined;
@@ -375,6 +378,10 @@ router.post('/companies', requireAuth, asyncRoute(async (req: AuthenticatedReque
     website: safeHttpUrl(req.body?.website, 1000),
     androidApp: safeHttpUrl(req.body?.androidApp, 1000),
     iosApp: safeHttpUrl(req.body?.iosApp, 1000),
+    salesUrl: normalizeCompanyField('salesUrl', req.body?.salesUrl) || undefined,
+    offerType: normalizeCompanyField('offerType', req.body?.offerType),
+    reachScope: normalizeCompanyField('reachScope', req.body?.reachScope),
+    isAffiliate: req.body?.isAffiliate === undefined ? undefined : parseStrictBoolean(req.body.isAffiliate),
     phone: safeString(req.body?.phone, 80),
     whatsapp: safeString(req.body?.whatsapp, 80),
     email: safeEmail(req.body?.email),
@@ -410,7 +417,7 @@ router.get('/companies/:id', requireAuth, asyncRoute(async (req: AuthenticatedRe
 
 router.patch('/companies/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const current = await requireOwnedCompany(req.user!.id, req.params.id);
-  const allowed = ['name','businessType','onlineChannels','logoUrl','description','website','androidApp','iosApp','phone','whatsapp','email','address','city','state','country','category','segment','products','services','targetAudience','coverageRegion','differentials','brandTone','goals','competitors','keywords','socialLinks','marketingProfile'];
+  const allowed = ['name','businessType','onlineChannels','logoUrl','description','website','androidApp','iosApp','phone','whatsapp','email','address','city','state','country','category','segment','products','services','targetAudience','coverageRegion','differentials','brandTone','goals','competitors','keywords','socialLinks','marketingProfile','salesUrl','offerType','reachScope','isAffiliate'];
   const patch: Record<string, any> = {};
   for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
   if (patch.name && patch.name !== current.name) patch.slug = `${slugify(safeString(patch.name, 120))}-${req.params.id.slice(-6)}`;
@@ -889,6 +896,12 @@ function sanitizePublicVitrineCompany(company: any) {
     website: company.website || null,
     whatsapp: company.whatsapp || null,
     androidApp: appLinksOf(company).android,
+    // Oferta (link de venda/afiliado): o link real só sai pelo /ir/{marca}/oferta, que conta o clique.
+    hasOffer: Boolean(offerOf(company).url),
+    isAffiliate: offerOf(company).affiliate,
+    offerPlatform: offerOf(company).platform,
+    offerType: offerOf(company).type,
+    reachScope: offerOf(company).scope,
     iosApp: appLinksOf(company).ios,
     instagram: company.instagram || null,
     linkedin: company.linkedin || null,
@@ -1179,11 +1192,11 @@ router.get('/vitrine-posts/mine', requireAuth, asyncRoute(async (req: Authentica
 
 router.get('/vitrine-clicks/mine', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const companyId = safeString(req.query.companyId, 200);
-  if (!companyId) return res.json({ clicks: { total: 0, site: 0, app: 0, whatsapp: 0 } });
+  if (!companyId) return res.json({ clicks: { total: 0, oferta: 0, site: 0, app: 0, whatsapp: 0 } });
   await requireOwnedCompany(req.user!.id, companyId);
   const snap = await firestore().collection(COLLECTIONS.linkClicks).doc(companyId).get();
   const data: any = snap.exists ? snap.data() : {};
-  res.json({ clicks: { total: Number(data.total || 0), site: Number(data.site || 0), app: Number(data.android || 0) + Number(data.ios || 0), whatsapp: Number(data.whatsapp || 0) } });
+  res.json({ clicks: { total: Number(data.total || 0), oferta: Number(data.oferta || 0), site: Number(data.site || 0), app: Number(data.android || 0) + Number(data.ios || 0), whatsapp: Number(data.whatsapp || 0) } });
 }));
 
 router.get('/vitrine/:slug/posts', asyncRoute(async (req, res) => {
@@ -1435,8 +1448,8 @@ router.get('/admin/companies', requireAdmin, asyncRoute(async (_req: Authenticat
   const companies = queryData<any>(companiesSnap).map((c) => ({
     id: c.id, name: c.name, slug: c.slug, userId: c.userId, ownerName: users.get(c.userId)?.name || '', ownerEmail: users.get(c.userId)?.email || '',
     category: c.category || '', city: c.city || '', state: c.state || '', website: c.website || '', whatsapp: c.whatsapp || '', description: c.description || '',
-    androidApp: c.androidApp || '', iosApp: c.iosApp || '',
-    clicks: { total: Number(clicks.get(c.id)?.total || 0), site: Number(clicks.get(c.id)?.site || 0), app: Number(clicks.get(c.id)?.android || 0) + Number(clicks.get(c.id)?.ios || 0), whatsapp: Number(clicks.get(c.id)?.whatsapp || 0) },
+    androidApp: c.androidApp || '', iosApp: c.iosApp || '', salesUrl: c.salesUrl || '', offerType: offerOf(c).type, reachScope: offerOf(c).scope, isAffiliate: offerOf(c).affiliate,
+    clicks: { total: Number(clicks.get(c.id)?.total || 0), oferta: Number(clicks.get(c.id)?.oferta || 0), site: Number(clicks.get(c.id)?.site || 0), app: Number(clicks.get(c.id)?.android || 0) + Number(clicks.get(c.id)?.ios || 0), whatsapp: Number(clicks.get(c.id)?.whatsapp || 0) },
     isPublicInVitrine: parseStrictBoolean(c.isPublicInVitrine), dailyPostsEnabled: c.dailyPostsEnabled !== false, vitrineBillingExempt: c.vitrineBillingExempt === true || users.get(c.userId)?.role === 'admin',
     vitrineRemovedReason: c.vitrineRemovedReason || null, vitrinePosts: postCount.get(c.id) || 0, createdAt: c.createdAt || '', updatedAt: c.updatedAt || ''
   })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -1464,6 +1477,8 @@ router.post('/admin/companies', requireAdmin, asyncRoute(async (req: Authenticat
     id, userId, name, slug: `${slugify(name)}-${id.slice(-6)}`,
     description: safeString(req.body?.description, 5000), website: safeHttpUrl(req.body?.website, 1000), whatsapp: safeString(req.body?.whatsapp, 80),
     androidApp: safeHttpUrl(req.body?.androidApp, 1000), iosApp: safeHttpUrl(req.body?.iosApp, 1000),
+    salesUrl: normalizeCompanyField('salesUrl', req.body?.salesUrl) || undefined, offerType: normalizeCompanyField('offerType', req.body?.offerType),
+    reachScope: normalizeCompanyField('reachScope', req.body?.reachScope), isAffiliate: req.body?.isAffiliate === undefined ? undefined : parseStrictBoolean(req.body.isAffiliate),
     city: safeString(req.body?.city, 150), state: safeString(req.body?.state, 100), country: safeString(req.body?.country, 100) || 'Brasil',
     category: safeString(req.body?.category, 150) || 'Comércio & Serviços', businessType: normalizeCompanyField('businessType', req.body?.businessType || 'online'),
     products: [], services: [], keywords: [], isPublicInVitrine: parseStrictBoolean(req.body?.isPublicInVitrine),
@@ -1483,7 +1498,7 @@ router.patch('/admin/companies/:id', requireAdmin, asyncRoute(async (req: Authen
   const snap = await ref.get();
   if (!snap.exists) return res.status(404).json({ error: 'Projeto não encontrado.' });
   const current = { id: snap.id, ...snap.data() } as any;
-  const allowed = ['name', 'description', 'website', 'whatsapp', 'androidApp', 'iosApp', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine', 'dailyPostsEnabled', 'vitrineBillingExempt'];
+  const allowed = ['name', 'description', 'website', 'whatsapp', 'androidApp', 'iosApp', 'salesUrl', 'offerType', 'reachScope', 'isAffiliate', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine', 'dailyPostsEnabled', 'vitrineBillingExempt'];
   const patch: Record<string, any> = {};
   for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
   if (req.body?.userId !== undefined) {

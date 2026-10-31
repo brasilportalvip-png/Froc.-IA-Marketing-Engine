@@ -11,7 +11,7 @@ import { selectAgentsForIntent } from '../../shared/agents.js';
 import { companyContext, generateRaw, parseAiJson } from './ai.js';
 import { baseUrl, pingIndexNow } from './seoEngine.js';
 import { createPostImage } from './postImages.js';
-import { appLinksOf } from './appLinks.js';
+import { appLinksOf, offerOf, offerTypeLabel, scopeLabel } from './appLinks.js';
 import { avoidRepeatBlock, isDuplicatePost } from './uniqueness.js';
 import { chargeVitrineDay, dailyPostsOn, getSiteSettings, isBillingExempt, removeFromVitrine, vitrineBlockMessage, vitrineEligibility } from './vitrineBilling.js';
 import { COLLECTIONS, firestore, nowIso, queryData, slugify } from './store.js';
@@ -33,18 +33,35 @@ export const DAILY_ANGLES = [
   { id: 'autoridade', label: 'Autoridade', brief: 'demonstrar conhecimento do assunto ensinando algo relevante do segmento' }
 ] as const;
 
+/** Ângulos para produto digital, afiliado e e-commerce (alcance nacional). */
+export const DIGITAL_ANGLES = [
+  { id: 'vale-a-pena', label: 'Vale a pena?', brief: 'responder com honestidade se o produto vale a pena, para quem é e para quem não é' },
+  { id: 'review', label: 'Review sincero', brief: 'um review honesto: o que é, como funciona, pontos fortes e limitações reais' },
+  { id: 'como-funciona', label: 'Como funciona', brief: 'explicar passo a passo como o produto funciona e o que a pessoa recebe' },
+  { id: 'dor', label: 'Resolva este problema', brief: 'partir da dor principal do público e mostrar o caminho até a solução com o produto' },
+  { id: 'erros', label: 'Erros comuns', brief: 'os erros mais comuns de quem tenta resolver isso sozinho e como evitar' },
+  { id: 'comparativo', label: 'Comparativo honesto', brief: 'comparar com alternativas (inclusive gratuitas) e mostrar quando este produto é a melhor escolha' },
+  { id: 'iniciante', label: 'Guia para iniciantes', brief: 'um guia para quem está começando, com dicas práticas que já ajudam hoje (reciprocidade)' },
+  { id: 'perguntas', label: 'Perguntas frequentes', brief: 'responder as dúvidas reais antes da compra: acesso, suporte, formato e garantia (só se informada)' },
+  { id: 'rotina', label: 'Na prática', brief: 'mostrar como o produto entra na rotina da pessoa e o resultado esperado de forma realista' },
+  { id: 'objecoes', label: 'Quebra de objeções', brief: 'responder as objeções de compra (preço, tempo, "funciona para mim?") com transparência' }
+] as const;
+
 export function todayInSaoPaulo(date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
-export function angleForDate(dateStr: string, companyId: string) {
+export function angleForDate(dateStr: string, companyId: string, digital = false): { id: string; label: string; brief: string } {
   const day = Math.floor(new Date(`${dateStr}T12:00:00Z`).getTime() / 86_400_000);
   let hash = 0;
   for (const char of companyId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return DAILY_ANGLES[(day + hash) % DAILY_ANGLES.length];
+  const list = digital ? DIGITAL_ANGLES : DAILY_ANGLES;
+  return list[(day + hash) % list.length];
 }
 
 function locationLine(company: any): string {
+  const offer = offerOf(company);
+  if (offer.scope === 'nacional' || offer.scope === 'internacional') return scopeLabel(offer.scope, company.country);
   const t = company.targeting || {};
   const parts = [
     ...(Array.isArray(t.streets) ? t.streets : []),
@@ -56,32 +73,38 @@ function locationLine(company: any): string {
   return [...new Set(parts)].join(', ');
 }
 
-export function buildDailyPostPrompt(company: any, dateStr: string, previous: any[] = [], retry = false): { prompt: string; angle: (typeof DAILY_ANGLES)[number] } {
-  const angle = angleForDate(dateStr, String(company.id || company.slug || 'x'));
+export function buildDailyPostPrompt(company: any, dateStr: string, previous: any[] = [], retry = false): { prompt: string; angle: { id: string; label: string; brief: string } } {
+  const offer = offerOf(company);
+  const local = offer.scope === 'local' || offer.scope === 'regional';
+  const angle = angleForDate(dateStr, String(company.id || company.slug || 'x'), offer.digital && !local);
   const where = locationLine(company);
   const apps = appLinksOf(company);
   const stores = [apps.android ? 'Google Play' : '', apps.ios ? 'App Store' : ''].filter(Boolean).join(' e ');
-  const directionRule = stores
+  const offerRule = offer.url
+    ? `\n6a. O CTA principal leva ao LINK DE VENDA (${offerTypeLabel(offer.type)}${offer.platform ? `, ${offer.platform}` : ''}): convide a clicar em "Quero agora" de forma irresistível e honesta.${offer.affiliate ? ' É um LINK DE AFILIADO: escreva como quem indica (review/recomendação), nunca como o fabricante, e inclua no fim a frase "Este post contém link de afiliado: posso receber uma comissão se você comprar, sem custo extra para você."' : ''}`
+    : '';
+  const directionRule = `${offerRule}${stores
     ? `\n6b. A empresa TEM aplicativo (${stores}): inclua um parágrafo convidando a baixar o app e os benefícios de usá-lo; o CTA deve oferecer as duas opções: visitar o site e baixar o aplicativo.`
-    : company.website ? '\n6b. Direcione o leitor para o site oficial da empresa.' : '';
+    : company.website && !offer.url ? '\n6b. Direcione o leitor para o site oficial da empresa.' : ''}`;
   const agents = selectAgentsForIntent(`${angle.brief} ${company.category || ''} ${where} seo vitrine gatilho cliente`, 14);
   const prompt = `Você é o time Froc.IA de tráfego orgânico. Especialistas acionados hoje:
 ${agents.map((agent) => `- ${agent.directive}`).join('\n')}
 
 TAREFA: escrever o post diário (${dateStr}) da empresa "${company.name}" na Vitrine Froc.IA.
 Ângulo do dia: ${angle.label} — ${angle.brief}.
-Região-alvo para SEO local: ${where || 'não informada (não invente localização)'}.
+Tipo de oferta: ${offerTypeLabel(offer.type)}.
+${local ? `Região-alvo para SEO local: ${where || 'não informada (não invente localização)'}.` : `Alcance: ${where}. NÃO use bairro, rua ou cidade no texto: foque em palavras-chave nacionais de intenção de compra e na dor do público.`}
 ${avoidRepeatBlock(previous)}${retry ? '\nATENÇÃO: a versão anterior ficou parecida demais com um post já publicado. Escolha outro tema específico, outro título e outra estrutura.\n' : ''}
 REGRAS DE OURO (tráfego orgânico + captura de clientes):
-1. Título SEO com no máximo 60 caracteres contendo a palavra-chave principal${where ? ' e a localização principal' : ''}.
+1. Título SEO com no máximo 60 caracteres contendo a palavra-chave principal${local && where ? ' e a localização principal' : ''}.
 2. Meta description entre 120 e 155 caracteres, com benefício + chamada para ação.
 3. Conteúdo em Markdown de 450 a 750 palavras, com gancho forte no primeiro parágrafo, subtítulos H2/H3 e parágrafos curtos para leitura no celular.
 4. Use gatilhos ÉTICOS: curiosidade, especificidade, autoridade (ensinando), reciprocidade (dicas úteis), quebra de objeções e prova social SOMENTE se fornecida no contexto.
 5. Proibido inventar: preços, descontos, prazos, números, avaliações, depoimentos, prêmios ou escassez falsa.
 6. Termine com uma seção "## Fale com ${company.name}" com CTA irresistível direcionando somente aos canais verificados do contexto.${directionRule}
 7. Inclua 3 perguntas frequentes reais (para FAQ com dados estruturados).
-8. Palavras-chave: 1 principal + 4 secundárias de cauda longa com intenção de compra${where ? ' e variações locais' : ''}.
-9. Hashtags: 6 a 10, misturando nicho, intenção de compra${where ? ', cidade/bairro' : ''} e a marca (sem espaços, sem acento, nada genérico demais como #love).
+8. Palavras-chave: 1 principal + 4 secundárias de cauda longa com intenção de compra${local && where ? ' e variações locais' : ' (buscas nacionais, ex.: "vale a pena", "como funciona", "melhor ... para ...")'}.
+9. Hashtags: 6 a 10, misturando nicho, intenção de compra${local && where ? ', cidade/bairro' : ', público e tema'} e a marca (sem espaços, sem acento, nada genérico demais como #love).${offer.digital ? '\n9b. Proibido prometer renda, ganho financeiro, resultado garantido ou cura; nada de "dinheiro fácil".' : ''}
 10. Texto 100% original, escrito para pessoas (não para robôs): sem encher de palavras-chave, sem copiar trechos de outros posts.
 
 Responda SOMENTE JSON válido:
@@ -93,7 +116,7 @@ function str(value: any, max: number): string {
   return String(value ?? '').replace(/\u0000/g, '').trim().slice(0, max);
 }
 
-export function normalizeDailyPost(raw: any, company: any, dateStr: string, angle: (typeof DAILY_ANGLES)[number]) {
+export function normalizeDailyPost(raw: any, company: any, dateStr: string, angle: { id: string; label: string; brief: string }) {
   const title = str(raw?.title || raw?.headline, 120) || `${company.name}: ${angle.label}`;
   const content = str(raw?.content || raw?.body, 30_000);
   const summary = str(raw?.metaDescription || raw?.hook || content.replace(/[#*_>`-]/g, ' ').replace(/\s+/g, ' '), 160);

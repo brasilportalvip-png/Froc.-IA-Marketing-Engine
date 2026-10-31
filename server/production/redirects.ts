@@ -3,13 +3,14 @@
  *   site     → site oficial
  *   app      → Google Play no Android, App Store no iPhone/iPad (no computador: a loja disponível)
  *   android  → Google Play      ios → App Store      whatsapp → conversa no WhatsApp
+ *   oferta   → link de venda / checkout / link de afiliado (produto digital ou físico)
  * Cada clique é contado por marca e por post (?p=ID) para o painel.
  */
-import { appLinksOf } from './appLinks.js';
+import { appLinksOf, offerOf } from './appLinks.js';
 import { baseUrl } from './seoEngine.js';
 import { COLLECTIONS, firestore, nowIso } from './store.js';
 
-export const REDIRECT_TARGETS = ['site', 'app', 'android', 'ios', 'whatsapp'] as const;
+export const REDIRECT_TARGETS = ['site', 'app', 'android', 'ios', 'whatsapp', 'oferta'] as const;
 export type RedirectTarget = (typeof REDIRECT_TARGETS)[number];
 
 function isPublic(company: any): boolean {
@@ -37,6 +38,7 @@ export function deviceOf(userAgent: string): 'android' | 'ios' | 'desktop' {
 export function resolveDestination(company: any, target: RedirectTarget, userAgent: string): { url: string; channel: string } | null {
   const apps = appLinksOf(company);
   if (target === 'site') { const url = safeHttps(company.website); return url ? { url, channel: 'site' } : null; }
+  if (target === 'oferta') { const offer = offerOf(company); return offer.url ? { url: offer.url, channel: 'oferta' } : null; }
   if (target === 'android') return apps.android ? { url: apps.android, channel: 'android' } : null;
   if (target === 'ios') return apps.ios ? { url: apps.ios, channel: 'ios' } : null;
   if (target === 'whatsapp') {

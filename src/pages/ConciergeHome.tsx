@@ -15,7 +15,7 @@ import { isVoiceSupported, useFrocVoice } from '../lib/voice/useFrocVoice';
 import { VoiceStatusBar } from '../components/VoiceStatusBar';
 
 interface Targeting { country: string; state: string; city: string; neighborhoods: string[]; streets: string[]; radiusKm: number }
-interface Collected { businessName: string; offer: string; objective: string; audience: string; tone: string; media: string; platforms: string[]; website: string; whatsapp: string; instagram: string; colors: string; targeting: Targeting }
+interface Collected { businessName: string; offer: string; objective: string; audience: string; tone: string; media: string; platforms: string[]; website: string; whatsapp: string; instagram: string; colors: string; offerType?: string; reachScope?: string; salesUrl?: string; isAffiliate?: boolean; targeting: Targeting }
 interface PlanAction { type: string; label: string; credits: number }
 interface Plan { summary: string; actions: PlanAction[]; estimatedCredits: number }
 interface AgentLite { id: string; name: string; role: string; squadName: string; color: 'yellow' | 'pink' | 'green' | 'white' }
@@ -50,7 +50,7 @@ const STARTERS = [
   { icon: MapPin, title: 'Clientes do meu bairro', text: 'Quero atrair clientes do meu bairro e da minha cidade para o meu negócio.', color: '#FFD400' },
   { icon: Search, title: 'Aparecer no Google', text: 'Quero que minha empresa apareça no Google quando procurarem pelo que eu vendo.', color: '#00E676' },
   { icon: Megaphone, title: 'Anúncio irresistível', text: 'Crie um anúncio irresistível com foto para o meu Instagram.', color: '#FF2D87' },
-  { icon: Store, title: 'Brilhar na Vitrine', text: 'Quero colocar meu site na Vitrine Froc.IA com post diário automático.', color: '#ffffff' }
+  { icon: Store, title: 'Produto digital ou afiliado', text: 'Tenho um produto digital (ou sou afiliado) e quero vender para o Brasil todo com meu link.', color: '#ffffff' }
 ];
 
 function uid(): string {
@@ -128,8 +128,14 @@ function ConversationsPanel(props: {
   );
 }
 
-function TargetingCard({ targeting, media }: { targeting: Targeting; media?: string }) {
+const OFFER_LABEL: Record<string, string> = { local: 'Negócio local', servico_online: 'Serviço online', digital: 'Produto digital', afiliado: 'Afiliado', ecommerce: 'Loja virtual', app: 'Aplicativo' };
+const SCOPE_LABEL: Record<string, string> = { local: 'Cidade e bairros', regional: 'Estado/região', nacional: 'Brasil todo', internacional: 'Vários países' };
+
+function TargetingCard({ targeting, media, collected }: { targeting: Targeting; media?: string; collected?: Collected | null }) {
   const chips: Array<[string, string]> = [];
+  if (collected?.offerType && OFFER_LABEL[collected.offerType]) chips.push(['Tipo', OFFER_LABEL[collected.offerType]]);
+  if (collected?.reachScope && SCOPE_LABEL[collected.reachScope]) chips.push(['Alcance', SCOPE_LABEL[collected.reachScope]]);
+  if (collected?.salesUrl) { try { chips.push([collected.isAffiliate ? 'Link de afiliado' : 'Link de venda', new URL(collected.salesUrl).hostname]); } catch { /* link inválido */ } }
   if (targeting.country) chips.push(['País', targeting.country]);
   if (targeting.state) chips.push(['Estado', targeting.state]);
   if (targeting.city) chips.push(['Cidade', targeting.city]);
@@ -482,7 +488,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               <span className="froc-text-gradient">O Froc.IA faz o resto.</span>
             </h1>
             <p className="mt-5 max-w-2xl text-sm leading-7 text-neutral-300 sm:text-base">
-              Sem formulários, sem painéis complicados. Converse com o Froc.IA: ele entende seu negócio, define a região (país, cidade, bairro e até a rua), cria o anúncio e coloca sua marca para ser encontrada no Google — todos os dias.
+              Sem formulários, sem painéis complicados. Converse com o Froc.IA: ele entende seu negócio — loja de bairro, serviço online, produto digital ou link de afiliado —, define o alcance (da sua rua ao Brasil inteiro), cria o anúncio e coloca você para ser encontrado no Google, todos os dias.
             </p>
 
             <div className="mt-10 grid w-full gap-3 sm:grid-cols-2">
@@ -552,7 +558,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
                     <div className="froc-glow-card mt-4 p-5">
                       <p className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-[#FFD400]"><Sparkles size={13} /> Resumo para confirmar</p>
                       {message.plan.summary && <p className="mt-2 text-sm leading-6 text-white">{message.plan.summary}</p>}
-                      {collected && <div className="mt-3"><TargetingCard targeting={collected.targeting} media={collected.media} /></div>}
+                      {collected && <div className="mt-3"><TargetingCard targeting={collected.targeting} media={collected.media} collected={collected} /></div>}
                       <ul className="mt-4 space-y-2">
                         {message.plan.actions.map((action) => (
                           <li key={action.type} className="flex items-center justify-between gap-3 rounded-xl bg-white/[0.04] px-3 py-2 text-xs">
