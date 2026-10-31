@@ -207,3 +207,25 @@ export function getProgressiveSpeechOpening(
       : candidate
   ).trim();
 }
+
+/** Explica em português o motivo exato da falha da escuta do navegador e como resolver. */
+export function voiceErrorMessage(code: string): string {
+  const brave = typeof navigator !== 'undefined' && Boolean((navigator as any).brave);
+  switch (code) {
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return 'O microfone está bloqueado. Toque no cadeado ao lado do endereço do site, permita o Microfone e tente de novo.';
+    case 'audio-capture':
+      return 'Nenhum microfone foi encontrado. Conecte um microfone (ou feche outro app que esteja usando) e tente de novo.';
+    case 'network':
+      return brave
+        ? 'O navegador Brave bloqueia o reconhecimento de voz. Use o Google Chrome, Edge ou Safari para falar com a Froc.IA.'
+        : 'O reconhecimento de voz do navegador não conseguiu se conectar. Verifique a internet ou use o Google Chrome, Edge ou Safari.';
+    case 'language-not-supported':
+      return 'Este navegador não reconhece voz em português. Use o Google Chrome, Edge ou Safari.';
+    case 'unsupported':
+      return 'Este navegador não tem reconhecimento de voz. Use o Google Chrome, Edge ou Safari atualizado.';
+    default:
+      return `A escuta falhou (${code}). Toque no microfone para tentar de novo.`;
+  }
+}

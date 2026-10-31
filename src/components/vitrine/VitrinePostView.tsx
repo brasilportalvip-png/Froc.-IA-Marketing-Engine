@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, CalendarDays, ExternalLink, Globe, Loader2, MapPin, MessageCircle, Share2, Sparkles } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ExternalLink, Globe, Loader2, MapPin, MessageCircle, Share2, Smartphone, Sparkles } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 
 interface FullPost {
   id: string; companySlug: string; companyName: string; title: string; slug: string; summary: string; hook: string;
   content: string; cta: string; faq: Array<{ question: string; answer: string }>; keywords: string[]; angleLabel: string;
-  imageUrl: string | null; location: string | null; publishedAt: string;
+  imageUrl: string | null; imageAlt?: string; location: string | null; publishedAt: string;
 }
 
 interface Props {
@@ -81,8 +81,13 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
   }
   if (!post) return <div className="grid min-h-[70vh] place-items-center"><Loader2 className="animate-spin text-[#FFD400]" size={30} /></div>;
 
-  const whatsapp = company?.whatsapp ? `https://wa.me/${String(company.whatsapp).replace(/\D/g, '')}` : undefined;
-  const website = safeUrl(company?.website);
+  // Direcionamento inteligente: /ir/{marca}/{destino} conta o clique e leva ao site, ao WhatsApp
+  // ou à loja certa do aparelho (Google Play no Android, App Store no iPhone).
+  const go = (target: string) => `/ir/${encodeURIComponent(post.companySlug)}/${target}?p=${encodeURIComponent(post.id)}`;
+  const whatsapp = company?.whatsapp ? go('whatsapp') : undefined;
+  const website = safeUrl(company?.website) ? go('site') : undefined;
+  const androidApp = company?.androidApp ? go('android') : undefined;
+  const iosApp = company?.iosApp ? go('ios') : undefined;
 
   return (
     <div className="relative px-4 pb-24 pt-[calc(96px+env(safe-area-inset-top))]">
@@ -98,7 +103,7 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
         </div>
         <h1 className="mt-4 text-3xl font-black leading-tight sm:text-5xl">{post.title}</h1>
         {post.hook && <p className="mt-5 border-l-4 border-[#FF2D87] pl-4 text-lg font-semibold leading-8 text-white">{post.hook}</p>}
-        {post.imageUrl && <img src={post.imageUrl} alt={post.companyName} className="mt-8 max-h-[420px] w-full rounded-3xl object-cover" />}
+        {post.imageUrl && <img src={post.imageUrl} alt={post.imageAlt || post.title} width={1280} height={720} className="mt-8 aspect-video w-full rounded-3xl object-cover" />}
         <div className="froc-prose mt-8" dangerouslySetInnerHTML={{ __html: markdownToHtml(post.content) }} />
 
         {post.faq.length > 0 && (
@@ -115,12 +120,29 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
           </section>
         )}
 
+        {(androidApp || iosApp) && (
+          <section className="mt-12 overflow-hidden rounded-3xl border border-[#00E676]/30 bg-gradient-to-br from-[#00E676]/10 via-black to-[#FF2D87]/10 p-6 sm:p-8">
+            <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
+              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#00E676] text-black"><Smartphone size={26} /></span>
+              <div className="flex-1">
+                <p className="text-[11px] font-black uppercase tracking-widest text-[#00E676]">Aplicativo oficial</p>
+                <p className="mt-1 text-lg font-black text-white">Baixe o app de {post.companyName}</p>
+                <p className="text-sm text-neutral-400">Mais rápido, direto no seu celular.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {androidApp && <a href={androidApp} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-black text-black hover:bg-[#FFD400]">▶ Google Play</a>}
+                {iosApp && <a href={iosApp} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-black text-black hover:bg-[#FFD400]">App Store</a>}
+              </div>
+            </div>
+          </section>
+        )}
+
         <section className="froc-glow-card mt-12 p-6 text-center sm:p-8">
           <p className="text-[11px] font-black uppercase tracking-widest text-[#FF2D87]">Fale com {post.companyName}</p>
           {post.cta && <p className="mt-3 text-lg font-black text-white">{post.cta}</p>}
           <div className="mt-5 flex flex-wrap justify-center gap-3">
-            {whatsapp && <a href={whatsapp} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-[#00E676] px-5 py-3 text-sm font-black text-black"><MessageCircle size={16} /> Chamar no WhatsApp</a>}
-            {website && <a href={website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black text-black"><Globe size={16} /> Visitar site <ExternalLink size={12} /></a>}
+            {whatsapp && <a href={whatsapp} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex items-center gap-2 rounded-full bg-[#00E676] px-5 py-3 text-sm font-black text-black"><MessageCircle size={16} /> Chamar no WhatsApp</a>}
+            {website && <a href={website} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black text-black"><Globe size={16} /> Visitar site <ExternalLink size={12} /></a>}
             <button onClick={() => onBack(`/vitrine/${encodeURIComponent(post.companySlug)}`)} className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-3 text-sm font-bold text-white">Ver a marca</button>
             <button onClick={share} className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-3 text-sm font-bold text-white"><Share2 size={15} /> {copied ? 'Link copiado' : 'Compartilhar'}</button>
           </div>

@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Archive, CreditCard, ExternalLink, Newspaper, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { Activity, Archive, CreditCard, ExternalLink, Image as ImageIcon, Newspaper, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 
 const fmt = (value?: string | null) => value ? new Date(value).toLocaleString('pt-BR') : '—';
 
-interface VitrinePostRow { id: string; title: string; slug: string; companySlug: string; companyName: string; status: string; angleLabel: string; publishedAt: string }
+interface VitrinePostRow { id: string; title: string; slug: string; companySlug: string; companyName: string; status: string; angleLabel: string; publishedAt: string; imageUrl?: string | null; imageGenerated?: boolean }
 
 export const AdminVitrinePosts: React.FC<{ onFeedback: (message: string) => void }> = ({ onFeedback }) => {
   const [posts, setPosts] = useState<VitrinePostRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
   const load = async () => {
     setLoading(true);
     try { setPosts((await apiRequest<{ posts: VitrinePostRow[] }>('/api/admin/vitrine-posts')).posts || []); }
@@ -21,10 +22,17 @@ export const AdminVitrinePosts: React.FC<{ onFeedback: (message: string) => void
   };
   return (
     <section className="froc-panel">
-      <div className="mb-4 flex items-center justify-between"><h3 className="froc-section-title flex items-center gap-2"><Newspaper size={15} className="text-[#FFD400]" /> Posts diários da Vitrine ({posts.length})</h3><button onClick={() => void load()} className="froc-secondary" aria-label="Atualizar"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button></div>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h3 className="froc-section-title flex items-center gap-2"><Newspaper size={15} className="text-[#FFD400]" /> Posts diários da Vitrine ({posts.length})</h3>
+        <div className="flex gap-2">
+          <button disabled={generating} onClick={async () => { setGenerating(true); await act(apiRequest('/api/admin/posts/generate-images', { method: 'POST', body: { limit: 4, retryFailed: true }, timeoutMs: 5 * 60_000 })); setGenerating(false); }} className="froc-primary inline-flex items-center gap-1.5"><ImageIcon size={13} /> {generating ? 'Criando imagens…' : 'Criar imagens que faltam'}</button>
+          <button onClick={() => void load()} className="froc-secondary" aria-label="Atualizar"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
+        </div>
+      </div>
       <div className="max-h-[560px] space-y-2 overflow-auto">
         {posts.map((p) => (
           <div key={p.id} className="flex flex-col gap-2 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 lg:flex-row lg:items-center">
+            {p.imageUrl ? <img src={p.imageUrl} alt="" className="h-14 w-24 shrink-0 rounded-lg object-cover" /> : <span className="grid h-14 w-24 shrink-0 place-items-center rounded-lg bg-black text-[10px] text-slate-500">sem imagem</span>}
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold text-white">{p.title}</p>
               <p className="text-[11px] text-slate-500">{p.companyName} · {p.angleLabel} · {fmt(p.publishedAt)} · <span className={p.status === 'published' ? 'text-[#00E676]' : 'text-amber-300'}>{p.status === 'published' ? 'publicado' : 'arquivado'}</span></p>
@@ -93,5 +101,49 @@ export const AdminActivity: React.FC<{ onFeedback: (message: string) => void }> 
         <div className="max-h-[480px] space-y-1.5 overflow-auto">{data.transactions.map((t) => <p key={t.id} className="text-[11px] text-slate-400"><span className={Number(t.amount) < 0 ? 'text-rose-300' : 'text-[#00E676]'}>{Number(t.amount) > 0 ? '+' : ''}{t.amount}</span> · {t.source} · {fmt(t.timestamp)}</p>)}{!data.transactions.length && <p className="text-xs text-slate-500">Sem registros.</p>}</div>
       </section>
     </div>
+  );
+};
+
+interface VoiceCheck {
+  keyConfigured: boolean;
+  liveToken: { ok: boolean; model: string; detail: string };
+  tts: { ok: boolean; model: string; voice: string; detail: string };
+}
+
+/** Diagnóstico real do microfone/voz: testa a chave Gemini, o token Live e a voz neural. */
+export const AdminVoiceCheck: React.FC = () => {
+  const [result, setResult] = useState<VoiceCheck | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const run = async () => {
+    setLoading(true); setError('');
+    try { setResult(await apiRequest<VoiceCheck>('/api/admin/voice/check', { timeoutMs: 90_000 })); }
+    catch (err: any) { setError(err?.message || 'Falha ao testar a voz.'); }
+    finally { setLoading(false); }
+  };
+  const row = (ok: boolean, title: string, detail: string) => (
+    <div className={`rounded-2xl border p-3 ${ok ? 'border-[#00E676]/30 bg-[#00E676]/[0.05]' : 'border-rose-500/30 bg-rose-500/[0.06]'}`}>
+      <p className={`text-xs font-bold ${ok ? 'text-[#00E676]' : 'text-rose-300'}`}>{ok ? '✓' : '✕'} {title}</p>
+      <p className="mt-1 break-words text-[11px] text-slate-400">{detail}</p>
+    </div>
+  );
+  return (
+    <section className="froc-panel">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="froc-section-title flex items-center gap-2"><Activity size={15} className="text-[#FF2D87]" /> Diagnóstico da voz (microfone)</h3>
+          <p className="mt-1 text-xs text-slate-400">Testa de verdade a chave Gemini, a escuta ao vivo e a voz neural usadas na tela da IA.</p>
+        </div>
+        <button onClick={() => void run()} disabled={loading} className="froc-primary shrink-0">{loading ? 'Testando…' : 'Testar voz agora'}</button>
+      </div>
+      {error && <p className="mt-3 text-xs text-rose-300">{error}</p>}
+      {result && (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {row(result.keyConfigured, 'Chave GEMINI_API_KEY', result.keyConfigured ? 'Configurada no servidor.' : 'Ausente: configure GEMINI_API_KEY na Vercel.')}
+          {row(result.liveToken.ok, `Escuta ao vivo (${result.liveToken.model})`, result.liveToken.ok ? result.liveToken.detail : `${result.liveToken.detail} — o site usa o reconhecimento do navegador como reserva.`)}
+          {row(result.tts.ok, `Voz neural (${result.tts.model} · ${result.tts.voice})`, result.tts.ok ? result.tts.detail : `${result.tts.detail} — o site usa a voz do navegador como reserva.`)}
+        </div>
+      )}
+    </section>
   );
 };

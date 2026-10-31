@@ -4,6 +4,7 @@ import { cleanupStaleReservations, getEffectiveWallet, getWallet } from './credi
 import { getPlanEntitlements } from './plans.js';
 import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
 import { processVitrineDailyPosts } from './vitrineDaily.js';
+import { backfillPostImages, createPostImage } from './postImages.js';
 import { baseUrl, pingIndexNow } from './seoEngine.js';
 import {
   getProviderAutoPublishReason,
@@ -674,12 +675,13 @@ async function processAutoBlog(): Promise<number> {
     const generated = await generatePlatformArticle(topics[index]);
     const article = generated.article || {};
     const id = newId('blog');
+    const image = await createPostImage({ title: String(article.title || topics[index]), summary: String(article.summary || article.metaDescription || ''), keyword: Array.isArray(article.tags) ? String(article.tags[0] || '') : '', category: String(article.category || 'Marketing & IA'), folder: 'posts/magazine' });
     const slugBase = String(article.suggestedSlug || article.title || topics[index]);
     const slug = `${slugBase.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,70)}-${today.replace(/-/g,'')}`;
     const post = {
       id, title: String(article.title || 'Froc Magazine').slice(0, 180), slug,
       summary: String(article.summary || article.metaDescription || '').slice(0, 500),
-      content: String(article.content || '').slice(0, 120_000), featuredImageUrl: `${baseUrl()}/og-froc.jpg`, author: config.blog.author,
+      content: String(article.content || '').slice(0, 120_000), featuredImageUrl: image?.imageUrl || `${baseUrl()}/og-froc.jpg`, imageAlt: image?.imageAlt || String(article.title || ''), author: config.blog.author,
       category: String(article.category || 'Marketing & IA').slice(0, 100),
       tags: Array.isArray(article.tags) ? article.tags.slice(0, 12).map((x:any)=>String(x).slice(0,80)) : ['Marketing','IA'],
       seoTitle: String(article.title || '').slice(0, 70), seoDescription: String(article.metaDescription || article.summary || '').slice(0, 180),
@@ -893,6 +895,7 @@ export async function processSchedulerTick() {
   let autopilot = 0;
   let autoBlog = 0;
   let vitrineDaily: { created: number; pending: number; errors: number } = { created: 0, pending: 0, errors: 0 };
+  let postImages: { generated: number; pending: number; failed: number } = { generated: 0, pending: 0, failed: 0 };
 
   try {
     // Step 1: Cleanup stale reservations
@@ -927,9 +930,9 @@ export async function processSchedulerTick() {
       console.error('[Scheduler] Erro em processPendingVideoJobs:', err);
     }
 
-    // Step 5: Process autopilot
+    // Step 5: Autopilot antigo (desligado por padrão: a Froc.IA conversacional substituiu esta função)
     try {
-      autopilot = await processAutopilot();
+      autopilot = config.legacyAutopilotEnabled ? await processAutopilot() : 0;
     } catch (err: any) {
       errors.autopilot = err?.message || String(err);
       console.error('[Scheduler] Erro em processAutopilot:', err);
@@ -951,6 +954,14 @@ export async function processSchedulerTick() {
       console.error('[Scheduler] Erro em processVitrineDailyPosts:', err);
     }
 
+    // Step 8: Imagens que faltam nos posts já publicados (lotes pequenos por ciclo)
+    try {
+      postImages = await backfillPostImages();
+    } catch (err: any) {
+      errors.postImages = err?.message || String(err);
+      console.error('[Scheduler] Erro em backfillPostImages:', err);
+    }
+
     return {
       skipped: false,
       releasedReservations,
@@ -960,6 +971,7 @@ export async function processSchedulerTick() {
       autopilot,
       autoBlog,
       vitrineDaily,
+      postImages,
       errors: Object.keys(errors).length > 0 ? errors : undefined,
       processedAt: nowIso()
     };

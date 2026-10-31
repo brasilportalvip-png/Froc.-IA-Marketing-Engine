@@ -147,6 +147,7 @@ export async function createLiveTranscriptionToken(): Promise<{ token: string; m
     console.error('[Froc Voz] Token Live recusado pelo provedor:', response.status, message);
     const error: any = new Error('Não foi possível iniciar a escuta em tempo real.');
     error.statusCode = 503;
+    error.providerMessage = `HTTP ${response.status}: ${message || 'sem detalhes'}`;
     throw error;
   }
   const result: any = await response.json();
@@ -156,4 +157,30 @@ export async function createLiveTranscriptionToken(): Promise<{ token: string; m
     throw error;
   }
   return { token: String(result.name), model: LIVE_TRANSCRIBE_MODEL, expiresAt };
+}
+
+/** Diagnóstico real da voz (painel admin): testa a chave, o token Live e a voz neural. */
+export async function diagnoseVoice(): Promise<{
+  keyConfigured: boolean;
+  liveToken: { ok: boolean; model: string; detail: string };
+  tts: { ok: boolean; model: string; voice: string; detail: string };
+}> {
+  const keyConfigured = Boolean(String(config.geminiApiKey || '').trim());
+  const liveToken = { ok: false, model: LIVE_TRANSCRIBE_MODEL, detail: '' };
+  const tts = { ok: false, model: speechModel(), voice: speechVoice(), detail: '' };
+  try {
+    await createLiveTranscriptionToken();
+    liveToken.ok = true;
+    liveToken.detail = 'Token efêmero emitido com sucesso.';
+  } catch (error: any) {
+    liveToken.detail = String(error?.providerMessage || error?.message || error).slice(0, 400);
+  }
+  try {
+    const result = await synthesizeSpeech('Olá! Esta é a voz da Froc.IA.');
+    tts.ok = Boolean(result.audioBase64);
+    tts.detail = tts.ok ? `Áudio gerado (${result.mimeType}).` : 'O provedor não devolveu áudio.';
+  } catch (error: any) {
+    tts.detail = String(error?.message || error).replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED]').slice(0, 400);
+  }
+  return { keyConfigured, liveToken, tts };
 }

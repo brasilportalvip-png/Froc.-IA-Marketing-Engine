@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff, FolderKanban, Loader2, Pencil, PlusCircle, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 
-interface AdminCompany { id: string; name: string; slug: string; userId: string; ownerName: string; ownerEmail: string; category: string; city: string; state: string; website: string; whatsapp: string; description: string; isPublicInVitrine: boolean; vitrinePosts: number; updatedAt: string }
+interface AdminCompany { id: string; name: string; slug: string; userId: string; ownerName: string; ownerEmail: string; category: string; city: string; state: string; website: string; whatsapp: string; androidApp: string; iosApp: string; description: string; isPublicInVitrine: boolean; vitrinePosts: number; clicks?: { total: number; site: number; app: number; whatsapp: number }; updatedAt: string }
 interface UserOption { id: string; name: string; email: string }
 
-const EMPTY = { name: '', userId: '', description: '', website: '', whatsapp: '', city: '', state: '', category: '', isPublicInVitrine: true };
+const EMPTY = { name: '', userId: '', description: '', website: '', whatsapp: '', androidApp: '', iosApp: '', city: '', state: '', category: '', isPublicInVitrine: true };
 
 export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> = ({ onFeedback }) => {
   const [companies, setCompanies] = useState<AdminCompany[]>([]);
@@ -43,7 +43,7 @@ export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> 
   const startEdit = (c: AdminCompany) => {
     setEditing(c.id);
     setShowForm(true);
-    setForm({ name: c.name, userId: c.userId, description: c.description, website: c.website, whatsapp: c.whatsapp, city: c.city, state: c.state, category: c.category, isPublicInVitrine: c.isPublicInVitrine });
+    setForm({ name: c.name, userId: c.userId, description: c.description, website: c.website, whatsapp: c.whatsapp, androidApp: c.androidApp || '', iosApp: c.iosApp || '', city: c.city, state: c.state, category: c.category, isPublicInVitrine: c.isPublicInVitrine });
   };
 
   const save = async (event: React.FormEvent) => {
@@ -74,12 +74,14 @@ export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> 
           <div className="flex items-center justify-between"><p className="text-sm font-bold text-white">{editing ? 'Editar projeto' : 'Novo projeto'}</p><button type="button" onClick={() => { setShowForm(false); setEditing(null); }} aria-label="Fechar"><X size={15} className="text-slate-400" /></button></div>
           <div className="grid gap-2 sm:grid-cols-2">
             {field('name', 'Nome do projeto / marca')}
-            <select required value={form.userId} onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))} className="froc-input" aria-label="Dono do projeto">
-              <option value="">Dono do projeto…</option>
+            <select value={form.userId} onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))} className="froc-input" aria-label="Dono do projeto">
+              <option value="">Eu (administrador) — sem limite</option>
               {users.map((u) => <option key={u.id} value={u.id}>{u.name || 'Sem nome'} — {u.email}</option>)}
             </select>
             {field('website', 'Site (https://…)')}
             {field('whatsapp', 'WhatsApp')}
+            {field('androidApp', 'App na Google Play (opcional)')}
+            {field('iosApp', 'App na App Store (opcional)')}
             {field('city', 'Cidade')}
             {field('state', 'Estado')}
             {field('category', 'Categoria')}
@@ -95,7 +97,7 @@ export const AdminProjects: React.FC<{ onFeedback: (message: string) => void }> 
           <div key={c.id} className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 lg:flex-row lg:items-center">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold text-white">{c.name} {c.isPublicInVitrine && <span className="ml-1 rounded bg-[#00E676]/15 px-1.5 text-[9px] font-black text-[#00E676]">VITRINE</span>}</p>
-              <p className="text-[11px] text-slate-500">{c.ownerName || '—'} · {c.ownerEmail} · {[c.city, c.state].filter(Boolean).join(' - ') || 'sem cidade'} · {c.vitrinePosts} posts</p>
+              <p className="text-[11px] text-slate-500">{c.ownerName || '—'} · {c.ownerEmail} · {[c.city, c.state].filter(Boolean).join(' - ') || 'sem cidade'} · {c.vitrinePosts} posts · {c.clicks?.total || 0} cliques (site {c.clicks?.site || 0} · app {c.clicks?.app || 0} · WhatsApp {c.clicks?.whatsapp || 0}){(c.androidApp || c.iosApp) ? ' · 📱 tem app' : ''}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               {c.isPublicInVitrine && <a href={`/vitrine/${encodeURIComponent(c.slug)}`} target="_blank" rel="noreferrer" className="froc-secondary text-[11px]">Ver</a>}

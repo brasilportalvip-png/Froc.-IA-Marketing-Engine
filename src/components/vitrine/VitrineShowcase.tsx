@@ -5,7 +5,7 @@ import { apiRequest } from '../../lib/api';
 
 export interface VitrinePostSummary {
   id: string; companyId: string; companySlug: string; companyName: string; date: string; title: string; slug: string;
-  summary: string; angleLabel: string; imageUrl: string | null; location: string | null; publishedAt: string;
+  summary: string; angleLabel: string; imageUrl: string | null; imageAlt?: string; location: string | null; publishedAt: string;
 }
 
 interface Props {
@@ -175,6 +175,7 @@ export const VitrineShowcase: React.FC<Props> = ({ companies, onOpenCompany, onO
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {posts.slice(0, 6).map((post, index) => (
                 <TiltCard key={post.id} accent={ACCENTS[(index + 1) % 3]} onClick={() => onOpenPost(post.companySlug, post.slug)} className="p-5">
+                  {post.imageUrl && <img src={post.imageUrl} alt={post.imageAlt || post.title} loading="lazy" className="-mx-5 -mt-5 mb-4 aspect-video w-[calc(100%+2.5rem)] max-w-none object-cover" />}
                   <div className="flex items-center justify-between text-[11px] text-neutral-400">
                     <span className="font-bold text-white">{post.companyName}</span>
                     <span className="inline-flex items-center gap-1"><CalendarDays size={11} /> {new Date(post.publishedAt).toLocaleDateString('pt-BR')}</span>
@@ -233,6 +234,7 @@ export const VitrineShowcase: React.FC<Props> = ({ companies, onOpenCompany, onO
                     <p className="mt-3 line-clamp-3 text-xs leading-5 text-neutral-400">{company.description || 'Conheça esta marca na Vitrine Froc.IA.'}</p>
                     <div className="mt-4 flex items-center gap-2 text-[10px] font-bold">
                       <span className="inline-flex items-center gap-1 rounded-full bg-[#00E676]/10 px-2 py-1 text-[#00E676]"><Zap size={10} /> Post diário</span>
+                      {(company.androidApp || company.iosApp) && <span className="inline-flex items-center gap-1 rounded-full bg-[#FFD400]/10 px-2 py-1 text-[#FFD400]">📱 App</span>}
                       {daily > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-[#FF2D87]/10 px-2 py-1 text-[#ff7ab3]"><TrendingUp size={10} /> {daily} recentes</span>}
                     </div>
                   </TiltCard>

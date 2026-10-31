@@ -107,9 +107,16 @@ export const config = {
     bingSiteVerification: env('BING_SITE_VERIFICATION'),
     urlsPerSitemap: Math.min(Math.max(Number(env('SITEMAP_URLS_PER_FILE', '1000')) || 1000, 50), 50_000)
   },
+  // Autopilot antigo: sem tela no painel atual, fica desligado para não gastar créditos de forma invisível.
+  legacyAutopilotEnabled: env('LEGACY_AUTOPILOT_ENABLED', 'false').toLowerCase() === 'true',
+  // Imagem criada pela IA para cada post (Vitrine + Magazine), ligada ao nicho do projeto.
+  postImages: {
+    enabled: env('POST_IMAGES_ENABLED', 'true').toLowerCase() === 'true',
+    perTick: Math.min(Math.max(Number(env('POST_IMAGES_PER_TICK', '2')) || 2, 0), 20)
+  },
   vitrineDaily: {
     enabled: env('VITRINE_DAILY_POSTS_ENABLED', 'true').toLowerCase() === 'true',
-    perTick: Math.min(Math.max(Number(env('VITRINE_DAILY_POSTS_PER_TICK', '4')) || 4, 1), 25)
+    perTick: Math.min(Math.max(Number(env('VITRINE_DAILY_POSTS_PER_TICK', '2')) || 2, 1), 25)
   },
   social: {
     meta: {
@@ -143,22 +150,22 @@ export const config = {
     {
       id: 'plan_start', name: 'START', price: 49.0, period: 'mês', credits: 100,
       bonusCredits: 10, totalCredits: 110, popular: false,
-      features: ['110 créditos mensais incluídos', 'Até 2 empresas cadastradas', 'Criação de posts, legendas e CTAs', 'Análise de SEO básica', 'Agendamento de publicações', 'Acesso à Vitrine Froc']
+      features: ['110 créditos mensais incluídos', 'Até 2 marcas', 'Froc.IA por texto e voz', 'Posts, legendas e CTAs com gatilhos', 'Vitrine com 1 post estratégico por dia', 'SEO local por cidade e bairro']
     },
     {
       id: 'plan_pro', name: 'PRO', price: 99.9, period: 'mês', credits: 210,
       bonusCredits: 20, totalCredits: 230, popular: true,
-      features: ['230 créditos mensais incluídos', 'Até 5 empresas cadastradas', 'Motor Froc AI completo', 'SEO inteligente', 'Autopilot com aprovação manual', 'Artigos para blog', 'Conexões sociais', 'Suporte prioritário']
+      features: ['230 créditos mensais incluídos', 'Até 5 marcas', 'Froc.IA com voz neural', 'Imagens e roteiros de vídeo com IA', 'Artigos SEO para o Google', 'Vitrine com post diário + IndexNow', 'Suporte prioritário']
     },
     {
       id: 'plan_business', name: 'BUSINESS', price: 199.9, period: 'mês', credits: 450,
       bonusCredits: 30, totalCredits: 480, popular: false,
-      features: ['480 créditos mensais incluídos', 'Até 15 empresas cadastradas', 'Autopilot automático', 'Campanhas multicanal', 'Froc Magazine', 'SEO técnico e Schema', 'Analytics consolidado']
+      features: ['480 créditos mensais incluídos', 'Até 15 marcas', 'Tudo do PRO', 'Estratégias completas de 30 dias', 'SEO técnico e dados estruturados', 'Segmentação por país, cidade, bairro e rua', 'Prioridade na Vitrine']
     },
     {
       id: 'plan_agency', name: 'AGENCY', price: 399.9, period: 'mês', credits: 900,
       bonusCredits: 100, totalCredits: 1000, popular: false,
-      features: ['1.000 créditos mensais incluídos', 'Empresas ilimitadas', 'Prioridade de processamento', 'Autopilot multi-marca', 'Roteiros e prompts avançados', 'Webhooks e integrações', 'Gerente de conta dedicado']
+      features: ['1.000 créditos mensais incluídos', 'Marcas ilimitadas', 'Tudo do BUSINESS', 'Ideal para agências e multi-marcas', 'Prioridade de processamento', 'Gerente de conta dedicado']
     }
   ],
   creditCosts: CREDIT_COSTS

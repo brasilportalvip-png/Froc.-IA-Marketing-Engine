@@ -22,6 +22,7 @@ export const CompanyDailyPosts: React.FC<{ slug: string; onOpen: (path: string) 
       <div className="mt-5 grid gap-3 md:grid-cols-2">
         {posts.map((post) => (
           <button key={post.id} onClick={() => onOpen(`/vitrine/${encodeURIComponent(post.companySlug)}/${encodeURIComponent(post.slug)}`)} className="group rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:-translate-y-0.5 hover:border-[#FFD400]/50">
+            {post.imageUrl && <img src={post.imageUrl} alt={post.imageAlt || post.title} loading="lazy" className="mb-3 aspect-video w-full rounded-xl object-cover" />}
             <p className="flex items-center gap-1 text-[11px] text-neutral-400"><CalendarDays size={11} /> {new Date(post.publishedAt).toLocaleDateString('pt-BR')} {post.angleLabel && <span className="ml-1 text-[#FFD400]">· {post.angleLabel}</span>}</p>
             <p className="mt-1.5 line-clamp-2 text-sm font-black text-white">{post.title}</p>
             <p className="mt-1 line-clamp-2 text-xs text-neutral-400">{post.summary}</p>

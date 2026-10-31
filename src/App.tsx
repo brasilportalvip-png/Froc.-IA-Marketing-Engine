@@ -11,21 +11,10 @@ import { OfflineBanner } from './components/OfflineBanner';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { DashboardPage } from './pages/DashboardPage';
 import { MyCompanyPage } from './pages/MyCompanyPage';
-import { FrocIaPage } from './pages/FrocIaPage';
-import { CreateContentPage } from './pages/CreateContentPage';
-import { CreateImagePage } from './pages/CreateImagePage';
-import { CreateVideoPage } from './pages/CreateVideoPage';
-import { CreateArticlePage } from './pages/CreateArticlePage';
-import { SeoPage } from './pages/SeoPage';
-import { CampaignsPage } from './pages/CampaignsPage';
-import { CalendarPage } from './pages/CalendarPage';
-import { SocialNetworksPage } from './pages/SocialNetworksPage';
-import { AutopilotPage } from './pages/AutopilotPage';
 import { PlansPage } from './pages/PlansPage';
 import { CreditsPage } from './pages/CreditsPage';
 import { VitrinePage } from './pages/VitrinePage';
 import { ContentsLibraryPage } from './pages/ContentsLibraryPage';
-import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { SupportPage } from './pages/SupportPage';
 import { AdminPage } from './pages/AdminPage';
@@ -33,7 +22,7 @@ import { LegalPage } from './pages/LegalPage';
 import { ConciergeHome } from './pages/ConciergeHome';
 import { PublicTopBar } from './components/PublicTopBar';
 import { PostsPage } from './pages/PostsPage';
-import type { Campaign, Company, ContentItem, ScheduledPost, User, Wallet } from './types';
+import type { Company, ContentItem, User, Wallet } from './types';
 import { ApiRequestError, apiRequest, isApiAbortError } from './lib/api';
 import { auth } from './lib/firebase';
 
@@ -43,18 +32,7 @@ const TAB_PATH: Record<string, string> = {
   empresa: '/empresa',
   vitrine: '/vitrine',
   posts: '/posts',
-  'froc-ia': '/froc-ia',
-  autopilot: '/autopilot',
-  'criar-conteudo': '/criar-conteudo',
-  'criar-imagem': '/criar-imagem',
-  'criar-video': '/criar-video',
-  'criar-artigo': '/criar-artigo',
-  seo: '/seo',
-  campanhas: '/campanhas',
-  calendario: '/calendario',
-  'redes-sociais': '/redes-sociais',
   conteudos: '/conteudos',
-  analytics: '/analytics',
   planos: '/planos',
   creditos: '/creditos',
   perfil: '/perfil',
@@ -62,10 +40,22 @@ const TAB_PATH: Record<string, string> = {
   admin: '/admin'
 };
 
+// Endereços antigos (ferramentas que agora a Froc.IA executa pela conversa) levam à IA.
 const TAB_ALIASES: Record<string, string> = {
-  estrategia: 'froc-ia',
-  configuracoes: 'perfil',
-  redes: 'redes-sociais'
+  estrategia: 'home',
+  'froc-ia': 'home',
+  autopilot: 'home',
+  'criar-conteudo': 'home',
+  'criar-imagem': 'home',
+  'criar-video': 'home',
+  'criar-artigo': 'home',
+  seo: 'home',
+  campanhas: 'home',
+  calendario: 'home',
+  'redes-sociais': 'dashboard',
+  redes: 'dashboard',
+  analytics: 'dashboard',
+  configuracoes: 'perfil'
 };
 
 const PUBLIC_TABS = new Set(['home', 'vitrine', 'posts', 'planos', 'legal']);
@@ -101,8 +91,6 @@ export default function App() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
   const [contentItems, setContentItems] = useState<ContentItem[]>([]);
   const [currentTab, setCurrentTab] = useState(initialRoute.tab);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -147,8 +135,6 @@ export default function App() {
     setWallet(null);
     setCompanies([]);
     setSelectedCompany(null);
-    setCampaigns([]);
-    setScheduledPosts([]);
     setContentItems([]);
   }, []);
 
@@ -234,28 +220,6 @@ export default function App() {
     }
   }, [canCommit, reportLoadFailure]);
 
-  const refreshCampaigns = useCallback(async (
-    signal: AbortSignal | undefined = tenantControllerRef.current?.signal,
-    companyId: string | undefined = selectedCompanyRef.current?.id
-  ) => {
-    const uid = auth.currentUser?.uid;
-    if (!uid || !companyId) {
-      if (mountedRef.current) setCampaigns([]);
-      return;
-    }
-    try {
-      const data = await apiRequest<{ campaigns: Campaign[] }>(
-        `/api/campaigns?companyId=${encodeURIComponent(companyId)}`,
-        { signal }
-      );
-      if (canCommit(uid, signal) && selectedCompanyRef.current?.id === companyId) {
-        setCampaigns(data.campaigns || []);
-      }
-    } catch (error) {
-      reportLoadFailure('Campanhas', error);
-    }
-  }, [canCommit, reportLoadFailure]);
-
   const refreshContents = useCallback(async (
     signal: AbortSignal | undefined = tenantControllerRef.current?.signal,
     companyId: string | undefined = selectedCompanyRef.current?.id
@@ -278,28 +242,6 @@ export default function App() {
     }
   }, [canCommit, reportLoadFailure]);
 
-  const refreshSchedule = useCallback(async (
-    signal: AbortSignal | undefined = tenantControllerRef.current?.signal,
-    companyId: string | undefined = selectedCompanyRef.current?.id
-  ) => {
-    const uid = auth.currentUser?.uid;
-    if (!uid || !companyId) {
-      if (mountedRef.current) setScheduledPosts([]);
-      return;
-    }
-    try {
-      const data = await apiRequest<{ scheduledPosts?: ScheduledPost[]; scheduled?: ScheduledPost[] }>(
-        `/api/content/scheduled?companyId=${encodeURIComponent(companyId)}`,
-        { signal }
-      );
-      if (canCommit(uid, signal) && selectedCompanyRef.current?.id === companyId) {
-        setScheduledPosts(data.scheduledPosts || data.scheduled || []);
-      }
-    } catch (error) {
-      reportLoadFailure('Agenda', error);
-    }
-  }, [canCommit, reportLoadFailure]);
-
   const handleSelectCompany = useCallback(async (company: Company | null) => {
     tenantControllerRef.current?.abort();
     const tenantEpoch = ++tenantEpochRef.current;
@@ -307,25 +249,19 @@ export default function App() {
     tenantControllerRef.current = controller;
     selectedCompanyRef.current = company;
     setSelectedCompany(company);
-    setCampaigns([]);
-    setScheduledPosts([]);
     setContentItems([]);
 
     const uid = auth.currentUser?.uid;
     if (!company || !uid) return;
 
-    await Promise.all([
-      refreshCampaigns(controller.signal, company.id),
-      refreshContents(controller.signal, company.id),
-      refreshSchedule(controller.signal, company.id)
-    ]);
+    await refreshContents(controller.signal, company.id);
 
     if (
       tenantEpochRef.current !== tenantEpoch ||
       controller.signal.aborted ||
       auth.currentUser?.uid !== uid
     ) return;
-  }, [refreshCampaigns, refreshContents, refreshSchedule]);
+  }, [refreshContents]);
 
   const refreshCompanies = useCallback(async (
     signal?: AbortSignal,
@@ -471,37 +407,15 @@ export default function App() {
       case 'home':
         return <ConciergeHome user={user} wallet={wallet} selectedCompany={selectedCompany} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate} onRefreshWallet={() => { void refreshWallet(); }} onRefreshCompanies={() => { void refreshCompanies(); }}/>;
       case 'dashboard':
-        return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} campaigns={campaigns} scheduledPosts={scheduledPosts} onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>;
+        return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} contentItems={contentItems} onNavigate={navigate}/>;
       case 'empresa':
         return <MyCompanyPage selectedCompany={selectedCompany} companies={companies} onSelectCompany={handleSelectCompany} onRefreshCompanies={refreshCompanies}/>;
       case 'posts':
         return <PostsPage onStart={() => navigate('home')}/>;
       case 'vitrine':
         return <VitrinePage onNavigate={navigate}/>;
-      case 'froc-ia':
-        return <FrocIaPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
-      case 'autopilot':
-        return <AutopilotPage selectedCompany={selectedCompany} wallet={wallet} onNavigate={navigate}/>;
-      case 'criar-conteudo':
-        return <CreateContentPage companies={companies} selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
-      case 'criar-imagem':
-        return <CreateImagePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
-      case 'criar-video':
-        return <CreateVideoPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
-      case 'criar-artigo':
-        return <CreateArticlePage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet} onRefreshContents={refreshContents} onNavigate={navigate}/>;
-      case 'seo':
-        return <SeoPage selectedCompany={selectedCompany} wallet={wallet} onRefreshWallet={refreshWallet}/>;
-      case 'campanhas':
-        return <CampaignsPage campaigns={campaigns} selectedCompany={selectedCompany} onRefreshCampaigns={refreshCampaigns} onNavigate={navigate}/>;
-      case 'calendario':
-        return <CalendarPage scheduledPosts={scheduledPosts} contentItems={contentItems} selectedCompany={selectedCompany} onRefreshSchedule={refreshSchedule} onNavigate={navigate}/>;
-      case 'redes-sociais':
-        return <SocialNetworksPage selectedCompany={selectedCompany} onNavigate={navigate}/>;
       case 'conteudos':
         return <ContentsLibraryPage contentItems={contentItems} selectedCompany={selectedCompany} onRefreshContents={refreshContents} onNavigate={navigate}/>;
-      case 'analytics':
-        return <AnalyticsPage selectedCompany={selectedCompany} wallet={wallet} campaigns={campaigns} scheduledPosts={scheduledPosts} onNavigate={navigate}/>;
       case 'planos':
         return <PlansPage wallet={wallet} onRefreshWallet={refreshWallet} onNavigate={navigate}/>;
       case 'creditos':
@@ -518,19 +432,15 @@ export default function App() {
         return <ConciergeHome user={user} wallet={wallet} selectedCompany={selectedCompany} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate} onRefreshWallet={() => { void refreshWallet(); }} onRefreshCompanies={() => { void refreshCompanies(); }}/>;
     }
   }, [
-    campaigns,
     companies,
     contentItems,
     guardedTab,
     handleSelectCompany,
     navigate,
-    refreshCampaigns,
     refreshCompanies,
     refreshContents,
-    refreshSchedule,
     refreshWallet,
     reloadSession,
-    scheduledPosts,
     selectedCompany,
     user,
     wallet

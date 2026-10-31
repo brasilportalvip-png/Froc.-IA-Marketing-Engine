@@ -13,6 +13,7 @@ import {
   Search,
   Share2,
   ShoppingBag,
+  Smartphone,
   Store,
   Tag
 } from 'lucide-react';
@@ -506,7 +507,7 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
                 <a
                   target="_blank"
                   rel="noreferrer"
-                  href={`https://wa.me/${company.whatsapp.replace(/\D/g, '')}`}
+                  href={`/ir/${encodeURIComponent(company.slug)}/whatsapp`}
                   className="froc-primary flex w-full items-center justify-center gap-2 shadow-lg shadow-cyan-900/30"
                 >
                   <MessageSquare size={15} />
@@ -518,12 +519,22 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
                 <a
                   target="_blank"
                   rel="noreferrer"
-                  href={website}
+                  href={`/ir/${encodeURIComponent(company.slug)}/site`}
                   className="froc-secondary flex w-full items-center justify-center gap-2"
                 >
                   <Globe size={15} />
                   Acessar Loja / Website
                 </a>
+              )}
+
+              {(company.androidApp || company.iosApp) && (
+                <div className="rounded-2xl border border-[#00E676]/30 bg-[#00E676]/[0.06] p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-[#00E676]"><Smartphone size={12} /> Aplicativo oficial</div>
+                  <div className="grid gap-2">
+                    {company.androidApp && <a target="_blank" rel="nofollow noopener noreferrer" href={`/ir/${encodeURIComponent(company.slug)}/android`} className="flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-black text-black hover:bg-[#FFD400]">▶ Baixar na Google Play</a>}
+                    {company.iosApp && <a target="_blank" rel="nofollow noopener noreferrer" href={`/ir/${encodeURIComponent(company.slug)}/ios`} className="flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-black text-black hover:bg-[#FFD400]">Baixar na App Store</a>}
+                  </div>
+                </div>
               )}
 
               {social.length ? (

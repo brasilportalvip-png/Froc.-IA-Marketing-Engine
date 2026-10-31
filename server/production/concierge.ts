@@ -4,8 +4,8 @@
  * Todas as ferramentas ficam "escondidas": o cliente só conversa. A IA coleta
  * os dados, monta um plano com segmentação geográfica (país → estado → cidade →
  * bairros → ruas → raio), pede confirmação e, só então, executa as ações
- * reutilizando os motores já existentes (posts, imagens, vídeo, artigos,
- * estratégia, campanhas, vitrine e post diário).
+ * reutilizando os motores já existentes (posts, imagens, roteiros, artigos,
+ * estratégia, vitrine e post diário).
  */
 import { config } from '../config/index.js';
 import { FROC_AGENTS, selectAgentsForIntent, type FrocAgent } from '../../shared/agents.js';
@@ -24,8 +24,7 @@ export const CONCIERGE_ACTIONS = [
   'generate_image',
   'generate_video_script',
   'generate_strategy',
-  'generate_article',
-  'create_campaign'
+  'generate_article'
 ] as const;
 export type ConciergeActionType = (typeof CONCIERGE_ACTIONS)[number];
 
@@ -37,8 +36,7 @@ export const ACTION_LABELS: Record<ConciergeActionType, string> = {
   generate_image: 'Criar a imagem do anúncio',
   generate_video_script: 'Criar o roteiro do vídeo',
   generate_strategy: 'Montar a estratégia completa',
-  generate_article: 'Escrever artigo SEO para o Google',
-  create_campaign: 'Criar a campanha segmentada'
+  generate_article: 'Escrever artigo SEO para o Google'
 };
 
 export function actionCost(type: ConciergeActionType): number {
@@ -73,6 +71,8 @@ export interface ConciergeCollected {
   website: string;
   whatsapp: string;
   instagram: string;
+  androidApp: string;
+  iosApp: string;
   colors: string;
   targeting: ConciergeTargeting;
 }
@@ -115,6 +115,8 @@ export function normalizeCollected(raw: any, previous?: Partial<ConciergeCollect
     website: pick('website', 300),
     whatsapp: pick('whatsapp', 40),
     instagram: pick('instagram', 200),
+    androidApp: pick('androidApp', 300),
+    iosApp: pick('iosApp', 300),
     colors: pick('colors', 200),
     targeting: {
       country: s(t.country, 80) || s(pt.country, 80),
@@ -146,14 +148,15 @@ COMO VOCÊ TRABALHA:
 - Conversa curta, calorosa, confiante e direta. Português do Brasil. No máximo 2 perguntas por mensagem. Emojis com moderação.
 - Objetivo: entender a necessidade, coletar os dados essenciais, confirmar e criar a automação.
 - Dados essenciais: nome do negócio, o que vende (oferta), objetivo, público, REGIÃO (país, estado, cidade, bairros, ruas e raio em km — pergunte sempre a região quando for negócio local), formato desejado (foto, vídeo, texto ou carrossel), canais de contato reais (WhatsApp, site, Instagram) e cores/estilo se for criar imagem.
+- Pergunte uma vez, de forma leve, se a empresa tem APLICATIVO na Google Play ou App Store (é opcional). Se tiver, peça o link: os posts passam a direcionar para o site e para o app.
 - Assim que tiver o suficiente, apresente um RESUMO claro e pergunte "Posso criar?". Só marque readyToConfirm=true quando o resumo estiver pronto para confirmação.
-- Ações disponíveis para o plano: save_company, publish_vitrine, first_daily_post, generate_post, generate_image, generate_video_script, generate_strategy, generate_article, create_campaign.
+- Ações disponíveis para o plano: save_company, publish_vitrine, first_daily_post, generate_post, generate_image, generate_video_script, generate_strategy, generate_article.
 - Recomende sempre publish_vitrine (post diário automático + SEO) e generate_post. Inclua generate_image se o cliente quer foto, generate_video_script se quer vídeo, generate_article para dominar o Google, generate_strategy para planos completos.
 - Ética inegociável: nunca prometa posições garantidas no Google, nunca invente números, avaliações, descontos ou escassez.
 - quickReplies: 2 a 4 respostas curtas que o cliente pode tocar para responder rápido.
 
 Responda SOMENTE JSON válido neste formato:
-{"reply":"","quickReplies":[""],"collected":{"businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
+{"reply":"","quickReplies":[""],"collected":{"businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
 
@@ -239,7 +242,7 @@ async function saveContent(item: Record<string, any>) {
   return record;
 }
 
-async function ensureCompany(userId: string, companyId: string, collected: ConciergeCollected): Promise<{ company: any; created: boolean }> {
+async function ensureCompany(userId: string, companyId: string, collected: ConciergeCollected, isAdmin = false): Promise<{ company: any; created: boolean }> {
   const db = firestore();
   const targeting = collected.targeting;
   const patch = cleanObject({
@@ -249,6 +252,8 @@ async function ensureCompany(userId: string, companyId: string, collected: Conci
     brandTone: collected.tone || undefined,
     website: httpUrl(collected.website) || undefined,
     whatsapp: collected.whatsapp || undefined,
+    androidApp: /play\.google\.com/i.test(collected.androidApp) ? httpUrl(collected.androidApp) || undefined : undefined,
+    iosApp: /apps?\.apple\.com|itunes\.apple\.com/i.test(collected.iosApp) ? httpUrl(collected.iosApp) || undefined : undefined,
     city: targeting.city || undefined,
     state: targeting.state || undefined,
     country: targeting.country || undefined,
@@ -270,7 +275,7 @@ async function ensureCompany(userId: string, companyId: string, collected: Conci
 
   const existing = queryData<any>(await db.collection(COLLECTIONS.companies).where('userId', '==', userId).get());
   const wallet = await getWallet(userId);
-  if (existing.length >= getPlanEntitlements(wallet.planId).maxCompanies) {
+  if (!isAdmin && existing.length >= getPlanEntitlements(wallet.planId).maxCompanies) {
     if (existing[0]) {
       await db.collection(COLLECTIONS.companies).doc(existing[0].id).set(patch, { merge: true });
       return { company: { ...existing[0], ...patch }, created: false };
@@ -291,14 +296,14 @@ async function ensureCompany(userId: string, companyId: string, collected: Conci
   return { company, created: true };
 }
 
-export async function executeConciergePlan(data: { userId: string; companyId?: string; collected: any; actions: any }): Promise<{ company: any; results: ActionResult[]; creditsUsed: number }> {
+export async function executeConciergePlan(data: { userId: string; isAdmin?: boolean; companyId?: string; collected: any; actions: any }): Promise<{ company: any; results: ActionResult[]; creditsUsed: number }> {
   const collected = normalizeCollected(data.collected || {});
   const plan = buildPlan(data.actions, 'execução');
   const types = plan?.actions.map((action) => action.type) || ['save_company'];
   const results: ActionResult[] = [];
   let creditsUsed = 0;
 
-  const { company: initialCompany, created } = await ensureCompany(data.userId, s(data.companyId, 200), collected);
+  const { company: initialCompany, created } = await ensureCompany(data.userId, s(data.companyId, 200), collected, Boolean(data.isAdmin));
   let company = initialCompany;
   results.push({ type: 'save_company', label: ACTION_LABELS.save_company, ok: true, message: created ? `Marca "${company.name}" criada com a segmentação.` : `Perfil de "${company.name}" atualizado com a segmentação.`, data: { companyId: company.id } });
 
@@ -351,16 +356,6 @@ export async function executeConciergePlan(data: { userId: string; companyId?: s
         const item = await saveContent({ userId: data.userId, companyId: company.id, type: 'article', title: article.title || 'Artigo SEO', body: JSON.stringify(article).slice(0, 100_000), keywords: article.secondaryKeywords || [], creditsUsed: generated.creditsUsed || 0 });
         creditsUsed += Number(generated.creditsUsed || 0);
         results.push({ type, label, ok: true, message: 'Artigo SEO escrito.', credits: generated.creditsUsed, data: { contentId: item.id, title: article.title } });
-      } else if (type === 'create_campaign') {
-        const wallet = await getWallet(data.userId);
-        if (!getPlanEntitlements(wallet.planId).campaigns) {
-          results.push({ type, label, ok: false, message: 'Campanhas multicanal fazem parte dos planos BUSINESS e AGENCY. A segmentação já ficou salva na sua marca.' });
-          continue;
-        }
-        const id = newId('campaign');
-        const campaign = cleanObject({ id, userId: data.userId, companyId: company.id, name: `${company.name} — ${collected.targeting.city || 'Campanha Froc.IA'}`, objective: collected.objective || 'Captura de clientes', targetPlatforms: collected.platforms.length ? collected.platforms : ['Instagram', 'Google'], targetAudience: collected.audience, targeting: collected.targeting, budgetCredits: 0, startDate: nowIso(), status: 'active', contentItemIds: results.map((r) => r.data?.contentId).filter(Boolean), metrics: { reach: 0, clicks: 0, leads: 0, conversions: 0, shares: 0, comments: 0 }, createdAt: nowIso(), updatedAt: nowIso(), source: 'froc_concierge' });
-        await firestore().collection(COLLECTIONS.campaigns).doc(id).set(campaign);
-        results.push({ type, label, ok: true, message: 'Campanha segmentada criada e ativa.', data: { campaignId: id } });
       }
     } catch (error: any) {
       const message = String(error?.message || 'Falha ao executar.');

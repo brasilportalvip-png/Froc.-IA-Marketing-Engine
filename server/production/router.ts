@@ -5,17 +5,19 @@ import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, e
 import { addCredits, getWallet, listCreditTransactions, removeCreditsAdmin } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
-import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
-import { analyzeSeo } from './seo.js';
+import { generatePlatformArticle } from './ai.js';
+
 import { cancelSubscription, createCheckout, listUserSubscriptions, mercadoPagoConfigured, processMercadoPagoWebhook } from './payments.js';
 import { createOAuthUrl, createPinterestPin, disconnectSocial, getFacebookPageSelectionCandidates, getPinterestBoards, getProviderAutoPublishReason, getSocialReadiness, getTikTokUploadStatus, handleOAuthCallback, initTikTokDraftUpload, initYouTubeResumableUpload, isTextAutoPublishSupported, listConnections, MAX_TIKTOK_SANDBOX_VIDEO_SIZE, normalizeProvider, publishInstagramMedia, sanitizeOAuthPublicError, selectFacebookPage, TEXT_AUTO_PUBLISH_PROVIDERS, uploadTikTokDraftVideo, type SocialProvider } from './social.js';
-import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from './scheduler.js';
+import { getSchedulerHealth, processSchedulerTick } from './scheduler.js';
 import multer from 'multer';
 import { allIndexableUrls, buildRobotsTxt, buildSitemapIndexXml, getSeoEngineStatus, pingIndexNow } from './seoEngine.js';
 import { conciergeChat, executeConciergePlan, sanitizeMessages } from './concierge.js';
-import { cleanSpeechText, createLiveTranscriptionToken, NEURAL_SPEECH_CHANNELS, NEURAL_SPEECH_SAMPLE_RATE, synthesizeSpeech, synthesizeSpeechStream } from './speech.js';
+import { cleanSpeechText, createLiveTranscriptionToken, diagnoseVoice, NEURAL_SPEECH_CHANNELS, NEURAL_SPEECH_SAMPLE_RATE, synthesizeSpeech, synthesizeSpeechStream } from './speech.js';
 import { processVitrineDailyPosts, sanitizePublicVitrinePost } from './vitrineDaily.js';
 import { listAllPublicPosts } from './posts.js';
+import { appLinksOf } from './appLinks.js';
+import { backfillPostImages, createPostImage, resetFailedPostImages } from './postImages.js';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents.js';
 import { COLLECTIONS, cleanObject, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
 
@@ -123,7 +125,7 @@ export async function requireOwnedCompany(userId: string, companyId: string): Pr
 
 async function deleteCompanyData(userId: string, companyId: string): Promise<void> {
   const db = firestore();
-  const collections = [COLLECTIONS.contentItems, COLLECTIONS.campaigns, COLLECTIONS.scheduledPosts, COLLECTIONS.socialConnections, COLLECTIONS.seoReports, COLLECTIONS.autopilotConfigs];
+  const collections = [COLLECTIONS.contentItems, COLLECTIONS.vitrinePosts, COLLECTIONS.campaigns, COLLECTIONS.scheduledPosts, COLLECTIONS.socialConnections, COLLECTIONS.seoReports, COLLECTIONS.autopilotConfigs];
   for (const collection of collections) {
     while (true) {
       const snap = await db.collection(collection).where('userId', '==', userId).where('companyId', '==', companyId).limit(400).get();
@@ -354,7 +356,8 @@ router.post('/companies', requireAuth, asyncRoute(async (req: AuthenticatedReque
   if (!name) return res.status(400).json({ error: 'O nome da empresa é obrigatório.' });
   const current = await firestore().collection(COLLECTIONS.companies).where('userId', '==', req.user!.id).get();
   const wallet = await getWallet(req.user!.id);
-  if (current.size >= planCompanyLimit(wallet.planId)) return res.status(403).json({ error: 'Seu plano atingiu o limite de empresas. Faça upgrade para cadastrar outra marca.' });
+  // Administrador não tem limite de projetos.
+  if (req.user!.role !== 'admin' && current.size >= planCompanyLimit(wallet.planId)) return res.status(403).json({ error: 'Seu plano atingiu o limite de empresas. Faça upgrade para cadastrar outra marca.' });
   const id = newId('company');
   const baseSlug = slugify(name);
   const slug = `${baseSlug}-${id.slice(-6)}`;
@@ -448,8 +451,9 @@ router.delete('/companies/:id', requireAuth, asyncRoute(async (req: Authenticate
   const company = await requireOwnedCompany(req.user!.id, req.params.id);
   if (company.logoStoragePath) await getAdminStorage().bucket().file(String(company.logoStoragePath)).delete({ ignoreNotFound: true }).catch(() => undefined);
   await deleteCompanyData(req.user!.id, req.params.id);
+  await firestore().collection(COLLECTIONS.linkClicks).doc(req.params.id).delete();
   await firestore().collection(COLLECTIONS.companies).doc(req.params.id).delete();
-  res.json({ message: 'Empresa removida com sucesso.' });
+  res.json({ message: 'Empresa removida com sucesso, com posts e dados vinculados.' });
 }));
 
 // Credits
@@ -457,177 +461,10 @@ router.get('/credits/balance', requireAuth, asyncRoute(async (req: Authenticated
 router.get('/credits/transactions', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => res.json({ transactions: await listCreditTransactions(req.user!.id, Number(req.query.limit || 50)) })));
 router.get('/credits/history', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => res.json({ transactions: await listCreditTransactions(req.user!.id, Number(req.query.limit || 50)) })));
 
-// AI
+// IA (tabela pública de custos)
 router.get('/ai/costs', (_req, res) => res.json({ costs: config.creditCosts }));
 
-router.post('/ai/generate-post', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const topic = safeString(req.body?.topic, 5000);
-  if (!topic) return res.status(400).json({ error: 'O tema do post é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const generated = await generatePost({ userId: req.user!.id, company, topic, platform: safeString(req.body?.platform, 100), goal: safeString(req.body?.goal, 1000), tone: safeString(req.body?.tone, 500) });
-  const id = newId('content');
-  const contentItem = { id, userId: req.user!.id, companyId: company?.id || 'default', type: 'post', title: generated.result.headline, headline: generated.result.headline, body: generated.result.body, cta: generated.result.cta, hashtags: generated.result.hashtags || [], keywords: generated.result.keywords || [], visualPrompt: generated.result.visualPrompt || '', targetPlatform: safeString(req.body?.platform, 100) || 'Instagram', tone: safeString(req.body?.tone, 500), creditsUsed: generated.creditsUsed, status: 'saved', createdAt: nowIso(), updatedAt: nowIso() };
-  await firestore().collection(COLLECTIONS.contentItems).doc(id).set(contentItem);
-  res.json({ post: generated.result, contentItem, creditsUsed: generated.creditsUsed, modelUsed: generated.modelUsed });
-}));
-
-router.post('/ai/generate-strategy', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const companyId = safeString(req.body?.companyId, 200);
-  if (!companyId) return res.status(400).json({ error: 'Selecione uma empresa.' });
-  const company = await requireOwnedCompany(req.user!.id, companyId);
-  const generated = await generateStrategy({ userId: req.user!.id, company, timeframe: req.body?.timeframe === 'mes' ? 'mes' : 'semana', goal: safeString(req.body?.goal, 5000) });
-  res.json({ strategy: generated.result, creditsUsed: generated.creditsUsed, modelUsed: generated.modelUsed });
-}));
-
-router.post('/ai/generate-copy', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const prompt = safeString(req.body?.prompt, 5000);
-  if (!prompt) return res.status(400).json({ error: 'A instrução é obrigatória.' });
-  const type = ['cta','headline','caption','variations'].includes(req.body?.type) ? req.body.type : 'caption';
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const generated = await generateCopy({ userId: req.user!.id, company, type, prompt });
-  res.json({ text: generated.result, creditsUsed: generated.creditsUsed, modelUsed: generated.modelUsed });
-}));
-
-router.post('/ai/generate-carousel', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const topic = safeString(req.body?.topic, 5000);
-  if (!topic) return res.status(400).json({ error: 'O tema é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const generated = await generateCarousel({ userId: req.user!.id, company, topic, slidesCount: Number(req.body?.slidesCount || 5), goal: safeString(req.body?.goal, 2000) });
-  const id = newId('content');
-  const item = { id, userId: req.user!.id, companyId: company?.id || 'default', type: 'carousel', title: generated.result.carouselTitle || `Carrossel: ${topic}`, headline: generated.result.carouselTitle || '', body: generated.result.caption || '', carouselSlides: generated.result.slides || [], hashtags: generated.result.hashtags || [], keywords: [], creditsUsed: generated.creditsUsed, status: 'saved', targetPlatform: 'Instagram', createdAt: nowIso(), updatedAt: nowIso() };
-  await firestore().collection(COLLECTIONS.contentItems).doc(id).set(item);
-  res.json({ carousel: generated.result, contentItem: item, creditsUsed: generated.creditsUsed });
-}));
-
-router.post('/ai/generate-video-script', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const topic = safeString(req.body?.topic, 5000);
-  if (!topic) return res.status(400).json({ error: 'O tema do vídeo é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const generated = await generateVideoScript({ userId: req.user!.id, company, topic, durationSeconds: Number(req.body?.durationSeconds || 60), format: safeString(req.body?.format, 200) });
-  const id = newId('content');
-  const item = { id, userId: req.user!.id, companyId: company?.id || 'default', type: 'video_script', title: generated.result.scriptTitle || `Roteiro: ${topic}`, headline: generated.result.scriptTitle || '', body: generated.result.caption || '', videoScript: JSON.stringify(generated.result.scenes || []), cta: generated.result.callToAction || '', hashtags: generated.result.hashtags || [], keywords: [], creditsUsed: generated.creditsUsed, status: 'saved', targetPlatform: 'Reels / TikTok / Shorts', createdAt: nowIso(), updatedAt: nowIso() };
-  await firestore().collection(COLLECTIONS.contentItems).doc(id).set(item);
-  res.json({ videoScript: generated.result, script: generated.result, contentItem: item, creditsUsed: generated.creditsUsed });
-}));
-
-router.post('/ai/generate-image-prompt', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const theme = safeString(req.body?.theme, 5000);
-  if (!theme) return res.status(400).json({ error: 'A ideia ou tema da imagem é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const generated = await generateImagePrompt({ userId: req.user!.id, company, theme, style: safeString(req.body?.style, 2000) });
-  res.json({ imagePrompt: generated.result, creditsUsed: generated.creditsUsed });
-}));
-
-router.post('/ai/generate-image', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const theme = safeString(req.body?.theme, 5000);
-  if (!theme) return res.status(400).json({ error: 'A ideia ou tema da imagem é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const resolution = ['1K', '2K', '4K'].includes(req.body?.resolution) ? req.body.resolution : '1K';
-  const generated = await generateMarketingImage({
-    userId: req.user!.id,
-    company,
-    theme,
-    style: safeString(req.body?.style, 3000),
-    aspectRatio: safeString(req.body?.aspectRatio, 20),
-    resolution
-  });
-  const id = newId('content');
-  const item = {
-    id, userId: req.user!.id, companyId: company?.id || 'default', type: 'image',
-    title: safeString(req.body?.title, 300) || `Imagem IA (${resolution}) - ${theme.slice(0, 80)}`,
-    body: theme, hashtags: [], keywords: [], imageUrl: generated.imageUrl,
-    visualPrompt: safeString(req.body?.style, 3000), creditsUsed: generated.creditsUsed,
-    status: 'saved', createdAt: nowIso(), updatedAt: nowIso(),
-    metadata: { storagePath: generated.storagePath, mimeType: generated.mimeType, modelUsed: generated.modelUsed, resolution }
-  };
-  await firestore().collection(COLLECTIONS.contentItems).doc(id).set(cleanObject(item));
-  res.json({ image: generated, imageUrl: generated.imageUrl, contentItem: item, creditsUsed: generated.creditsUsed });
-}));
-
-router.post('/ai/generate-video-direction', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const prompt = safeString(req.body?.prompt || req.body?.topic, 5000);
-  if (!prompt) return res.status(400).json({ error: 'O briefing ou descrição do vídeo é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  
-  const direction = await generateVideoDirection({
-    userId: req.user!.id,
-    company,
-    prompt,
-    aspectRatio: req.body?.aspectRatio === '16:9' ? '16:9' : '9:16',
-    mood: safeString(req.body?.mood, 200),
-    cameraMotion: safeString(req.body?.cameraMotion, 200),
-    lighting: safeString(req.body?.lighting, 200)
-  });
-
-  res.json({ direction });
-}));
-
-router.post('/ai/generate-video', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const prompt = safeString(req.body?.prompt || req.body?.topic, 5000);
-  if (!prompt) return res.status(400).json({ error: 'O briefing ou descrição do vídeo é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  
-  const preset = ['demo_720p', 'pro_1080p', 'cinema_4k'].includes(req.body?.preset) ? req.body.preset : 'demo_720p';
-  const aspectRatio = req.body?.aspectRatio === '16:9' ? '16:9' : '9:16';
-  
-  const job = await startVideoGenerationJob({
-    userId: req.user!.id,
-    company,
-    prompt,
-    title: safeString(req.body?.title, 300),
-    preset,
-    aspectRatio,
-    initialImageBase64: typeof req.body?.initialImage === 'string' && req.body.initialImage.length > 50 ? req.body.initialImage : undefined,
-    cameraMotion: safeString(req.body?.cameraMotion, 200),
-    lighting: safeString(req.body?.lighting, 200),
-    mood: safeString(req.body?.mood, 200)
-  });
-
-  res.status(202).json({
-    message: 'Geração de vídeo com Veo 3.1 iniciada em segundo plano.',
-    job,
-    jobId: job.id,
-    status: job.status,
-    creditsReserved: job.creditsReserved
-  });
-}));
-
-router.get('/ai/video-jobs', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const companyId = req.query.companyId ? String(req.query.companyId) : undefined;
-  const jobs = await listUserVideoJobs(req.user!.id, companyId);
-  res.json({ jobs });
-}));
-
-router.get('/ai/video-jobs/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const job = await checkAndCompleteVideoJob(req.user!.id, req.params.id);
-  res.json({ job });
-}));
-
-router.post('/ai/video-jobs/:id/check', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const job = await checkAndCompleteVideoJob(req.user!.id, req.params.id);
-  res.json({ job });
-}));
-
-router.post('/ai/generate-article', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const topic = safeString(req.body?.topic, 5000);
-  if (!topic) return res.status(400).json({ error: 'O tema do artigo é obrigatório.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  const generated = await generateArticle({ userId: req.user!.id, company, topic, primaryKeyword: safeString(req.body?.primaryKeyword, 500), targetAudience: safeString(req.body?.targetAudience, 1000), tone: safeString(req.body?.tone, 500) });
-  const id = newId('content');
-  const item = { id, userId: req.user!.id, companyId: company?.id || 'default', type: 'article', title: generated.result.title || topic, headline: generated.result.title || topic, body: contentBodyFromArticle(generated.result), cta: generated.result.callToAction || '', hashtags: [], keywords: [safeString(req.body?.primaryKeyword, 500) || topic], creditsUsed: generated.creditsUsed, status: 'saved', createdAt: nowIso(), updatedAt: nowIso(), metadata: { metaDescription: generated.result.metaDescription, suggestedSlug: generated.result.suggestedSlug } };
-  await firestore().collection(COLLECTIONS.contentItems).doc(id).set(item);
-  res.json({ article: generated.result, contentItem: item, creditsUsed: generated.creditsUsed });
-}));
-
-// SEO
-router.post('/seo/analyze', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const url = safeString(req.body?.url, 2000);
-  if (!url) return res.status(400).json({ error: 'Informe a URL.' });
-  const company = await ownedCompany(req.user!.id, safeString(req.body?.companyId, 200));
-  res.json({ report: await analyzeSeo({ userId: req.user!.id, rawUrl: url, company }) });
-}));
-
-// Content library + calendar
+// Biblioteca de criações ("Minhas Criações")
 router.get('/content', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   let query: any = firestore().collection(COLLECTIONS.contentItems).where('userId', '==', req.user!.id);
   if (req.query.companyId) query = query.where('companyId', '==', String(req.query.companyId));
@@ -647,213 +484,6 @@ router.post('/content', requireAuth, asyncRoute(async (req: AuthenticatedRequest
   res.status(201).json({ item, contentItem: item });
 }));
 
-router.post('/content/schedule', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const contentItemId = safeString(req.body?.contentItemId, 200);
-  const scheduledFor = safeString(req.body?.scheduledFor, 100);
-  const companyId = safeString(req.body?.companyId, 200);
-  const isPlanning = Boolean(req.body?.isPlanning || req.body?.mode === 'planning');
-  if (!contentItemId || !scheduledFor || !companyId) return res.status(400).json({ error: 'Empresa, conteúdo e data são obrigatórios.' });
-
-  // 1. Ownership da empresa
-  await requireOwnedCompany(req.user!.id, companyId);
-
-  // 2. Validação do conteúdo
-  const itemSnap = await firestore().collection(COLLECTIONS.contentItems).doc(contentItemId).get();
-  if (!itemSnap.exists || itemSnap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Conteúdo não encontrado.' });
-  const itemData = itemSnap.data() as any;
-  if (itemData.companyId !== companyId) {
-    if (isPlanning && itemData.companyId === 'default') {
-      // Aceita default apenas para planejamento editorial
-    } else if (!isPlanning && itemData.companyId === 'default') {
-      return res.status(400).json({ error: 'Associe este conteúdo a uma empresa antes de ativar a auto-publicação.' });
-    } else {
-      return res.status(400).json({ error: 'O conteúdo selecionado pertence a outra empresa.' });
-    }
-  }
-
-  const contentText = [itemData.headline, itemData.body, itemData.cta].filter(Boolean).join(' ').trim();
-  if (!contentText) {
-    return res.status(400).json({ error: 'O conteúdo selecionado não possui texto para publicação.' });
-  }
-
-  // 3. Validação da data
-  if (Number.isNaN(new Date(scheduledFor).getTime())) return res.status(400).json({ error: 'Data de agendamento inválida.' });
-
-  // 4. Validação das plataformas
-  const rawPlatforms = stringArray(req.body?.platforms, 10);
-  if (!rawPlatforms.length) return res.status(400).json({ error: 'Selecione ao menos uma rede social para o agendamento.' });
-
-  // 5. Diferenciação: Planejamento Editorial (Calendário) vs Auto-Publicação
-  if (isPlanning) {
-    // Planejamento editorial: Disponível para todos os planos (START, PRO, BUSINESS, AGENCY, etc.)
-    const id = newId('sched');
-    const scheduled = {
-      id,
-      userId: req.user!.id,
-      companyId,
-      contentItemId,
-      platforms: rawPlatforms,
-      scheduledFor: new Date(scheduledFor).toISOString(),
-      status: 'planned',
-      isPlanning: true,
-      autopilotGenerated: false,
-      createdAt: nowIso()
-    };
-    await firestore().collection(COLLECTIONS.scheduledPosts).doc(id).set(scheduled);
-    return res.status(201).json({ message: 'Planejamento editorial salvo no calendário com sucesso.', scheduled });
-  }
-
-  // Auto-Publicação Executável: Exige plano com socialConnections ou admin
-  const wallet = await getWallet(req.user!.id);
-  const entitlements = getPlanEntitlements(wallet.planId);
-  const isAdmin = req.user?.role === 'admin';
-  if (!entitlements.socialConnections && !isAdmin) {
-    return res.status(403).json({
-      error: 'O agendamento com auto-publicação automática em redes sociais exige o plano PRO ou superior. No plano START, você pode registrar o conteúdo como Planejamento Editorial no Calendário.'
-    });
-  }
-
-  // Validação estrita de suporte dos providers para texto direto
-  for (const plat of rawPlatforms) {
-    const provider = normalizeProvider(plat);
-    if (!provider) return res.status(400).json({ error: `Rede social "${plat}" não reconhecida.` });
-
-    if (!isTextAutoPublishSupported(provider)) {
-      const reason = getProviderAutoPublishReason(provider) || `A rede "${plat}" não suporta publicação automática puramente textual.`;
-      return res.status(400).json({ error: reason });
-    }
-
-    const connSnap = await firestore().collection(COLLECTIONS.socialConnections)
-      .where('userId', '==', req.user!.id)
-      .where('companyId', '==', companyId)
-      .where('provider', '==', provider)
-      .limit(1)
-      .get();
-
-    if (connSnap.empty) {
-      return res.status(400).json({ error: `A conta de ${plat} não está conectada para esta empresa. Conecte-a em Redes Sociais antes de agendar.` });
-    }
-
-    const conn = connSnap.docs[0].data() as any;
-    if (conn.status === 'token_expired' || (conn.expiresAt && new Date(conn.expiresAt).getTime() < Date.now())) {
-      return res.status(400).json({ error: `A autenticação com ${plat} expirou. Reconecte a conta em Redes Sociais antes de agendar.` });
-    }
-  }
-
-  const id = newId('sched');
-  const scheduled = {
-    id,
-    userId: req.user!.id,
-    companyId,
-    contentItemId,
-    platforms: rawPlatforms,
-    scheduledFor: new Date(scheduledFor).toISOString(),
-    status: 'scheduled',
-    isPlanning: false,
-    autopilotGenerated: Boolean(req.body?.autopilotGenerated),
-    createdAt: nowIso()
-  };
-  await firestore().collection(COLLECTIONS.scheduledPosts).doc(id).set(scheduled);
-  await itemSnap.ref.set({ status: 'scheduled', updatedAt: nowIso() }, { merge: true });
-  res.status(201).json({ message: 'Publicação agendada com sucesso.', scheduled });
-}));
-
-async function scheduledForUser(userId: string, companyId?: string) {
-  let query: any = firestore().collection(COLLECTIONS.scheduledPosts).where('userId', '==', userId);
-  if (companyId) query = query.where('companyId', '==', companyId);
-  return queryData<any>(await query.get()).sort((a, b) => String(a.scheduledFor).localeCompare(String(b.scheduledFor)));
-}
-
-router.get('/content/scheduled', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const scheduledPosts = await scheduledForUser(req.user!.id, req.query.companyId ? String(req.query.companyId) : undefined);
-  res.json({ scheduledPosts, scheduled: scheduledPosts });
-}));
-
-router.get('/content/calendar', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const companyId = req.query.companyId ? String(req.query.companyId) : undefined;
-  const scheduled = await scheduledForUser(req.user!.id, companyId);
-  let query: any = firestore().collection(COLLECTIONS.contentItems).where('userId', '==', req.user!.id);
-  if (companyId) query = query.where('companyId', '==', companyId);
-  const items = queryData<any>(await query.get());
-  res.json({ scheduled, scheduledPosts: scheduled, items, contents: items });
-}));
-
-router.post('/content/scheduled/:id/retry', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const ref = firestore().collection(COLLECTIONS.scheduledPosts).doc(req.params.id);
-  const snap = await ref.get();
-  if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-  const current = snap.data() as any;
-  const existingResults = Array.isArray(current.publicationResults) ? current.publicationResults : [];
-
-  if (current.status === 'requires_review' || existingResults.some((r: any) => r?.externalState === 'unknown')) {
-    return res.status(409).json({
-      error: 'Publicações em estado de verificação manual não podem ser reagendadas automaticamente devido ao risco de duplicação externa.'
-    });
-  }
-
-  if (current.status !== 'failed') {
-    return res.status(409).json({ error: 'Somente publicações com falha comprovada podem ser reenviadas.' });
-  }
-
-  const failedResults = existingResults.filter((r: any) => !r?.success);
-  if (failedResults.length > 0 && failedResults.every((r: any) => r?.retrySafe === false)) {
-    return res.status(409).json({
-      error: 'Falha definitiva de autenticação ou parâmetro. Reconecte a conta ou edite o conteúdo antes de tentar novamente.'
-    });
-  }
-
-  const successfulResults = existingResults.filter((r: any) => r?.success && r?.externalId);
-  const requestedPlatforms = Array.isArray(current.platforms) ? current.platforms : [];
-
-  // Se todas as plataformas solicitadas já possuem confirmação externa de sucesso, rejeita retry
-  const allAlreadySucceeded = requestedPlatforms.length > 0 && requestedPlatforms.every((plat: string) =>
-    successfulResults.some((s: any) => s.platform === plat || normalizeProvider(s.platform) === normalizeProvider(plat))
-  );
-  if (allAlreadySucceeded) {
-    return res.status(409).json({ error: 'Todas as redes sociais deste agendamento já foram publicadas com sucesso.' });
-  }
-
-  const when = req.body?.scheduledFor ? new Date(String(req.body.scheduledFor)) : new Date(Date.now() + 60_000);
-  if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Data de reenvio inválida.' });
-
-  // Preserva estritamente resultados bem-sucedidos anteriores com seus externalIds e falhas sem retrySafe
-  const preservedResults = existingResults.filter((r: any) => (r?.success && r?.externalId) || r?.retrySafe === false);
-
-  await ref.set({
-    status: 'scheduled',
-    scheduledFor: when.toISOString(),
-    errorMessage: null,
-    publicationResults: preservedResults,
-    retryCount: Number(current.retryCount || 0) + 1,
-    updatedAt: nowIso()
-  }, { merge: true });
-
-  res.json({
-    message: 'Publicação reagendada para nova tentativa segura.',
-    successfulPreserved: successfulResults.length
-  });
-}));
-
-router.post('/content/scheduled/:id/cancel', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const ref = firestore().collection(COLLECTIONS.scheduledPosts).doc(req.params.id);
-  const snap = await ref.get();
-  if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-  const current = snap.data() as any;
-
-  if (current.status === 'requires_review') {
-    return res.status(409).json({
-      error: 'Agendamentos com verificação manual pendente não podem ser cancelados para reuso ou republicação automática.'
-    });
-  }
-
-  if (!['scheduled', 'failed', 'planned'].includes(String(current.status))) {
-    return res.status(409).json({ error: 'Este agendamento não pode mais ser cancelado.' });
-  }
-
-  await ref.set({ status: 'cancelled', cancelledAt: nowIso(), updatedAt: nowIso() }, { merge: true });
-  res.json({ message: 'Agendamento cancelado com sucesso.' });
-}));
-
 router.delete('/content/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const ref = firestore().collection(COLLECTIONS.contentItems).doc(req.params.id);
   const snap = await ref.get();
@@ -862,72 +492,6 @@ router.delete('/content/:id', requireAuth, asyncRoute(async (req: AuthenticatedR
   if (item?.metadata?.storagePath) await getAdminStorage().bucket().file(String(item.metadata.storagePath)).delete({ ignoreNotFound: true }).catch(() => undefined);
   await ref.delete();
   res.json({ message: 'Conteúdo removido.' });
-}));
-
-// Campaigns
-router.get('/campaigns', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  let query: any = firestore().collection(COLLECTIONS.campaigns).where('userId', '==', req.user!.id);
-  if (req.query.companyId) query = query.where('companyId', '==', String(req.query.companyId));
-  const campaigns = queryData<any>(await query.get()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-  res.json({ campaigns });
-}));
-
-router.post('/campaigns', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const wallet = await getWallet(req.user!.id);
-  const entitlements = getPlanEntitlements(wallet.planId);
-  if (!entitlements.campaigns) {
-    return res.status(403).json({
-      error: 'O recurso de Campanhas é exclusivo dos planos BUSINESS e AGENCY. Faça upgrade para criar campanhas.'
-    });
-  }
-
-  const name = safeString(req.body?.name, 300);
-  const companyId = safeString(req.body?.companyId, 200);
-  if (!name || !companyId) return res.status(400).json({ error: 'Nome e empresa são obrigatórios.' });
-  await requireOwnedCompany(req.user!.id, companyId);
-  const id = newId('campaign');
-  const campaign = { id, userId: req.user!.id, companyId, name, objective: safeString(req.body?.objective, 3000) || 'Reconhecimento e Conversão', targetPlatforms: stringArray(req.body?.targetPlatforms, 10), targetAudience: safeString(req.body?.targetAudience, 3000), budgetCredits: Math.max(0, Number(req.body?.budgetCredits || 0)), startDate: req.body?.startDate ? new Date(req.body.startDate).toISOString() : nowIso(), endDate: req.body?.endDate ? new Date(req.body.endDate).toISOString() : undefined, status: ['draft','pending','scheduled','active','paused','completed','failed'].includes(req.body?.status) ? req.body.status : 'draft', contentItemIds: stringArray(req.body?.contentItemIds, 200), metrics: { reach: 0, clicks: 0, leads: 0, conversions: 0, shares: 0, comments: 0 }, createdAt: nowIso(), updatedAt: nowIso() };
-  await firestore().collection(COLLECTIONS.campaigns).doc(id).set(cleanObject(campaign));
-  res.status(201).json({ message: 'Campanha criada.', campaign });
-}));
-
-router.patch('/campaigns/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const wallet = await getWallet(req.user!.id);
-  const entitlements = getPlanEntitlements(wallet.planId);
-  if (!entitlements.campaigns) {
-    return res.status(403).json({
-      error: 'O recurso de Campanhas é exclusivo dos planos BUSINESS e AGENCY. Faça upgrade para editar campanhas.'
-    });
-  }
-
-  const ref = firestore().collection(COLLECTIONS.campaigns).doc(req.params.id);
-  const snap = await ref.get();
-  if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Campanha não encontrada.' });
-  const patch: Record<string, any> = {};
-  if (req.body?.name !== undefined) patch.name = safeString(req.body.name, 300);
-  if (req.body?.objective !== undefined) patch.objective = safeString(req.body.objective, 3000);
-  if (req.body?.targetPlatforms !== undefined) patch.targetPlatforms = stringArray(req.body.targetPlatforms, 10);
-  if (req.body?.targetAudience !== undefined) patch.targetAudience = safeString(req.body.targetAudience, 3000);
-  if (req.body?.budgetCredits !== undefined) patch.budgetCredits = Math.max(0, Number(req.body.budgetCredits || 0));
-  if (req.body?.startDate !== undefined) patch.startDate = new Date(req.body.startDate).toISOString();
-  if (req.body?.endDate !== undefined) patch.endDate = req.body.endDate ? new Date(req.body.endDate).toISOString() : null;
-  if (req.body?.status !== undefined) {
-    if (!['draft','pending','scheduled','active','paused','completed','failed'].includes(req.body.status)) return res.status(400).json({ error: 'Status de campanha inválido.' });
-    patch.status = req.body.status;
-  }
-  if (req.body?.contentItemIds !== undefined) patch.contentItemIds = stringArray(req.body.contentItemIds, 200);
-  patch.updatedAt = nowIso();
-  await ref.set(cleanObject(patch), { merge: true });
-  const fresh = await ref.get();
-  res.json({ message: 'Campanha atualizada.', campaign: { id: fresh.id, ...fresh.data() } });
-}));
-
-router.delete('/campaigns/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const ref = firestore().collection(COLLECTIONS.campaigns).doc(req.params.id);
-  const snap = await ref.get();
-  if (!snap.exists || snap.data()?.userId !== req.user!.id) return res.status(404).json({ error: 'Campanha não encontrada.' });
-  await ref.delete();
-  res.json({ message: 'Campanha removida.' });
 }));
 
 // Payments
@@ -966,131 +530,7 @@ router.post('/webhooks/mercadopago', asyncRoute(async (req, res) => {
   res.status(200).json(result);
 }));
 
-// Autopilot
-router.get('/autopilot/config', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const companyId = safeString(req.query.companyId, 200);
-  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
-  await requireOwnedCompany(req.user!.id, companyId);
-  const id = `${req.user!.id}_${companyId}`;
-  const ref = firestore().collection(COLLECTIONS.autopilotConfigs).doc(id);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    return res.json({
-      config: {
-        id,
-        userId: req.user!.id,
-        companyId,
-        enabled: false,
-        mode: 'manual_approval',
-        frequency: 'daily',
-        timezone: 'America/Sao_Paulo',
-        preferredDays: [1, 2, 3, 4, 5],
-        preferredHours: [10, 15, 19],
-        targetPlatforms: ['Instagram', 'Facebook'],
-        primaryGoal: 'Atrair clientes e gerar autoridade',
-        maxMonthlyCredits: 100,
-        usedCreditsThisMonth: 0,
-        usageMonth: new Date().toISOString().slice(0, 7)
-      },
-      persisted: false
-    });
-  }
-  res.json({ config: { id: snap.id, ...snap.data() }, persisted: true });
-}));
-
-router.post('/autopilot/config', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const companyId = safeString(req.body?.companyId, 200);
-  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
-  await requireOwnedCompany(req.user!.id, companyId);
-
-  const wallet = await getWallet(req.user!.id);
-  const entitlements = getPlanEntitlements(wallet.planId);
-  const requestedEnabled = Boolean(req.body?.enabled);
-  const requestedMode = req.body?.mode === 'automatic' ? 'automatic' : 'manual_approval';
-
-  if (requestedEnabled && !entitlements.autopilotManual && !entitlements.autopilotAutomatic) {
-    return res.status(403).json({
-      error: 'O recurso Autopilot não está disponível no seu plano atual. Faça upgrade para o plano PRO ou superior.'
-    });
-  }
-
-  if (requestedMode === 'automatic' && !entitlements.autopilotAutomatic) {
-    return res.status(403).json({
-      error: 'O modo automático do Autopilot é exclusivo dos planos BUSINESS e AGENCY. No plano PRO, utilize aprovação manual ou faça upgrade.'
-    });
-  }
-
-  const id = `${req.user!.id}_${companyId}`;
-  const ref = firestore().collection(COLLECTIONS.autopilotConfigs).doc(id);
-  const current = await ref.get();
-
-  const rawDays = Array.isArray(req.body?.preferredDays) ? req.body.preferredDays : undefined;
-  const preferredDays = rawDays ? rawDays.filter((d: any) => typeof d === 'number' && d >= 0 && d <= 6) : undefined;
-  const rawHours = Array.isArray(req.body?.preferredHours) ? req.body.preferredHours : undefined;
-  const preferredHours = rawHours ? rawHours.filter((h: any) => typeof h === 'number' && h >= 0 && h <= 23) : undefined;
-  const timezone = safeString(req.body?.timezone, 80) || 'America/Sao_Paulo';
-  const targetPlatforms = stringArray(req.body?.targetPlatforms, 10);
-
-  if (requestedEnabled && requestedMode === 'automatic') {
-    const targets = targetPlatforms.length > 0 ? targetPlatforms : ['facebook'];
-    for (const plat of targets) {
-      const provider = normalizeProvider(plat);
-      if (!provider || !isTextAutoPublishSupported(provider)) {
-        return res.status(400).json({
-          error: `O canal "${plat}" não suporta publicação automática direta no modo automático (suportados apenas Facebook, LinkedIn e X).`
-        });
-      }
-      const connSnap = await firestore().collection(COLLECTIONS.socialConnections)
-        .where('userId', '==', req.user!.id)
-        .where('companyId', '==', companyId)
-        .where('provider', '==', provider)
-        .limit(1)
-        .get();
-
-      if (connSnap.empty) {
-        return res.status(400).json({
-          error: `O canal "${plat}" não está conectado para esta empresa. Conecte-o em Redes Sociais antes de ativar o modo automático.`
-        });
-      }
-      const conn = connSnap.docs[0].data() as any;
-      const isExpired = conn.expiresAt ? new Date(conn.expiresAt).getTime() <= Date.now() : false;
-      if (conn.status !== 'connected' || (!conn.encryptedAccessToken && !conn.accessToken) || isExpired) {
-        return res.status(400).json({
-          error: `A conexão do canal "${plat}" expirou ou está inativa. Reconecte-a em Redes Sociais antes de ativar o modo automático.`
-        });
-      }
-    }
-  }
-
-  const update = cleanObject({
-    id,
-    userId: req.user!.id,
-    companyId,
-    enabled: requestedEnabled,
-    mode: requestedMode,
-    frequency: ['daily', '3_times_week', 'weekly'].includes(req.body?.frequency) ? req.body.frequency : 'daily',
-    timezone,
-    preferredDays,
-    preferredHours,
-    targetPlatforms,
-    primaryGoal: safeString(req.body?.primaryGoal, 2000) || 'Engajamento e Vendas',
-    maxMonthlyCredits: Math.max(5, Number(req.body?.maxMonthlyCredits || 100)),
-    updatedAt: nowIso(),
-    createdAt: current.exists ? undefined : nowIso()
-  });
-  await ref.set(update, { merge: true });
-  const fresh = await ref.get();
-  res.json({ message: 'Configuração do Autopilot salva.', config: { id: fresh.id, ...fresh.data() } });
-}));
-router.post('/autopilot/trigger-now', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const companyId = safeString(req.body?.companyId, 200) || safeString(req.query?.companyId, 200);
-  if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório para acionar o Autopilot.' });
-  await requireOwnedCompany(req.user!.id, companyId);
-  const result = await triggerUserAutopilot(req.user!.id, companyId);
-  res.json({ message: 'Autopilot executado para sua empresa.', result });
-}));
-
-// Social OAuth
+// Social OAuth (mantido para integrações futuras; sem tela no painel atual)
 router.get('/social/connections', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const companyId = safeString(req.query.companyId, 200);
   if (!companyId) return res.status(400).json({ error: 'companyId é obrigatório.' });
@@ -1430,6 +870,8 @@ function sanitizePublicVitrineCompany(company: any) {
     coverUrl: company.coverUrl || null,
     website: company.website || null,
     whatsapp: company.whatsapp || null,
+    androidApp: appLinksOf(company).android,
+    iosApp: appLinksOf(company).ios,
     instagram: company.instagram || null,
     linkedin: company.linkedin || null,
     facebook: company.facebook || null,
@@ -1496,7 +938,7 @@ router.post('/concierge/chat', optionalAuth as any, asyncRoute(async (req: Authe
 
 router.post('/concierge/execute', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   if (!req.body?.collected || !Array.isArray(req.body?.actions)) return res.status(400).json({ error: 'Plano inválido. Confirme o resumo com a Froc.IA novamente.' });
-  const outcome = await executeConciergePlan({ userId: req.user!.id, companyId: safeString(req.body?.companyId, 200), collected: req.body.collected, actions: req.body.actions });
+  const outcome = await executeConciergePlan({ userId: req.user!.id, isAdmin: req.user!.role === 'admin', companyId: safeString(req.body?.companyId, 200), collected: req.body.collected, actions: req.body.actions });
   res.json({ ...outcome, wallet: await getWallet(req.user!.id) });
 }));
 
@@ -1592,6 +1034,15 @@ router.get('/vitrine-posts/mine', requireAuth, asyncRoute(async (req: Authentica
   const posts = queryData<any>(snap).filter((p) => !companyId || p.companyId === companyId)
     .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 60).map(sanitizePublicVitrinePost);
   res.json({ posts });
+}));
+
+router.get('/vitrine-clicks/mine', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const companyId = safeString(req.query.companyId, 200);
+  if (!companyId) return res.json({ clicks: { total: 0, site: 0, app: 0, whatsapp: 0 } });
+  await requireOwnedCompany(req.user!.id, companyId);
+  const snap = await firestore().collection(COLLECTIONS.linkClicks).doc(companyId).get();
+  const data: any = snap.exists ? snap.data() : {};
+  res.json({ clicks: { total: Number(data.total || 0), site: Number(data.site || 0), app: Number(data.android || 0) + Number(data.ios || 0), whatsapp: Number(data.whatsapp || 0) } });
 }));
 
 router.get('/vitrine/:slug/posts', asyncRoute(async (req, res) => {
@@ -1835,27 +1286,32 @@ router.post('/admin/users/:id/plan', requireAdmin, asyncRoute(async (req: Authen
 
 router.get('/admin/companies', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
   const db = firestore();
-  const [companiesSnap, usersSnap, postsSnap] = await Promise.all([db.collection(COLLECTIONS.companies).get(), db.collection(COLLECTIONS.users).get(), db.collection(COLLECTIONS.vitrinePosts).get()]);
+  const [companiesSnap, usersSnap, postsSnap, clicksSnap] = await Promise.all([db.collection(COLLECTIONS.companies).get(), db.collection(COLLECTIONS.users).get(), db.collection(COLLECTIONS.vitrinePosts).get(), db.collection(COLLECTIONS.linkClicks).get()]);
+  const clicks = new Map(queryData<any>(clicksSnap).map((c) => [c.companyId || c.id, c]));
   const users = new Map(queryData<any>(usersSnap).map((u) => [u.id, u]));
   const postCount = new Map<string, number>();
   queryData<any>(postsSnap).forEach((p) => postCount.set(p.companyId, (postCount.get(p.companyId) || 0) + 1));
   const companies = queryData<any>(companiesSnap).map((c) => ({
     id: c.id, name: c.name, slug: c.slug, userId: c.userId, ownerName: users.get(c.userId)?.name || '', ownerEmail: users.get(c.userId)?.email || '',
     category: c.category || '', city: c.city || '', state: c.state || '', website: c.website || '', whatsapp: c.whatsapp || '', description: c.description || '',
+    androidApp: c.androidApp || '', iosApp: c.iosApp || '',
+    clicks: { total: Number(clicks.get(c.id)?.total || 0), site: Number(clicks.get(c.id)?.site || 0), app: Number(clicks.get(c.id)?.android || 0) + Number(clicks.get(c.id)?.ios || 0), whatsapp: Number(clicks.get(c.id)?.whatsapp || 0) },
     isPublicInVitrine: parseStrictBoolean(c.isPublicInVitrine), vitrinePosts: postCount.get(c.id) || 0, createdAt: c.createdAt || '', updatedAt: c.updatedAt || ''
   })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   res.json({ companies });
 }));
 
 router.post('/admin/companies', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  const userId = safeString(req.body?.userId, 200);
+  // Sem dono escolhido, o projeto fica na conta do próprio administrador (sem limite de quantidade).
+  const userId = safeString(req.body?.userId, 200) || req.user!.id;
   const name = safeString(req.body?.name, 120);
-  if (!userId || !name) return res.status(400).json({ error: 'Dono e nome do projeto são obrigatórios.' });
+  if (!name) return res.status(400).json({ error: 'O nome do projeto é obrigatório.' });
   await requireExistingUser(userId);
   const id = newId('company');
   const company = cleanObject({
     id, userId, name, slug: `${slugify(name)}-${id.slice(-6)}`,
     description: safeString(req.body?.description, 5000), website: safeHttpUrl(req.body?.website, 1000), whatsapp: safeString(req.body?.whatsapp, 80),
+    androidApp: safeHttpUrl(req.body?.androidApp, 1000), iosApp: safeHttpUrl(req.body?.iosApp, 1000),
     city: safeString(req.body?.city, 150), state: safeString(req.body?.state, 100), country: safeString(req.body?.country, 100) || 'Brasil',
     category: safeString(req.body?.category, 150) || 'Comércio & Serviços', businessType: normalizeCompanyField('businessType', req.body?.businessType || 'online'),
     products: [], services: [], keywords: [], isPublicInVitrine: parseStrictBoolean(req.body?.isPublicInVitrine), createdBy: req.user!.id, createdAt: nowIso(), updatedAt: nowIso()
@@ -1871,7 +1327,7 @@ router.patch('/admin/companies/:id', requireAdmin, asyncRoute(async (req: Authen
   const snap = await ref.get();
   if (!snap.exists) return res.status(404).json({ error: 'Projeto não encontrado.' });
   const current = { id: snap.id, ...snap.data() } as any;
-  const allowed = ['name', 'description', 'website', 'whatsapp', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine'];
+  const allowed = ['name', 'description', 'website', 'whatsapp', 'androidApp', 'iosApp', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine'];
   const patch: Record<string, any> = {};
   for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
   if (req.body?.userId !== undefined) {
@@ -1899,6 +1355,7 @@ router.delete('/admin/companies/:id', requireAdmin, asyncRoute(async (req: Authe
   const company = { id: snap.id, ...snap.data() } as any;
   await deleteCompanyData(company.userId, company.id);
   const posts = await deleteWhere(COLLECTIONS.vitrinePosts, 'companyId', company.id);
+  await firestore().collection(COLLECTIONS.linkClicks).doc(company.id).delete();
   await ref.delete();
   await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'delete_company', targetUserId: company.userId, details: { companyId: company.id, name: company.name, vitrinePosts: posts } });
   res.json({ message: 'Projeto excluído com todos os dados vinculados.' });
@@ -1907,7 +1364,7 @@ router.delete('/admin/companies/:id', requireAdmin, asyncRoute(async (req: Authe
 router.get('/admin/vitrine-posts', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
   const snap = await firestore().collection(COLLECTIONS.vitrinePosts).get();
   const posts = queryData<any>(snap).sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 300)
-    .map((p) => ({ id: p.id, title: p.title, slug: p.slug, companyId: p.companyId, companySlug: p.companySlug, companyName: p.companyName, status: p.status, angleLabel: p.angleLabel, date: p.date, publishedAt: p.publishedAt }));
+    .map((p) => ({ id: p.id, title: p.title, slug: p.slug, companyId: p.companyId, companySlug: p.companySlug, companyName: p.companyName, status: p.status, angleLabel: p.angleLabel, date: p.date, publishedAt: p.publishedAt, imageUrl: p.imageUrl || null, imageGenerated: Boolean(p.imageGenerated) }));
   res.json({ posts });
 }));
 
@@ -1950,6 +1407,15 @@ router.get('/admin/activity', requireAdmin, asyncRoute(async (_req: Authenticate
 }));
 
 // ───────────── Admin: Motor SEO e Vitrine diária ─────────────
+router.post('/admin/posts/generate-images', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  if (parseStrictBoolean(req.body?.retryFailed)) await resetFailedPostImages();
+  const result = await backfillPostImages(Math.min(Math.max(Number(req.body?.limit || 4), 1), 8));
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'generate_post_images', details: result });
+  res.json({ ...result, message: `${result.generated} imagens criadas, ${result.failed} falhas, ${result.pending} posts ainda aguardando.` });
+}));
+router.get('/admin/voice/check', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  res.json(await diagnoseVoice());
+}));
 router.get('/admin/seo/status', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
   res.json(await getSeoEngineStatus());
 }));
@@ -2014,7 +1480,8 @@ router.post('/admin/blog/generate-now', requireAdmin, asyncRoute(async (req: Aut
   const article = generated.article || {};
   const id = newId('blog');
   const slug = `${slugify(article.suggestedSlug || article.title || topic)}-${id.slice(-6)}`;
-  const post = { id, title:safeString(article.title,180), slug, summary:safeString(article.summary || article.metaDescription,500), content:safeString(article.content,120000), featuredImageUrl:'', author:config.blog.author, category:safeString(article.category,100)||'Marketing & IA', tags:stringArray(article.tags,12), seoTitle:safeString(article.title,70), seoDescription:safeString(article.metaDescription || article.summary,180), status:'draft', createdAt:nowIso(), updatedAt:nowIso(), generatedBy:'admin_ai', modelUsed:generated.modelUsed };
+  const image = await createPostImage({ title: safeString(article.title || topic, 180), summary: safeString(article.summary || article.metaDescription, 300), category: safeString(article.category, 100), folder: 'posts/magazine' });
+  const post = { id, title:safeString(article.title,180), slug, summary:safeString(article.summary || article.metaDescription,500), content:safeString(article.content,120000), featuredImageUrl:image?.imageUrl || '', imageAlt:image?.imageAlt || '', author:config.blog.author, category:safeString(article.category,100)||'Marketing & IA', tags:stringArray(article.tags,12), seoTitle:safeString(article.title,70), seoDescription:safeString(article.metaDescription || article.summary,180), status:'draft', createdAt:nowIso(), updatedAt:nowIso(), generatedBy:'admin_ai', modelUsed:generated.modelUsed };
   if (!post.title || !post.content) throw new Error('A IA não retornou artigo completo.');
   await firestore().collection(COLLECTIONS.blogPosts).doc(id).set(post);
   await writeAdminLog({ operatorId:req.user!.id, operatorEmail:req.user!.email, action:'generate_blog', details:{ postId:id, topic } });

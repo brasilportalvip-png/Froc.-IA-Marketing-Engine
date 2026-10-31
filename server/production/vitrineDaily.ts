@@ -10,6 +10,8 @@ import { config } from '../config/index.js';
 import { selectAgentsForIntent } from '../../shared/agents.js';
 import { companyContext, generateRaw, parseAiJson } from './ai.js';
 import { baseUrl, pingIndexNow } from './seoEngine.js';
+import { createPostImage } from './postImages.js';
+import { appLinksOf } from './appLinks.js';
 import { COLLECTIONS, firestore, nowIso, queryData, slugify } from './store.js';
 
 export const DAILY_ANGLES = [
@@ -55,6 +57,11 @@ function locationLine(company: any): string {
 export function buildDailyPostPrompt(company: any, dateStr: string): { prompt: string; angle: (typeof DAILY_ANGLES)[number] } {
   const angle = angleForDate(dateStr, String(company.id || company.slug || 'x'));
   const where = locationLine(company);
+  const apps = appLinksOf(company);
+  const stores = [apps.android ? 'Google Play' : '', apps.ios ? 'App Store' : ''].filter(Boolean).join(' e ');
+  const directionRule = stores
+    ? `\n6b. A empresa TEM aplicativo (${stores}): inclua um parágrafo convidando a baixar o app e os benefícios de usá-lo; o CTA deve oferecer as duas opções: visitar o site e baixar o aplicativo.`
+    : company.website ? '\n6b. Direcione o leitor para o site oficial da empresa.' : '';
   const agents = selectAgentsForIntent(`${angle.brief} ${company.category || ''} ${where} seo vitrine gatilho cliente`, 14);
   const prompt = `Você é o time Froc.IA de tráfego orgânico. Especialistas acionados hoje:
 ${agents.map((agent) => `- ${agent.directive}`).join('\n')}
@@ -69,7 +76,7 @@ REGRAS DE OURO (tráfego orgânico + captura de clientes):
 3. Conteúdo em Markdown de 450 a 750 palavras, com gancho forte no primeiro parágrafo, subtítulos H2/H3 e parágrafos curtos para leitura no celular.
 4. Use gatilhos ÉTICOS: curiosidade, especificidade, autoridade (ensinando), reciprocidade (dicas úteis), quebra de objeções e prova social SOMENTE se fornecida no contexto.
 5. Proibido inventar: preços, descontos, prazos, números, avaliações, depoimentos, prêmios ou escassez falsa.
-6. Termine com uma seção "## Fale com ${company.name}" com CTA irresistível direcionando somente aos canais verificados do contexto.
+6. Termine com uma seção "## Fale com ${company.name}" com CTA irresistível direcionando somente aos canais verificados do contexto.${directionRule}
 7. Inclua 3 perguntas frequentes reais (para FAQ com dados estruturados).
 8. Palavras-chave: 1 principal + 4 secundárias de cauda longa com intenção de compra${where ? ' e variações locais' : ''}.
 
@@ -125,6 +132,17 @@ export async function createDailyPostForCompany(company: any, dateStr = todayInS
     // Fallback seguro quando a IA não devolve o formato esperado.
     normalized.content = `## ${normalized.title}\n\n${company.description || `Conheça ${company.name}.`}\n\n## Fale com ${company.name}\n\nVisite a página da empresa na Vitrine Froc.IA para ver todos os canais de contato.`;
   }
+  const location = locationLine(company) || null;
+  // Imagem própria do post, criada a partir do projeto (nicho, produtos, região) e do assunto do dia.
+  const image = await createPostImage({
+    company,
+    title: normalized.title,
+    summary: normalized.summary,
+    keyword: normalized.primaryKeyword,
+    angle: normalized.angleLabel,
+    location,
+    folder: `posts/vitrine/${company.id}`
+  });
   const now = nowIso();
   const post = {
     id,
@@ -134,8 +152,10 @@ export async function createDailyPostForCompany(company: any, dateStr = todayInS
     companyName: company.name,
     date: dateStr,
     ...normalized,
-    imageUrl: company.coverUrl || company.logoUrl || null,
-    location: locationLine(company) || null,
+    imageUrl: image?.imageUrl || company.coverUrl || company.logoUrl || null,
+    imageAlt: image?.imageAlt || `${normalized.title} — ${company.name}`,
+    imageGenerated: Boolean(image),
+    location,
     status: 'published',
     modelUsed: generated.modelUsed,
     publishedAt: now,
@@ -206,6 +226,7 @@ export function sanitizePublicVitrinePost(post: any) {
     keywords: Array.isArray(post.keywords) ? post.keywords : [],
     angleLabel: post.angleLabel || '',
     imageUrl: post.imageUrl || null,
+    imageAlt: post.imageAlt || post.title,
     location: post.location || null,
     publishedAt: post.publishedAt
   };

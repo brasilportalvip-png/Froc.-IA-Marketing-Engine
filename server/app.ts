@@ -4,6 +4,7 @@ import cors from 'cors';
 import { config, assertProductionConfig } from './config/index.js';
 import productionRouter, { buildRobotsTxt, buildSitemapXml } from './production/router.js';
 import { renderPrivateAppPage, renderPublicPage } from './production/publicPages.js';
+import { handleRedirect } from './production/redirects.js';
 import { buildGroupSitemapXml, buildRssFeed, buildSitemapTxt, buildSitemapXsl, indexNowKeyFromPath, parseSitemapPath } from './production/seoEngine.js';
 import { consumeRateLimit } from './production/store.js';
 
@@ -62,9 +63,6 @@ function rateLimitPolicy(req: Request): RateLimitPolicy | null {
   }
   if (req.method === 'POST' && path.startsWith('/api/ai/')) {
     return { group: 'ai-generation', limit: 120, windowMs: 10 * 60_000 };
-  }
-  if (req.method === 'POST' && path === '/api/seo/analyze') {
-    return { group: 'seo-analysis', limit: 20, windowMs: 10 * 60_000 };
   }
   if (
     MUTATING_METHODS.has(req.method) &&
@@ -277,6 +275,19 @@ export function createApp() {
     res.type('text/plain').send(key);
   });
 
+  // Direcionamento inteligente dos posts: site, app (Play Store/App Store pelo aparelho) e WhatsApp.
+  app.get('/ir/:slug/:target', async (req, res, next) => {
+    try {
+      const postId = typeof req.query.p === 'string' ? req.query.p : undefined;
+      const result = await handleRedirect(String(req.params.slug).slice(0, 200), String(req.params.target).slice(0, 20), String(req.headers['user-agent'] || ''), postId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      res.redirect(result.status, result.location);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Shell SEO dinâmico para páginas públicas (com conteúdo pré-renderizado para robôs).
   app.get(
     ['/', '/posts', '/vitrine', '/vitrine/:slug', '/vitrine/:slug/:postSlug', '/blog', '/blog/:slug', '/planos', '/termos', '/privacidade'],
@@ -291,21 +302,20 @@ export function createApp() {
     }
   );
 
+  // Ferramentas antigas agora executadas pela Froc.IA na conversa: redirecionamento permanente.
+  const legacyToolRedirects: Record<string, string> = {
+    '/froc-ia': '/', '/estrategia': '/', '/autopilot': '/', '/criar-conteudo': '/', '/criar-imagem': '/',
+    '/criar-video': '/', '/criar-artigo': '/', '/seo': '/', '/campanhas': '/', '/calendario': '/',
+    '/redes-sociais': '/dashboard', '/analytics': '/dashboard'
+  };
+  app.get(Object.keys(legacyToolRedirects), (req, res) => {
+    res.redirect(301, legacyToolRedirects[req.path.replace(/\/$/, '')] || '/');
+  });
+
   const privateAppRoutes = [
     '/dashboard',
     '/empresa',
-    '/froc-ia',
-    '/autopilot',
-    '/criar-conteudo',
-    '/criar-imagem',
-    '/criar-video',
-    '/criar-artigo',
-    '/seo',
-    '/campanhas',
-    '/calendario',
-    '/redes-sociais',
     '/conteudos',
-    '/analytics',
     '/creditos',
     '/perfil',
     '/configuracoes',

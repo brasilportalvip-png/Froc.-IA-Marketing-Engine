@@ -224,6 +224,12 @@ DIRETRIZ DE GROUNDING E PROIBIÇÕES:
   if (company.email && typeof company.email === 'string' && company.email.trim()) {
     verifiedDestinations.email = company.email.trim();
   }
+  if (company.androidApp && typeof company.androidApp === 'string' && company.androidApp.trim()) {
+    verifiedDestinations.androidApp = company.androidApp.trim();
+  }
+  if (company.iosApp && typeof company.iosApp === 'string' && company.iosApp.trim()) {
+    verifiedDestinations.iosApp = company.iosApp.trim();
+  }
 
   const verifiedSocialLinks: Record<string, string> = {};
   if (company.socialLinks && typeof company.socialLinks === 'object') {
@@ -301,6 +307,8 @@ DIRETRIZ DE GROUNDING E PROIBIÇÕES:
   if (verifiedDestinations.whatsapp) destinationLines.push(`- WhatsApp Oficial: ${verifiedDestinations.whatsapp} (Permitido CTA para WhatsApp)`);
   if (verifiedDestinations.phone) destinationLines.push(`- Telefone Oficial: ${verifiedDestinations.phone} (Permitido CTA para ligação)`);
   if (verifiedDestinations.email) destinationLines.push(`- E-mail Oficial: ${verifiedDestinations.email} (Permitido CTA para e-mail)`);
+  if (verifiedDestinations.androidApp) destinationLines.push(`- Aplicativo na Google Play: ${verifiedDestinations.androidApp} (Permitido CTA "Baixe o app na Google Play")`);
+  if (verifiedDestinations.iosApp) destinationLines.push(`- Aplicativo na App Store: ${verifiedDestinations.iosApp} (Permitido CTA "Baixe o app na App Store")`);
   for (const [net, link] of Object.entries(verifiedSocialLinks)) {
     destinationLines.push(`- Rede Social ${net}: ${link} (Permitido CTA para ${net})`);
   }
@@ -1765,4 +1773,46 @@ export async function listUserVideoJobs(userId: string, companyId?: string): Pro
   }
   const items = queryData<VideoJobData>(await query.get());
   return items.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+/**
+ * Imagem editorial para os posts automáticos (Vitrine e Froc Magazine).
+ * Mesmo modelo de imagem da plataforma, sem cobrar créditos do cliente:
+ * o post diário é um serviço da Froc.IA. Sempre grava no Storage e devolve
+ * uma URL pública (nunca data: URL, que seria ruim para SEO e para o HTML).
+ */
+export async function generateEditorialImage(data: { prompt: string; aspectRatio?: string; folder: string }): Promise<{ imageUrl: string; storagePath: string; modelUsed: string }> {
+  const aspectRatio = normalizeAspectRatio(data.aspectRatio || '16:9');
+  const model = config.geminiModels.image || 'gemini-3.1-flash-image';
+  const executionId = newId('img');
+  const folder = String(data.folder || 'editorial').replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120) || 'editorial';
+  if (process.env.NODE_ENV === 'test') {
+    return { imageUrl: `https://storage.test/${folder}/${executionId}.jpg`, storagePath: `${folder}/${executionId}.jpg`, modelUsed: 'test-image-model' };
+  }
+  let response: any;
+  if (model.startsWith('imagen-')) {
+    response = await (mediaAiClient() as any).models.generateImages({ model, prompt: data.prompt, config: { numberOfImages: 1, outputMimeType: 'image/jpeg', aspectRatio: aspectRatio as any } });
+  } else {
+    response = await mediaAiClient().models.generateContent({ model, contents: data.prompt, config: { imageConfig: { aspectRatio, imageSize: '1K' } } as any });
+  }
+  const image = extractGeneratedImage(response);
+  if (!image?.data) throw new Error('O modelo de imagem não retornou um arquivo utilizável.');
+  const buffer = Buffer.from(image.data, 'base64');
+  if (!buffer.length || buffer.length > 12 * 1024 * 1024) throw new Error('A imagem retornada possui tamanho inválido.');
+  const ext = image.mimeType.includes('png') ? 'png' : image.mimeType.includes('webp') ? 'webp' : 'jpg';
+  const storagePath = `${folder}/${executionId}.${ext}`;
+  const token = crypto.randomUUID();
+  const bucket = getAdminStorage().bucket();
+  await bucket.file(storagePath).save(buffer, {
+    resumable: false,
+    metadata: { contentType: image.mimeType, cacheControl: 'public,max-age=31536000,immutable', metadata: { firebaseStorageDownloadTokens: token } }
+  });
+  await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
+    userId: 'system', type: 'editorial_image', provider: 'Google Gemini', model, promptHash: promptFingerprint(data.prompt),
+    promptLength: data.prompt.length, creditsConsumed: 0, status: 'success', outputStoragePath: storagePath, timestamp: nowIso()
+  });
+  return {
+    imageUrl: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`,
+    storagePath,
+    modelUsed: model
+  };
 }
