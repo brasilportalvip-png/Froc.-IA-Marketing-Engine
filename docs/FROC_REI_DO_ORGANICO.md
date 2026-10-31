@@ -49,6 +49,25 @@ Regras: só URLs indexáveis (públicas e publicadas), 1.000 URLs por arquivo, `
 ### Identidade visual
 Preto `#050505`, branco, amarelo `#FFD400`, pink `#FF2D87` e verde `#00E676`. As cores antigas são remapeadas no `@theme` do Tailwind, então todas as telas herdam a nova paleta.
 
+### Voz (microfone) — mesmo sistema da Froc IA
+- Botão de microfone na tela da IA: liga a **conversa por voz** (ouvir → pensar → falar → voltar a ouvir, sem novo clique).
+- **Escuta:** Gemini Live (`gemini-3.5-transcribe-live`) com token efêmero emitido pelo servidor (`POST /api/ai/speech/live-token`); se falhar, usa o reconhecimento do navegador.
+- **Fala:** voz neural Gemini (padrão `Charon`, masculina, natural e calorosa) em streaming PCM 24 kHz (`POST /api/ai/speech/stream`), com fallback WAV (`POST /api/ai/speech`) e, por último, voz do navegador.
+- Comandos: "Ok, Froc" (chamar) e "pare" (desligar). Botão "Ouvir" em cada resposta.
+- Visitantes sem login usam os motores do navegador (sem custo); a voz neural é para usuários logados.
+- Segurança: microfone liberado só para o próprio site (`Permissions-Policy: microphone=(self)`), CSP permite apenas `wss://generativelanguage.googleapis.com`; a chave Gemini nunca vai para o navegador.
+
+### Janela 3 — Posts (`/posts`)
+- Todas as postagens num só lugar: artigos do Froc Magazine + posts diários da Vitrine, com filtros, busca e "carregar mais".
+- Pré-renderizada para o Google (Schema `CollectionPage`), no sitemap e no robots.txt.
+
+### 1 post por dia do site
+- O Froc Magazine publica **1 artigo por dia automaticamente** (30 pautas de SEO e tráfego orgânico em rodízio), avisando os buscadores via IndexNow.
+- Ligado por padrão. Se na Vercel existir `AUTO_BLOG_ENABLED=false`, troque para `true` (ou apague a variável).
+
+### Painel admin completo
+Abas: Visão geral (usuários, assinantes, receita, projetos, posts, créditos, IA, chamados) · **Usuários** (adicionar/remover créditos, ativar/revogar plano, papel, bloquear, excluir perfil com confirmação por e-mail) · **Projetos** (criar para qualquer usuário, editar, trocar dono, pôr/tirar da vitrine, excluir) · Posts da Vitrine (arquivar, republicar, excluir) · Froc Magazine · Pagamentos · Atividade (ações de admin, execuções de IA, extrato) · Motor SEO · Suporte. Toda ação fica registrada no log de auditoria.
+
 ## Depois do merge (5 minutos)
 1. Na Vercel → Settings → Environment Variables, crie `INDEXNOW_KEY` (ex.: um UUID) e faça redeploy.
 2. No Google Search Console → Sitemaps, envie `sitemap_index.xml`.

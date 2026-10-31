@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { getAdminAuth, getAdminStorage } from '../providers/firebaseAdmin.js';
 import { config } from '../config/index.js';
 import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, ensureUserProfile, hasAcceptedLatestTerms, requireAdmin, requireAuth } from './auth.js';
-import { addCredits, getWallet, listCreditTransactions } from './credits.js';
+import { addCredits, getWallet, listCreditTransactions, removeCreditsAdmin } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generateArticle, generateCarousel, generateCopy, generateImagePrompt, generateMarketingImage, generatePlatformArticle, generatePost, generateStrategy, generateVideoDirection, generateVideoScript, startVideoGenerationJob, checkAndCompleteVideoJob, listUserVideoJobs } from './ai.js';
@@ -13,7 +13,9 @@ import { getSchedulerHealth, processSchedulerTick, triggerUserAutopilot } from '
 import multer from 'multer';
 import { allIndexableUrls, buildRobotsTxt, buildSitemapIndexXml, getSeoEngineStatus, pingIndexNow } from './seoEngine.js';
 import { conciergeChat, executeConciergePlan, sanitizeMessages } from './concierge.js';
+import { cleanSpeechText, createLiveTranscriptionToken, NEURAL_SPEECH_CHANNELS, NEURAL_SPEECH_SAMPLE_RATE, synthesizeSpeech, synthesizeSpeechStream } from './speech.js';
 import { processVitrineDailyPosts, sanitizePublicVitrinePost } from './vitrineDaily.js';
+import { listAllPublicPosts } from './posts.js';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents.js';
 import { COLLECTIONS, cleanObject, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
 
@@ -1498,6 +1500,78 @@ router.post('/concierge/execute', requireAuth, asyncRoute(async (req: Authentica
   res.json({ ...outcome, wallet: await getWallet(req.user!.id) });
 }));
 
+
+// ───────────── Voz da Froc.IA (microfone + voz neural, mesmo sistema da Froc IA) ─────────────
+function speechTextFromBody(body: any): string {
+  return cleanSpeechText(safeString(body?.text, 6000));
+}
+
+router.post('/ai/speech/live-token', requireAuth, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await createLiveTranscriptionToken());
+}));
+
+router.post('/ai/speech', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const text = speechTextFromBody(req.body);
+  if (!text) return res.status(400).json({ error: 'O texto para voz é inválido ou excede o limite permitido.' });
+  try {
+    const result = await synthesizeSpeech(text);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(result);
+  } catch (error: any) {
+    console.error('[Froc Voz] Falha na voz neural:', error?.message || error);
+    res.status(503).json({ error: 'A voz neural está temporariamente indisponível.' });
+  }
+}));
+
+router.post('/ai/speech/stream', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const text = speechTextFromBody(req.body);
+  if (!text) {
+    res.status(400).json({ error: 'O texto para voz é inválido ou excede o limite permitido.' });
+    return;
+  }
+  let started = false;
+  let clientGone = false;
+  res.once('close', () => { clientGone = true; });
+  try {
+    for await (const chunk of synthesizeSpeechStream(text)) {
+      if (clientGone || res.writableEnded || res.destroyed) break;
+      if (!started) {
+        started = true;
+        res.status(200);
+        res.setHeader('Content-Type', 'audio/L16');
+        res.setHeader('Cache-Control', 'private, no-store, no-transform');
+        res.setHeader('X-Froc-Audio-Format', 'pcm-s16le');
+        res.setHeader('X-Froc-Audio-Sample-Rate', String(NEURAL_SPEECH_SAMPLE_RATE));
+        res.setHeader('X-Froc-Audio-Channels', String(NEURAL_SPEECH_CHANNELS));
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof (res as any).flushHeaders === 'function') (res as any).flushHeaders();
+      }
+      if (!res.write(chunk)) {
+        await new Promise<void>((resolve) => {
+          const done = () => { res.off('drain', done); res.off('close', done); resolve(); };
+          res.once('drain', done);
+          res.once('close', done);
+        });
+      }
+    }
+    if (!started && !res.headersSent) {
+      res.status(503).json({ error: 'O streaming de voz está temporariamente indisponível.' });
+      return;
+    }
+    if (!res.writableEnded && !res.destroyed) res.end();
+  } catch (error: any) {
+    console.error('[Froc Voz] Falha no streaming da voz:', error?.message || error);
+    if (res.writableEnded || res.destroyed) return;
+    // Nenhum áudio enviado ainda: devolve JSON para o navegador usar o fallback.
+    if (!started && !res.headersSent) {
+      res.status(503).json({ error: 'O streaming de voz está temporariamente indisponível.' });
+      return;
+    }
+    res.end();
+  }
+});
+
 // ───────────── Posts diários da Vitrine (público + painel) ─────────────
 router.get('/vitrine-posts', asyncRoute(async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit || 24), 1), 100);
@@ -1541,6 +1615,338 @@ router.get('/vitrine/:slug/posts/:postSlug', asyncRoute(async (req, res) => {
   const company = companySnap.exists ? { id: companySnap.id, ...companySnap.data() } as any : null;
   if (!company || company.slug !== slug || !parseStrictBoolean(company.isPublicInVitrine) || post.status !== 'published') return res.status(404).json({ error: 'Post não encontrado.' });
   res.json({ post: sanitizePublicVitrinePost(post), company: sanitizePublicVitrineCompany(company) });
+}));
+
+
+// ───────────── Janela "Posts": todas as postagens do site (Magazine + Vitrine) ─────────────
+router.get('/posts', asyncRoute(async (req, res) => {
+  const type = ['magazine', 'vitrine'].includes(String(req.query.type)) ? String(req.query.type) : 'all';
+  const q = safeString(req.query.q, 100).toLocaleLowerCase('pt-BR');
+  const limit = Math.min(Math.max(Number(req.query.limit || 24), 1), 60);
+  const page = Math.min(Math.max(Number(req.query.page || 1), 1), 1000);
+  const all = await listAllPublicPosts();
+  const filtered = all.filter((post) => (type === 'all' || post.kind === type) && (!q || `${post.title} ${post.summary} ${post.source} ${post.label} ${post.location || ''}`.toLocaleLowerCase('pt-BR').includes(q)));
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+  res.json({
+    posts: filtered.slice((page - 1) * limit, page * limit),
+    total: filtered.length,
+    page,
+    hasMore: page * limit < filtered.length,
+    counts: { all: all.length, magazine: all.filter((p) => p.kind === 'magazine').length, vitrine: all.filter((p) => p.kind === 'vitrine').length }
+  });
+}));
+
+
+// ───────────── Painel Admin completo: usuários, créditos, planos, projetos, posts, pagamentos ─────────────
+const ADMIN_ROLES = ['user', 'admin', 'support', 'editor'];
+const ADMIN_PLAN_IDS = ['plan_start', 'plan_pro', 'plan_business', 'plan_agency'];
+
+function walletSummary(wallet: any) {
+  return {
+    balance: Number(wallet?.balance || 0),
+    bonusBalance: Number(wallet?.bonusBalance || 0),
+    reservedCredits: Number(wallet?.reservedCredits || 0),
+    totalUsed: Number(wallet?.totalUsed || 0),
+    totalReceived: Number(wallet?.totalReceived || 0),
+    planId: wallet?.planId || 'plan_free',
+    planStatus: wallet?.planStatus || 'free',
+    currentPeriodEnd: wallet?.currentPeriodEnd || null
+  };
+}
+
+async function requireExistingUser(userId: string): Promise<any> {
+  const snap = await firestore().collection(COLLECTIONS.users).doc(userId).get();
+  if (!snap.exists) {
+    const error: any = new Error('Usuário não encontrado.');
+    error.statusCode = 404;
+    throw error;
+  }
+  return { id: snap.id, ...snap.data() };
+}
+
+async function deleteWhere(collection: string, field: string, value: string): Promise<number> {
+  const db = firestore();
+  let removed = 0;
+  while (true) {
+    const snap = await db.collection(collection).where(field, '==', value).limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((doc: any) => batch.delete(doc.ref));
+    await batch.commit();
+    removed += snap.size;
+    if (snap.size < 400) break;
+  }
+  return removed;
+}
+
+router.get('/admin/dashboard', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  const db = firestore();
+  const [users, wallets, companies, contents, blog, vitrinePosts, payments, tickets, executions] = await Promise.all([
+    db.collection(COLLECTIONS.users).get(), db.collection(COLLECTIONS.wallets).get(), db.collection(COLLECTIONS.companies).get(),
+    db.collection(COLLECTIONS.contentItems).get(), db.collection(COLLECTIONS.blogPosts).get(), db.collection(COLLECTIONS.vitrinePosts).get(),
+    db.collection(COLLECTIONS.payments).get(), db.collection(COLLECTIONS.supportTickets).get(), db.collection(COLLECTIONS.aiExecutions).get()
+  ]);
+  const walletList = queryData<any>(wallets);
+  const paymentList = queryData<any>(payments);
+  const approved = paymentList.filter((p) => p.lastPaymentStatus === 'approved' && p.source !== 'admin_grant');
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const userList = queryData<any>(users);
+  res.json({
+    stats: {
+      users: users.size,
+      newUsers7d: userList.filter((u) => String(u.createdAt || '') >= since).length,
+      companies: companies.size,
+      vitrineCompanies: queryData<any>(companies).filter((c) => parseStrictBoolean(c.isPublicInVitrine)).length,
+      contents: contents.size,
+      blogPublished: queryData<any>(blog).filter((p) => p.status === 'published').length,
+      vitrinePosts: vitrinePosts.size,
+      creditsInCirculation: walletList.reduce((sum, w) => sum + Number(w.balance || 0), 0),
+      creditsUsed: walletList.reduce((sum, w) => sum + Number(w.totalUsed || 0), 0),
+      paidUsers: walletList.filter((w) => w.planId && w.planId !== 'plan_free').length,
+      revenueApproved: Math.round(approved.reduce((sum, p) => sum + Number(p.amount || p.price || 0), 0) * 100) / 100,
+      openTickets: queryData<any>(tickets).filter((t) => ['open', 'in_progress'].includes(t.status)).length,
+      aiExecutions: executions.size,
+      aiFailures: queryData<any>(executions).filter((e) => e.status === 'failed').length
+    }
+  });
+}));
+
+router.get('/admin/users', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  const db = firestore();
+  const [usersSnap, walletsSnap, companiesSnap] = await Promise.all([db.collection(COLLECTIONS.users).get(), db.collection(COLLECTIONS.wallets).get(), db.collection(COLLECTIONS.companies).get()]);
+  const wallets = new Map(queryData<any>(walletsSnap).map((w) => [w.userId || w.id, w]));
+  const companyCount = new Map<string, number>();
+  queryData<any>(companiesSnap).forEach((c) => companyCount.set(c.userId, (companyCount.get(c.userId) || 0) + 1));
+  const users = queryData<any>(usersSnap).map(({ passwordHash, ...user }) => ({ ...user, wallet: walletSummary(wallets.get(user.id)), companies: companyCount.get(user.id) || 0 }))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  res.json({ users });
+}));
+
+router.get('/admin/users/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const user = await requireExistingUser(safeString(req.params.id, 200));
+  const db = firestore();
+  const [wallet, companies, contents, payments] = await Promise.all([
+    getWallet(user.id),
+    db.collection(COLLECTIONS.companies).where('userId', '==', user.id).get(),
+    db.collection(COLLECTIONS.contentItems).where('userId', '==', user.id).get(),
+    db.collection(COLLECTIONS.payments).where('userId', '==', user.id).get()
+  ]);
+  const { passwordHash, ...safeUser } = user;
+  res.json({
+    user: safeUser,
+    wallet: walletSummary(wallet),
+    companies: queryData<any>(companies),
+    transactions: await listCreditTransactions(user.id, 50),
+    contents: queryData<any>(contents).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 30)
+      .map((c) => ({ id: c.id, type: c.type, title: c.title, companyId: c.companyId, status: c.status, creditsUsed: c.creditsUsed, createdAt: c.createdAt })),
+    payments: queryData<any>(payments).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  });
+}));
+
+router.patch('/admin/users/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const user = await requireExistingUser(safeString(req.params.id, 200));
+  const patch: Record<string, any> = { updatedAt: nowIso() };
+  if (req.body?.name !== undefined) patch.name = safeString(req.body.name, 120);
+  if (req.body?.role !== undefined) {
+    const role = safeString(req.body.role, 20);
+    if (!ADMIN_ROLES.includes(role)) return res.status(400).json({ error: 'Papel inválido.' });
+    if (user.id === req.user!.id && role !== 'admin') return res.status(400).json({ error: 'Você não pode remover o seu próprio acesso de administrador.' });
+    patch.role = role;
+    await getAdminAuth().setCustomUserClaims(user.id, { role, frocRole: role });
+  }
+  if (req.body?.disabled !== undefined) {
+    const disabled = parseStrictBoolean(req.body.disabled);
+    if (user.id === req.user!.id && disabled) return res.status(400).json({ error: 'Você não pode bloquear a sua própria conta.' });
+    patch.disabled = disabled;
+    await getAdminAuth().updateUser(user.id, { disabled });
+    if (disabled) await getAdminAuth().revokeRefreshTokens(user.id);
+  }
+  await firestore().collection(COLLECTIONS.users).doc(user.id).set(cleanObject(patch), { merge: true });
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'update_user', targetUserId: user.id, details: { ...patch, updatedAt: undefined } });
+  res.json({ message: 'Usuário atualizado.', user: { ...user, ...patch, passwordHash: undefined } });
+}));
+
+router.delete('/admin/users/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const user = await requireExistingUser(safeString(req.params.id, 200));
+  if (user.id === req.user!.id) return res.status(400).json({ error: 'Você não pode excluir a sua própria conta pelo painel.' });
+  if (safeString(req.body?.confirm, 200) !== user.email && safeString(req.body?.confirm, 200) !== user.id) {
+    return res.status(400).json({ error: 'Confirme digitando o e-mail do usuário.' });
+  }
+  const db = firestore();
+  const companies = queryData<any>(await db.collection(COLLECTIONS.companies).where('userId', '==', user.id).get());
+  for (const company of companies) {
+    await deleteCompanyData(user.id, company.id);
+    await deleteWhere(COLLECTIONS.vitrinePosts, 'companyId', company.id);
+    await db.collection(COLLECTIONS.companies).doc(company.id).delete();
+  }
+  const removed: Record<string, number> = { companies: companies.length };
+  for (const collection of [COLLECTIONS.contentItems, COLLECTIONS.scheduledPosts, COLLECTIONS.campaigns, COLLECTIONS.notifications, COLLECTIONS.conciergeSessions, COLLECTIONS.mediaGenerationJobs, COLLECTIONS.creditReservations]) {
+    removed[collection] = await deleteWhere(collection, 'userId', user.id);
+  }
+  await db.collection(COLLECTIONS.wallets).doc(user.id).delete();
+  await db.collection(COLLECTIONS.users).doc(user.id).delete();
+  // Pagamentos e extrato de créditos são mantidos (obrigação fiscal/auditoria).
+  try {
+    await getAdminAuth().deleteUser(user.id);
+  } catch (error: any) {
+    if (error?.code !== 'auth/user-not-found') throw error;
+  }
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'delete_user', targetUserId: user.id, details: { email: user.email, removed } });
+  res.json({ message: 'Perfil excluído. Pagamentos e extrato foram preservados para auditoria.', removed });
+}));
+
+router.post('/admin/remove-credits', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const userId = safeString(req.body?.userId, 200);
+  const amount = Number(req.body?.amount || 0);
+  const reason = safeString(req.body?.reason, 500) || 'Remoção administrativa';
+  if (!userId || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100_000) return res.status(400).json({ error: 'Usuário ou quantidade inválidos.' });
+  await requireExistingUser(userId);
+  const wallet = await removeCreditsAdmin({ userId, amount, reason, operatorId: req.user!.id });
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'remove_credits', targetUserId: userId, details: { amount, reason } });
+  res.json({ message: 'Créditos removidos.', wallet: walletSummary(wallet) });
+}));
+
+router.post('/admin/users/:id/plan', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const user = await requireExistingUser(safeString(req.params.id, 200));
+  const db = firestore();
+  if (req.body?.revoke === true) {
+    const grants = queryData<any>(await db.collection(COLLECTIONS.payments).where('userId', '==', user.id).get()).filter((p) => p.source === 'admin_grant' && p.status !== 'failed');
+    for (const grant of grants) await db.collection(COLLECTIONS.payments).doc(grant.id).set({ status: 'failed', lastPaymentStatus: 'rejected', revokedAt: nowIso(), revokedBy: req.user!.id }, { merge: true });
+    await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'revoke_plan', targetUserId: user.id, details: { revoked: grants.length } });
+    return res.json({ message: 'Planos concedidos pelo admin foram revogados.', wallet: walletSummary(await getWallet(user.id)) });
+  }
+  const planId = safeString(req.body?.planId, 40);
+  const days = Math.min(Math.max(Number(req.body?.days || 30), 1), 3650);
+  if (!ADMIN_PLAN_IDS.includes(planId)) return res.status(400).json({ error: 'Plano inválido.' });
+  const plan = config.plans.find((item) => item.id === planId);
+  const id = newId('order');
+  const now = nowIso();
+  await db.collection(COLLECTIONS.payments).doc(id).set({
+    id, userId: user.id, planId, planName: plan?.name || planId, amount: 0, status: 'active', lastPaymentStatus: 'approved', lastCreditedAt: now,
+    currentPeriodEnd: new Date(Date.now() + days * 86_400_000).toISOString(), source: 'admin_grant', grantedBy: req.user!.id, createdAt: now, updatedAt: now
+  });
+  if (parseStrictBoolean(req.body?.withCredits) && plan) {
+    await addCredits({ userId: user.id, amount: plan.totalCredits, type: 'admin_adjustment', source: `Plano ${plan.name} concedido pelo admin`, idempotencyKey: `admin-plan:${id}`, metadata: { operatorId: req.user!.id } });
+  }
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'grant_plan', targetUserId: user.id, details: { planId, days } });
+  await createNotification({ userId: user.id, title: 'Plano ativado', message: `Seu plano ${plan?.name || planId} foi ativado por ${days} dias.`, type: 'system' });
+  res.json({ message: `Plano ${plan?.name || planId} ativado por ${days} dias.`, wallet: walletSummary(await getWallet(user.id)) });
+}));
+
+router.get('/admin/companies', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  const db = firestore();
+  const [companiesSnap, usersSnap, postsSnap] = await Promise.all([db.collection(COLLECTIONS.companies).get(), db.collection(COLLECTIONS.users).get(), db.collection(COLLECTIONS.vitrinePosts).get()]);
+  const users = new Map(queryData<any>(usersSnap).map((u) => [u.id, u]));
+  const postCount = new Map<string, number>();
+  queryData<any>(postsSnap).forEach((p) => postCount.set(p.companyId, (postCount.get(p.companyId) || 0) + 1));
+  const companies = queryData<any>(companiesSnap).map((c) => ({
+    id: c.id, name: c.name, slug: c.slug, userId: c.userId, ownerName: users.get(c.userId)?.name || '', ownerEmail: users.get(c.userId)?.email || '',
+    category: c.category || '', city: c.city || '', state: c.state || '', website: c.website || '', whatsapp: c.whatsapp || '', description: c.description || '',
+    isPublicInVitrine: parseStrictBoolean(c.isPublicInVitrine), vitrinePosts: postCount.get(c.id) || 0, createdAt: c.createdAt || '', updatedAt: c.updatedAt || ''
+  })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  res.json({ companies });
+}));
+
+router.post('/admin/companies', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const userId = safeString(req.body?.userId, 200);
+  const name = safeString(req.body?.name, 120);
+  if (!userId || !name) return res.status(400).json({ error: 'Dono e nome do projeto são obrigatórios.' });
+  await requireExistingUser(userId);
+  const id = newId('company');
+  const company = cleanObject({
+    id, userId, name, slug: `${slugify(name)}-${id.slice(-6)}`,
+    description: safeString(req.body?.description, 5000), website: safeHttpUrl(req.body?.website, 1000), whatsapp: safeString(req.body?.whatsapp, 80),
+    city: safeString(req.body?.city, 150), state: safeString(req.body?.state, 100), country: safeString(req.body?.country, 100) || 'Brasil',
+    category: safeString(req.body?.category, 150) || 'Comércio & Serviços', businessType: normalizeCompanyField('businessType', req.body?.businessType || 'online'),
+    products: [], services: [], keywords: [], isPublicInVitrine: parseStrictBoolean(req.body?.isPublicInVitrine), createdBy: req.user!.id, createdAt: nowIso(), updatedAt: nowIso()
+  });
+  await firestore().collection(COLLECTIONS.companies).doc(id).set(company);
+  if (company.isPublicInVitrine) await pingIndexNow([`${config.appUrl.replace(/\/$/, '')}/vitrine/${encodeURIComponent(company.slug)}`], 'admin_company_create');
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'create_company', targetUserId: userId, details: { companyId: id, name } });
+  res.status(201).json({ message: 'Projeto criado.', company });
+}));
+
+router.patch('/admin/companies/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const ref = firestore().collection(COLLECTIONS.companies).doc(safeString(req.params.id, 200));
+  const snap = await ref.get();
+  if (!snap.exists) return res.status(404).json({ error: 'Projeto não encontrado.' });
+  const current = { id: snap.id, ...snap.data() } as any;
+  const allowed = ['name', 'description', 'website', 'whatsapp', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine'];
+  const patch: Record<string, any> = {};
+  for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
+  if (req.body?.userId !== undefined) {
+    const newOwner = safeString(req.body.userId, 200);
+    await requireExistingUser(newOwner);
+    patch.userId = newOwner;
+  }
+  if (patch.name && patch.name !== current.name) patch.slug = `${slugify(patch.name)}-${current.id.slice(-6)}`;
+  patch.updatedAt = nowIso();
+  await ref.set(cleanObject(patch), { merge: true });
+  if (patch.userId) {
+    const posts = queryData<any>(await firestore().collection(COLLECTIONS.vitrinePosts).where('companyId', '==', current.id).get());
+    for (const post of posts) await firestore().collection(COLLECTIONS.vitrinePosts).doc(post.id).set({ userId: patch.userId }, { merge: true });
+  }
+  const fresh = { id: current.id, ...(await ref.get()).data() } as any;
+  if (parseStrictBoolean(fresh.isPublicInVitrine)) await pingIndexNow([`${config.appUrl.replace(/\/$/, '')}/vitrine/${encodeURIComponent(fresh.slug)}`], 'admin_company_update');
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'update_company', targetUserId: fresh.userId, details: { companyId: current.id, fields: Object.keys(patch) } });
+  res.json({ message: 'Projeto atualizado.', company: fresh });
+}));
+
+router.delete('/admin/companies/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const ref = firestore().collection(COLLECTIONS.companies).doc(safeString(req.params.id, 200));
+  const snap = await ref.get();
+  if (!snap.exists) return res.status(404).json({ error: 'Projeto não encontrado.' });
+  const company = { id: snap.id, ...snap.data() } as any;
+  await deleteCompanyData(company.userId, company.id);
+  const posts = await deleteWhere(COLLECTIONS.vitrinePosts, 'companyId', company.id);
+  await ref.delete();
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'delete_company', targetUserId: company.userId, details: { companyId: company.id, name: company.name, vitrinePosts: posts } });
+  res.json({ message: 'Projeto excluído com todos os dados vinculados.' });
+}));
+
+router.get('/admin/vitrine-posts', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  const snap = await firestore().collection(COLLECTIONS.vitrinePosts).get();
+  const posts = queryData<any>(snap).sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 300)
+    .map((p) => ({ id: p.id, title: p.title, slug: p.slug, companyId: p.companyId, companySlug: p.companySlug, companyName: p.companyName, status: p.status, angleLabel: p.angleLabel, date: p.date, publishedAt: p.publishedAt }));
+  res.json({ posts });
+}));
+
+router.patch('/admin/vitrine-posts/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const ref = firestore().collection(COLLECTIONS.vitrinePosts).doc(safeString(req.params.id, 300));
+  if (!(await ref.get()).exists) return res.status(404).json({ error: 'Post não encontrado.' });
+  const status = safeString(req.body?.status, 20);
+  if (!['published', 'archived'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+  await ref.set({ status, updatedAt: nowIso() }, { merge: true });
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'vitrine_post_status', details: { postId: req.params.id, status } });
+  res.json({ message: status === 'published' ? 'Post publicado.' : 'Post arquivado (removido do site e dos sitemaps).' });
+}));
+
+router.delete('/admin/vitrine-posts/:id', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const ref = firestore().collection(COLLECTIONS.vitrinePosts).doc(safeString(req.params.id, 300));
+  if (!(await ref.get()).exists) return res.status(404).json({ error: 'Post não encontrado.' });
+  await ref.delete();
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'delete_vitrine_post', details: { postId: req.params.id } });
+  res.json({ message: 'Post excluído.' });
+}));
+
+router.get('/admin/payments', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  const db = firestore();
+  const [paymentsSnap, usersSnap] = await Promise.all([db.collection(COLLECTIONS.payments).get(), db.collection(COLLECTIONS.users).get()]);
+  const users = new Map(queryData<any>(usersSnap).map((u) => [u.id, u]));
+  const payments = queryData<any>(paymentsSnap).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 500)
+    .map((p) => ({ id: p.id, userId: p.userId, userEmail: users.get(p.userId)?.email || '', planId: p.planId || '', planName: p.planName || p.planId || p.packageId || '', amount: Number(p.amount || p.price || 0), status: p.status || '', lastPaymentStatus: p.lastPaymentStatus || '', source: p.source || 'mercadopago', currentPeriodEnd: p.currentPeriodEnd || null, createdAt: p.createdAt || '' }));
+  res.json({ payments });
+}));
+
+router.get('/admin/activity', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  const db = firestore();
+  const [logsSnap, execSnap, txSnap] = await Promise.all([db.collection(COLLECTIONS.adminLogs).get(), db.collection(COLLECTIONS.aiExecutions).get(), db.collection(COLLECTIONS.creditTransactions).get()]);
+  const byDate = (field: string) => (a: any, b: any) => String(b[field] || '').localeCompare(String(a[field] || ''));
+  res.json({
+    adminLogs: queryData<any>(logsSnap).sort(byDate('createdAt')).slice(0, 100),
+    aiExecutions: queryData<any>(execSnap).sort(byDate('timestamp')).slice(0, 100).map((e) => ({ id: e.id, userId: e.userId, type: e.type, model: e.model, status: e.status, creditsConsumed: e.creditsConsumed, durationMs: e.durationMs, error: e.error, timestamp: e.timestamp })),
+    transactions: queryData<any>(txSnap).sort(byDate('timestamp')).slice(0, 100)
+  });
 }));
 
 // ───────────── Admin: Motor SEO e Vitrine diária ─────────────

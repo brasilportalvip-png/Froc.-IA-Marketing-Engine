@@ -405,3 +405,46 @@ export async function cleanupStaleReservations(maxAgeMinutes = 30): Promise<numb
   }
   return released;
 }
+/**
+ * Débito administrativo auditado (painel admin). Nunca deixa o saldo negativo nem
+ * consome créditos reservados por operações em andamento.
+ */
+export async function removeCreditsAdmin(data: { userId: string; amount: number; reason: string; operatorId: string }): Promise<WalletRecord> {
+  const amount = requireCreditAmount(data.amount, 'Quantidade de créditos');
+  const db = firestore();
+  const walletRef = db.collection(COLLECTIONS.wallets).doc(data.userId);
+  const txRef = db.collection(COLLECTIONS.creditTransactions).doc(newId('tx'));
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(walletRef);
+    const current = snap.exists ? normalizeWallet(data.userId, snap.data() as any) : defaultWallet(data.userId);
+    const available = current.balance - current.reservedCredits;
+    if (amount > available) {
+      const error: any = new Error(`Saldo disponível insuficiente: o usuário tem ${available} créditos livres.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    const after = current.balance - amount;
+    const next: WalletRecord = {
+      ...current,
+      id: data.userId,
+      userId: data.userId,
+      balance: after,
+      bonusBalance: Math.min(current.bonusBalance, after),
+      updatedAt: nowIso()
+    };
+    tx.set(walletRef, next, { merge: true });
+    tx.set(txRef, {
+      userId: data.userId,
+      type: 'admin_adjustment',
+      source: String(data.reason || 'Remoção administrativa').slice(0, 500),
+      amount: -amount,
+      balanceBefore: current.balance,
+      balanceAfter: after,
+      referenceId: null,
+      idempotencyKey: txRef.id,
+      timestamp: nowIso(),
+      metadata: { operatorId: data.operatorId, direction: 'debit' }
+    });
+    return next;
+  });
+}

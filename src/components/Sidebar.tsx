@@ -89,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const menuItems = [
     { id: 'home', label: 'Falar com a Froc.IA', icon: Sparkles, badge: 'IA' },
     { id: 'vitrine', label: 'Vitrine', icon: Store },
+    { id: 'posts', label: 'Posts', icon: FileText },
     { id: 'dashboard', label: 'Meu Painel', icon: LayoutDashboard },
     { id: 'empresa', label: 'Minha Marca', icon: Building2 },
     { id: 'conteudos', label: 'Minhas Criações', icon: FolderOpen },
