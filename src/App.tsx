@@ -32,6 +32,7 @@ import { AdminPage } from './pages/AdminPage';
 import { LegalPage } from './pages/LegalPage';
 import { ConciergeHome } from './pages/ConciergeHome';
 import { PublicTopBar } from './components/PublicTopBar';
+import { PostsPage } from './pages/PostsPage';
 import type { Campaign, Company, ContentItem, ScheduledPost, User, Wallet } from './types';
 import { ApiRequestError, apiRequest, isApiAbortError } from './lib/api';
 import { auth } from './lib/firebase';
@@ -41,6 +42,7 @@ const TAB_PATH: Record<string, string> = {
   dashboard: '/dashboard',
   empresa: '/empresa',
   vitrine: '/vitrine',
+  posts: '/posts',
   'froc-ia': '/froc-ia',
   autopilot: '/autopilot',
   'criar-conteudo': '/criar-conteudo',
@@ -66,7 +68,7 @@ const TAB_ALIASES: Record<string, string> = {
   redes: 'redes-sociais'
 };
 
-const PUBLIC_TABS = new Set(['home', 'vitrine', 'planos', 'legal']);
+const PUBLIC_TABS = new Set(['home', 'vitrine', 'posts', 'planos', 'legal']);
 
 interface RouteResolution {
   tab: string;
@@ -472,6 +474,8 @@ export default function App() {
         return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} campaigns={campaigns} scheduledPosts={scheduledPosts} onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>;
       case 'empresa':
         return <MyCompanyPage selectedCompany={selectedCompany} companies={companies} onSelectCompany={handleSelectCompany} onRefreshCompanies={refreshCompanies}/>;
+      case 'posts':
+        return <PostsPage onStart={() => navigate('home')}/>;
       case 'vitrine':
         return <VitrinePage onNavigate={navigate}/>;
       case 'froc-ia':
@@ -541,11 +545,11 @@ export default function App() {
     )
   );
 
-  if (guardedTab === 'home' || guardedTab === 'vitrine') {
+  if (guardedTab === 'home' || guardedTab === 'vitrine' || guardedTab === 'posts') {
     return <div className="min-h-[100dvh] bg-[#050505] text-white selection:bg-[#FF2D87] selection:text-white">
       <OfflineBanner/>
       <PwaInstallPrompt/>
-      {guardedTab === 'vitrine' && <PublicTopBar user={user} wallet={wallet} current="vitrine" onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>}
+      {guardedTab !== 'home' && <PublicTopBar user={user} wallet={wallet} current={guardedTab === 'posts' ? 'posts' : 'vitrine'} onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>}
       {content}
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSuccess={authSuccess}/>
       <TermsConsentModal isOpen={needsTermsConsent} onConsentSuccess={authSuccess} onLogout={logout}/>

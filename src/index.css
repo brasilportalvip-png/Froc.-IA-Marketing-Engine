@@ -194,6 +194,10 @@ img, svg, video, canvas { max-width: 100%; }
   .overflow-x-auto { -webkit-overflow-scrolling: touch; }
 }
 
+/* Ondas da conversa por voz */
+.froc-voice-bar { height: 6px; animation: frocVoiceWave 0.9s ease-in-out infinite; }
+@keyframes frocVoiceWave { 0%,100% { height: 5px; } 50% { height: 22px; } }
+
 /* Logo oficial em destaque: halo pulsante + anel giratório nas cores da marca */
 .froc-logo-hero { position: relative; display: inline-grid; place-items: center; }
 .froc-logo-hero::before { content: ''; position: absolute; inset: -18%; border-radius: 9999px; background: radial-gradient(circle, rgba(45,107,255,.55) 0%, rgba(255,45,135,.25) 45%, transparent 70%); filter: blur(18px); animation: frocHalo 4s ease-in-out infinite; }

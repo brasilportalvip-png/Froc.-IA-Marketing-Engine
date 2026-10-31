@@ -54,6 +54,9 @@ function rateLimitPolicy(req: Request): RateLimitPolicy | null {
   if (req.method === 'POST' && path === '/api/concierge/chat') {
     return { group: 'concierge-chat', limit: 60, windowMs: 10 * 60_000 };
   }
+  if (req.method === 'POST' && path.startsWith('/api/ai/speech')) {
+    return { group: 'neural-speech', limit: 90, windowMs: 10 * 60_000 };
+  }
   if (req.method === 'POST' && path === '/api/concierge/execute') {
     return { group: 'concierge-execute', limit: 15, windowMs: 10 * 60_000 };
   }
@@ -90,7 +93,7 @@ function contentSecurityPolicy(): string {
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
     "media-src 'self' blob: https:",
-    "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com wss://*.firebaseio.com",
+    "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com wss://*.firebaseio.com wss://generativelanguage.googleapis.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     'upgrade-insecure-requests'
@@ -140,7 +143,7 @@ export function createApp() {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
@@ -276,7 +279,7 @@ export function createApp() {
 
   // Shell SEO dinâmico para páginas públicas (com conteúdo pré-renderizado para robôs).
   app.get(
-    ['/', '/vitrine', '/vitrine/:slug', '/vitrine/:slug/:postSlug', '/blog', '/blog/:slug', '/planos', '/termos', '/privacidade'],
+    ['/', '/posts', '/vitrine', '/vitrine/:slug', '/vitrine/:slug/:postSlug', '/blog', '/blog/:slug', '/planos', '/termos', '/privacidade'],
     async (req, res, next) => {
       if (!config.isProduction) return next();
       try {

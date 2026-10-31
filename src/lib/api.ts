@@ -223,6 +223,11 @@ function createAbortError(): Error {
   return error;
 }
 
+/** URL absoluta de uma rota interna /api (respeita VITE_API_BASE_URL no app mobile). */
+export function apiUrl(endpoint: string): string {
+  return resolveApiUrl(endpoint).toString();
+}
+
 export async function apiRequest<T = any>(
   endpoint: string,
   options: ApiRequestOptions = {}

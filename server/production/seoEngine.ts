@@ -81,6 +81,7 @@ export async function collectSitemapGroups(): Promise<Record<SitemapGroup, Sitem
   const groups: Record<SitemapGroup, SitemapEntry[]> = {
     page: [
       { loc: `${base}/` },
+      { loc: `${base}/posts` },
       { loc: `${base}/vitrine` },
       { loc: `${base}/blog` },
       { loc: `${base}/planos` },
@@ -210,6 +211,7 @@ export function buildRobotsTxt(): string {
   return `# Froc.IA — robots.txt
 User-agent: *
 Allow: /
+Allow: /posts
 Allow: /blog
 Allow: /vitrine
 Allow: /planos

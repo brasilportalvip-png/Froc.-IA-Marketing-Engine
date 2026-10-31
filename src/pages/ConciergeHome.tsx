@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowUp, Bot, Check, CheckCircle2, ChevronDown, Coins, Crown, ExternalLink, Image as ImageIcon,
+  ArrowUp, Bot, Mic, MicOff, Square, Volume2, Check, CheckCircle2, ChevronDown, Coins, Crown, ExternalLink, Image as ImageIcon,
   Loader2, MapPin, Megaphone, RotateCcw, Search, Sparkles, Store, Target, Users, Video, XCircle, Zap
 } from 'lucide-react';
 import type { Company, User, Wallet } from '../types';
 import { apiRequest } from '../lib/api';
 import { PublicTopBar } from '../components/PublicTopBar';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents';
+import { isVoiceSupported, useFrocVoice } from '../lib/voice/useFrocVoice';
+import { VoiceStatusBar } from '../components/VoiceStatusBar';
 
 interface Targeting { country: string; state: string; city: string; neighborhoods: string[]; streets: string[]; radiusKm: number }
 interface Collected { businessName: string; offer: string; objective: string; audience: string; tone: string; media: string; platforms: string[]; website: string; whatsapp: string; instagram: string; colors: string; targeting: Targeting }
@@ -154,6 +156,12 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
   const [executing, setExecuting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [liveAgents, setLiveAgents] = useState(173);
+  const voiceSupported = useMemo(isVoiceSupported, []);
+  const voice = useFrocVoice({
+    neural: Boolean(user),
+    onCommand: (command) => { void send(command, true); },
+    onPartial: (text) => { setInput(text); window.requestAnimationFrame(autosize); }
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -174,9 +182,9 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, fromVoice = false) => {
     const content = text.trim();
-    if (!content || thinking) return;
+    if (!content || thinking) { if (fromVoice) voice.cancelThinking(); return; }
     setError('');
     const next: ChatMessage[] = [...messages, { id: uid(), role: 'user', content }];
     setMessages(next);
@@ -194,9 +202,13 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
         timeoutMs: 90_000
       });
       setCollected(data.collected);
-      setMessages((current) => [...current, { id: uid(), role: 'assistant', content: data.reply, agents: data.agents, plan: data.plan, quickReplies: data.quickReplies }]);
+      const replyId = uid();
+      setMessages((current) => [...current, { id: replyId, role: 'assistant', content: data.reply, agents: data.agents, plan: data.plan, quickReplies: data.quickReplies }]);
+      // Conversa por voz ligada: a Froc.IA responde falando e volta a ouvir sozinha.
+      if (fromVoice || voice.enabled) void voice.speak(data.reply, replyId);
     } catch (err: any) {
       setError(err?.message || 'A Froc.IA está muito requisitada agora. Tente de novo em instantes.');
+      if (fromVoice || voice.enabled) voice.cancelThinking();
     } finally {
       setThinking(false);
     }
@@ -236,6 +248,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
   };
 
   const reset = () => {
+    voice.disable();
     setMessages([]);
     setCollected(null);
     setError('');
@@ -320,6 +333,16 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
                 <div className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-[#FFD400] via-[#FF2D87] to-[#00E676] text-black"><Bot size={18} /></div>
                 <div className="min-w-0 flex-1">
                   <div className="whitespace-pre-line text-sm leading-7 text-neutral-100" dangerouslySetInnerHTML={{ __html: escapeAndBold(message.content) }} />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={() => voice.speakingId === message.id ? voice.stopSpeaking() : void voice.speak(message.content, message.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] transition ${voice.speakingId === message.id ? 'border-[#FF2D87] bg-[#FF2D87]/15 text-[#ff7ab3]' : 'border-white/10 text-neutral-400 hover:text-white'}`}
+                      aria-label={voice.speakingId === message.id ? 'Parar leitura' : 'Ouvir resposta'}
+                    >
+                      {voice.speakingId === message.id ? <Square size={11} /> : <Volume2 size={12} />}
+                      {voice.speakingId === message.id ? 'Parar' : 'Ouvir'}
+                    </button>
+                  </div>
                   {message.agents && <AgentsStrip agents={message.agents} />}
 
                   {message.plan && (
@@ -390,6 +413,8 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
       <div className="fixed inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/95 to-transparent px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-10">
         <div className="mx-auto max-w-3xl">
           {error && <p className="mb-2 rounded-xl border border-[#FF2D87]/30 bg-[#FF2D87]/10 px-3 py-2 text-xs text-[#ff7ab3]">{error}</p>}
+          {voice.error && <p className="mb-2 rounded-xl border border-[#FFD400]/30 bg-[#FFD400]/10 px-3 py-2 text-xs text-[#ffe14d]">{voice.error}</p>}
+          {voice.enabled && <VoiceStatusBar phase={voice.phase} neural={Boolean(user)} onStop={voice.disable} />}
           <form
             onSubmit={(event) => { event.preventDefault(); send(input); }}
             className="froc-glow-card flex items-end gap-2 p-2 pl-4"
@@ -400,16 +425,29 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               rows={1}
               onChange={(event) => { setInput(event.target.value); autosize(); }}
               onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(input); } }}
-              placeholder={empty ? 'Ex.: Tenho uma pizzaria no bairro Centro em Campinas e quero mais pedidos…' : 'Responda para a Froc.IA…'}
+              placeholder={voice.enabled ? 'Pode falar, estou ouvindo…' : empty ? 'Ex.: Tenho uma pizzaria no bairro Centro em Campinas e quero mais pedidos…' : 'Responda para a Froc.IA…'}
               className="max-h-[180px] min-h-[44px] flex-1 resize-none bg-transparent py-3 text-sm text-white outline-none placeholder:text-neutral-500"
               aria-label="Mensagem para a Froc.IA"
               maxLength={2000}
             />
+            {voiceSupported && (
+              <button
+                type="button"
+                onClick={voice.toggle}
+                aria-label={voice.enabled ? 'Desligar conversa por voz' : 'Falar com a Froc.IA'}
+                aria-pressed={voice.enabled}
+                title={voice.enabled ? 'Desligar microfone' : 'Falar com a Froc.IA (diga "pare" para desligar)'}
+                className={`relative grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition ${voice.enabled ? 'bg-[#FF2D87] text-white shadow-[0_0_24px_rgba(255,45,135,.6)]' : 'border border-white/15 bg-white/[0.04] text-white hover:border-[#FFD400] hover:text-[#FFD400]'}`}
+              >
+                {voice.enabled && voice.phase === 'listening' && <span className="absolute inset-0 animate-ping rounded-2xl bg-[#FF2D87]/40" />}
+                {voice.enabled ? <MicOff size={19} className="relative" /> : <Mic size={19} />}
+              </button>
+            )}
             <button type="submit" disabled={!input.trim() || thinking} aria-label="Enviar" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#FFD400] text-black transition hover:bg-white disabled:opacity-30">
               {thinking ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={20} strokeWidth={3} />}
             </button>
           </form>
-          <p className="mt-2 text-center text-[10px] text-neutral-500">A Froc.IA confirma tudo com você antes de executar. Conversar é grátis; créditos só são usados nas criações confirmadas.</p>
+          <p className="mt-2 text-center text-[10px] text-neutral-500">Digite ou toque no microfone e fale. A Froc.IA confirma tudo antes de executar; conversar é grátis e créditos só são usados nas criações confirmadas.</p>
         </div>
       </div>
     </div>

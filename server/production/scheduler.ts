@@ -638,13 +638,36 @@ async function processAutoBlog(): Promise<number> {
   if (!claimed) return 0;
 
   const topics = [
-    'como estruturar um calendário editorial que realmente ajuda a vender',
+    'como aparecer no Google sem pagar anúncios: guia de tráfego orgânico para pequenas empresas',
+    'SEO local: como ser encontrado por clientes do seu bairro e da sua cidade',
+    'Google Meu Negócio: o passo a passo para atrair clientes da região',
+    'palavras-chave de cauda longa: como vender mais com buscas específicas',
+    'como escrever títulos que fazem as pessoas clicarem no Google',
+    'gatilhos mentais éticos que aumentam vendas sem enganar o cliente',
+    'como transformar seguidores do Instagram em clientes pagantes',
+    'conteúdo diário: por que publicar todos os dias acelera o crescimento orgânico',
     'como usar inteligência artificial no marketing sem perder a identidade da marca',
-    'SEO para pequenas empresas: fundamentos que continuam importantes',
-    'como transformar diferenciais da empresa em conteúdo persuasivo',
+    'como criar uma chamada para ação irresistível no WhatsApp',
+    'SEO para sites de serviços: o que o Google precisa ver na sua página',
+    'como montar um calendário editorial que realmente ajuda a vender',
+    'perguntas frequentes que viram tráfego: como responder o que o cliente busca',
+    'Reels e TikTok para negócios locais: roteiros curtos que geram mensagens',
+    'como medir se o marketing está trazendo clientes de verdade',
+    'dados estruturados e Schema: como ganhar destaque nos resultados do Google',
+    'velocidade do site e experiência no celular: o impacto nas vendas',
+    'prova social real: como coletar avaliações e depoimentos do jeito certo',
+    'como fazer marketing para negócios de bairro com orçamento pequeno',
+    'funil de vendas simples para pequenas empresas: do primeiro contato ao fechamento',
+    'como escolher as palavras certas para o site da sua empresa',
+    'o que é tráfego orgânico e por que ele é o ativo mais valioso do seu negócio',
+    'como usar o blog da empresa para aparecer no Google todos os dias',
+    'marketing de conteúdo para e-commerce: descrições de produto que vendem',
+    'como quebrar as objeções de compra mais comuns no seu nicho',
     'automação de marketing com aprovação humana: quando usar cada modo',
-    'como medir se uma campanha de conteúdo está ajudando o negócio',
-    'boas práticas para reutilizar conteúdo entre redes sociais sem parecer repetitivo'
+    'como reaproveitar um conteúdo em várias redes sem parecer repetitivo',
+    'indexação no Google: como fazer suas páginas novas aparecerem mais rápido',
+    'branding para pequenas empresas: como ser lembrado pelo cliente',
+    'como criar ofertas irresistíveis sem dar desconto'
   ];
   const index = Math.floor(Date.now() / 86_400_000) % topics.length;
   try {
@@ -656,7 +679,7 @@ async function processAutoBlog(): Promise<number> {
     const post = {
       id, title: String(article.title || 'Froc Magazine').slice(0, 180), slug,
       summary: String(article.summary || article.metaDescription || '').slice(0, 500),
-      content: String(article.content || '').slice(0, 120_000), featuredImageUrl: '', author: config.blog.author,
+      content: String(article.content || '').slice(0, 120_000), featuredImageUrl: `${baseUrl()}/og-froc.jpg`, author: config.blog.author,
       category: String(article.category || 'Marketing & IA').slice(0, 100),
       tags: Array.isArray(article.tags) ? article.tags.slice(0, 12).map((x:any)=>String(x).slice(0,80)) : ['Marketing','IA'],
       seoTitle: String(article.title || '').slice(0, 70), seoDescription: String(article.metaDescription || article.summary || '').slice(0, 180),

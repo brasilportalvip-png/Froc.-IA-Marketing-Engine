@@ -95,7 +95,8 @@ export const config = {
     whatsapp: env('SUPPORT_WHATSAPP')
   },
   blog: {
-    autoEnabled: env('AUTO_BLOG_ENABLED', 'false').toLowerCase() === 'true',
+    // Ligado por padrão: o site publica 1 artigo por dia no Froc Magazine (desligue com AUTO_BLOG_ENABLED=false).
+    autoEnabled: env('AUTO_BLOG_ENABLED', isTest ? 'false' : 'true').toLowerCase() === 'true',
     author: env('BLOG_AUTHOR', 'Equipe Froc.IA')
   },
   seoEngine: {

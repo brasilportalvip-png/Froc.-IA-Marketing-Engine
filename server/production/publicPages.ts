@@ -1,5 +1,6 @@
 import { config } from '../config/index.js';
 import { COLLECTIONS, firestore, queryData } from './store.js';
+import { listAllPublicPosts } from './posts.js';
 
 function esc(value: any): string {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -107,6 +108,22 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
     return {
       ...fallback, title: 'Vitrine Froc.IA — Marcas em destaque com tráfego orgânico', description: 'A vitrine mais desejada do marketing digital: marcas em destaque, posts diários estratégicos e SEO local. Coloque seu site aqui.',
       schema: [website, breadcrumb(base, [{ name: 'Vitrine', url: `${base}/vitrine` }]), { '@context': 'https://schema.org', '@type': 'ItemList', name: 'Vitrine Froc.IA', itemListElement: items.slice(0, 100).map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, url: item.url })) }],
+      prerender
+    };
+  }
+  if (pathname === '/posts') {
+    let prerender = '<h1>Posts da Froc.IA</h1><p>Todas as postagens: artigos do Froc Magazine e os posts estratégicos diários das marcas da Vitrine.</p>';
+    let items: Array<{ name: string; url: string }> = [];
+    try {
+      const posts = (await listAllPublicPosts()).slice(0, 100);
+      items = posts.map((post) => ({ name: post.title, url: `${base}${post.path}` }));
+      prerender += `<ul>${posts.map((post) => `<li><a href="${esc(post.path)}">${esc(post.title)}</a> — ${esc(post.source)}${post.publishedAt ? ` · ${esc(post.publishedAt.slice(0, 10))}` : ''}</li>`).join('')}</ul>`;
+    } catch { /* lista indisponível: mantém a introdução */ }
+    return {
+      ...fallback,
+      title: 'Posts — Marketing, SEO e marcas em destaque | Froc.IA',
+      description: 'Todas as postagens da Froc.IA: artigos de marketing, SEO e IA do Froc Magazine e posts diários das marcas da Vitrine.',
+      schema: [website, breadcrumb(base, [{ name: 'Posts', url: `${base}/posts` }]), { '@context': 'https://schema.org', '@type': 'CollectionPage', name: 'Posts da Froc.IA', url: `${base}/posts`, mainEntity: { '@type': 'ItemList', itemListElement: items.slice(0, 50).map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, url: item.url })) } }],
       prerender
     };
   }
