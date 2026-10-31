@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Coins, Crown, ExternalLink, RefreshCw, ShieldCheck, Sparkles, XCircle } from 'lucide-react';
 import type { Wallet } from '../types';
+import { CreditRules } from '../components/CreditRules';
 import { apiRequest } from '../lib/api';
 
 interface Props { wallet: Wallet | null; onRefreshWallet: () => void; onNavigate: (tab: string) => void; }
@@ -153,7 +154,7 @@ if (isFinanciallyConfirmed) {
   return <div className="mx-auto max-w-6xl space-y-8 animate-fadeIn">
     <header className="mx-auto max-w-2xl text-center">
       <div className="mx-auto mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs font-bold text-cyan-300"><Crown size={14}/>Planos oficiais Froc.IA</div>
-      <h2 className="text-2xl font-black text-white md:text-4xl">Escalone seu marketing com créditos transparentes</h2>
+      <h2 className="text-2xl font-black text-white md:text-4xl">Escolha seu plano e entre na Vitrine Froc.IA</h2>
       <p className="mt-2 text-sm text-slate-400">Valores, bônus e limites vêm diretamente do catálogo do backend. {billingMode === 'subscription' ? 'A cobrança é mensal recorrente pelo Mercado Pago.' : 'A cobrança atual é avulsa por ciclo de créditos.'}</p>
     </header>
 
@@ -161,6 +162,7 @@ if (isFinanciallyConfirmed) {
     {error && <div className="mx-auto max-w-2xl rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300">⚠️ {error}</div>}
     {!gateway && !loading && <div className="mx-auto max-w-2xl rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-xs text-amber-200">Mercado Pago não está disponível no backend atual. O checkout permanecerá bloqueado até a configuração estar válida.</div>}
 
+    <div className="mx-auto max-w-6xl"><CreditRules /></div>
     {billingMode === 'subscription' && activeSubscription && <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-cyan-500/25 bg-cyan-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-xs text-slate-300"><div className="font-bold text-cyan-300">Renovação automática ativa</div><div className="mt-1">{activeSubscription.planName || activeSubscription.planId}{activeSubscription.nextPaymentDate ? ` • Próxima cobrança: ${new Date(activeSubscription.nextPaymentDate).toLocaleDateString('pt-BR')}` : ''}</div></div>
       <button disabled={cancelling} onClick={cancelRenewal} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 text-xs font-bold text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"><XCircle size={14}/>{cancelling ? 'Cancelando…' : 'Cancelar renovação'}</button>

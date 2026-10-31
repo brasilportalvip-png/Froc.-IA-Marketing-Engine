@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp, Mic, MicOff, Square, Volume2, Check, CheckCircle2, ChevronDown, Coins, Crown, ExternalLink, Image as ImageIcon,
-  Loader2, MapPin, Megaphone, RotateCcw, Search, Sparkles, Store, Target, Users, Video, XCircle, Zap
+  Loader2, MapPin, Megaphone, RotateCcw, Search, Sparkles, Store, Target, Users, Video, XCircle, Zap,
+  History, Lock, Trash2, X, MessageSquare
 } from 'lucide-react';
 import type { Company, User, Wallet } from '../types';
 import { apiRequest } from '../lib/api';
@@ -37,7 +38,10 @@ interface Props {
   onRefreshCompanies: () => void;
 }
 
-const STORAGE_KEY = 'froc.concierge.v1';
+const STORAGE_KEY = 'froc.concierge.v2';
+const CHAT_REPLY_COST = 3;
+
+interface ConversationSummary { id: string; title: string; status: 'open' | 'closed'; messageCount: number; lastMessage: string; updatedAt: string }
 const COLOR: Record<AgentLite['color'], string> = { yellow: '#FFD400', pink: '#FF2D87', green: '#00E676', white: '#ffffff' };
 
 const STARTERS = [
@@ -51,15 +55,75 @@ function uid(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function loadState(): { messages: ChatMessage[]; collected: Collected | null } {
+function loadState(): { messages: ChatMessage[]; collected: Collected | null; conversationId: string | null } {
   try {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return { messages: [], collected: null };
+    if (!raw) return { messages: [], collected: null, conversationId: null };
     const parsed = JSON.parse(raw);
-    return { messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-40) : [], collected: parsed.collected || null };
+    return { messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-40) : [], collected: parsed.collected || null, conversationId: typeof parsed.conversationId === 'string' ? parsed.conversationId : null };
   } catch {
-    return { messages: [], collected: null };
+    return { messages: [], collected: null, conversationId: null };
   }
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diff)) return '';
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h} h`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? 'ontem' : `há ${d} dias`;
+}
+
+/** Histórico de conversas: abrir, fechar (só leitura) e excluir. */
+function ConversationsPanel(props: {
+  open: boolean; loading: boolean; items: ConversationSummary[]; currentId: string | null;
+  onClose: () => void; onOpenConversation: (id: string) => void; onNew: () => void;
+  onCloseConversation: (id: string) => void; onDelete: (id: string) => void;
+}) {
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  if (!props.open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Minhas conversas">
+      <button className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={props.onClose} aria-label="Fechar histórico" />
+      <aside className="relative flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0b0b0b] animate-fadeIn">
+        <div className="flex items-center justify-between border-b border-white/10 p-4 pt-[calc(16px+env(safe-area-inset-top))]">
+          <p className="flex items-center gap-2 text-sm font-black text-white"><History size={16} className="text-[#FFD400]" /> Minhas conversas</p>
+          <button onClick={props.onClose} className="rounded-full p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white" aria-label="Fechar"><X size={18} /></button>
+        </div>
+        <div className="p-3">
+          <button onClick={props.onNew} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#FFD400] px-4 py-2.5 text-sm font-black text-black hover:bg-white"><MessageSquare size={15} /> Nova conversa</button>
+        </div>
+        <div className="flex-1 space-y-2 overflow-y-auto px-3 pb-6">
+          {props.loading && <p className="flex items-center gap-2 p-3 text-xs text-neutral-400"><Loader2 size={14} className="animate-spin" /> Carregando…</p>}
+          {!props.loading && props.items.length === 0 && <p className="p-3 text-xs text-neutral-500">Suas conversas com o Froc.IA aparecem aqui.</p>}
+          {props.items.map((item) => (
+            <div key={item.id} className={`rounded-2xl border p-3 transition ${item.id === props.currentId ? 'border-[#FFD400]/50 bg-[#FFD400]/[0.06]' : 'border-white/10 bg-white/[0.02] hover:border-white/25'}`}>
+              <button onClick={() => props.onOpenConversation(item.id)} className="block w-full text-left">
+                <p className="flex items-center gap-1.5 truncate text-xs font-bold text-white">{item.status === 'closed' && <Lock size={11} className="shrink-0 text-neutral-500" />}{item.title}</p>
+                <p className="mt-0.5 line-clamp-2 text-[11px] text-neutral-400">{item.lastMessage}</p>
+                <p className="mt-1 text-[10px] text-neutral-500">{item.messageCount} mensagens · {timeAgo(item.updatedAt)}{item.status === 'closed' ? ' · fechada' : ''}</p>
+              </button>
+              <div className="mt-2 flex gap-2">
+                {item.status !== 'closed' && <button onClick={() => props.onCloseConversation(item.id)} className="inline-flex items-center gap-1 rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-neutral-300 hover:text-white"><Lock size={10} /> Fechar</button>}
+                {confirmId === item.id ? (
+                  <>
+                    <button onClick={() => { props.onDelete(item.id); setConfirmId(null); }} className="inline-flex items-center gap-1 rounded-full bg-[#FF2D87] px-2.5 py-1 text-[10px] font-bold text-white">Confirmar exclusão</button>
+                    <button onClick={() => setConfirmId(null)} className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-neutral-400">Cancelar</button>
+                  </>
+                ) : (
+                  <button onClick={() => setConfirmId(item.id)} className="inline-flex items-center gap-1 rounded-full border border-[#FF2D87]/30 px-2.5 py-1 text-[10px] text-[#ff7ab3] hover:bg-[#FF2D87]/10"><Trash2 size={10} /> Excluir</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </aside>
+    </div>
+  );
 }
 
 function TargetingCard({ targeting, media }: { targeting: Targeting; media?: string }) {
@@ -152,6 +216,11 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
   const initial = useMemo(loadState, []);
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
   const [collected, setCollected] = useState<Collected | null>(initial.collected);
+  const [conversationId, setConversationId] = useState<string | null>(initial.conversationId);
+  const [conversationClosed, setConversationClosed] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
   const [executing, setExecuting] = useState<string | null>(null);
@@ -173,9 +242,66 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    try { window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ messages: messages.slice(-40), collected })); } catch { /* armazenamento opcional */ }
+    try { window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ messages: messages.slice(-40), collected, conversationId })); } catch { /* armazenamento opcional */ }
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, collected, thinking]);
+  }, [messages, collected, thinking, conversationId]);
+
+  // Saiu da conta: a conversa salva pertence ao usuário anterior.
+  useEffect(() => { if (!user) { setConversationId(null); setConversationClosed(false); } }, [user]);
+
+  const loadConversations = async () => {
+    if (!user) return;
+    setHistoryLoading(true);
+    try {
+      const data = await apiRequest<{ conversations: ConversationSummary[] }>('/api/concierge/conversations');
+      setConversations(data.conversations || []);
+    } catch (err: any) {
+      setError(err?.message || 'Não consegui carregar suas conversas.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const openHistory = () => {
+    if (!user) { onOpenAuth(); return; }
+    setHistoryOpen(true);
+    void loadConversations();
+  };
+
+  const openConversation = async (id: string) => {
+    try {
+      const data = await apiRequest<{ conversation: { id: string; status: string; messages: Array<{ role: 'user' | 'assistant'; content: string }>; collected: Collected | null } }>(`/api/concierge/conversations/${encodeURIComponent(id)}`);
+      voice.disable();
+      setMessages((data.conversation.messages || []).map((m) => ({ id: uid(), role: m.role, content: m.content })));
+      setCollected(data.conversation.collected || null);
+      setConversationId(data.conversation.id);
+      setConversationClosed(data.conversation.status === 'closed');
+      setHistoryOpen(false);
+      setError('');
+    } catch (err: any) {
+      setError(err?.message || 'Não consegui abrir esta conversa.');
+    }
+  };
+
+  const closeConversationById = async (id: string) => {
+    try {
+      await apiRequest(`/api/concierge/conversations/${encodeURIComponent(id)}/close`, { method: 'POST' });
+      if (id === conversationId) setConversationClosed(true);
+      await loadConversations();
+    } catch (err: any) {
+      setError(err?.message || 'Não consegui fechar a conversa.');
+    }
+  };
+
+  const deleteConversationById = async (id: string) => {
+    try {
+      await apiRequest(`/api/concierge/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (id === conversationId) reset();
+      await loadConversations();
+    } catch (err: any) {
+      setError(err?.message || 'Não consegui excluir a conversa.');
+    }
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => setLiveAgents(170 + Math.floor(Math.random() * 30)), 2600);
@@ -191,7 +317,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
 
   const send = async (text: string, fromVoice = false) => {
     const content = text.trim();
-    if (!content || thinking) { if (fromVoice) voice.cancelThinking(); return; }
+    if (!content || thinking || conversationClosed) { if (fromVoice) voice.cancelThinking(); return; }
     setError('');
     const next: ChatMessage[] = [...messages, { id: uid(), role: 'user', content }];
     setMessages(next);
@@ -199,16 +325,19 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
     window.requestAnimationFrame(autosize);
     setThinking(true);
     try {
-      const data = await apiRequest<{ reply: string; quickReplies: string[]; collected: Collected; plan: Plan | null; agents: AgentLite[] }>('/api/concierge/chat', {
+      const data = await apiRequest<{ reply: string; quickReplies: string[]; collected: Collected; plan: Plan | null; agents: AgentLite[]; conversationId?: string; creditsUsed?: number; needsLogin?: boolean; needsCredits?: boolean }>('/api/concierge/chat', {
         method: 'POST',
         body: {
           messages: next.map(({ role, content: body }) => ({ role, content: body })).slice(-24),
           collected,
-          companyId: selectedCompany?.id
+          companyId: selectedCompany?.id,
+          conversationId: user ? conversationId : undefined
         },
         timeoutMs: 90_000
       });
-      setCollected(data.collected);
+      if (data.collected) setCollected(data.collected);
+      if (data.conversationId) setConversationId(data.conversationId);
+      if (user) onRefreshWallet();
       const replyId = uid();
       setMessages((current) => [...current, { id: replyId, role: 'assistant', content: data.reply, agents: data.agents, plan: data.plan, quickReplies: data.quickReplies }]);
       // Conversa por voz ligada: o Froc.IA responde falando e volta a ouvir sozinha.
@@ -258,12 +387,18 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
     voice.disable();
     setMessages([]);
     setCollected(null);
+    setConversationId(null);
+    setConversationClosed(false);
+    setHistoryOpen(false);
     setError('');
     try { window.sessionStorage.removeItem(STORAGE_KEY); } catch { /* opcional */ }
   };
 
   const onQuick = (value: string) => {
     if (value === 'Ver minha vitrine') { onNavigate('vitrine'); return; }
+    if (value === 'Criar conta grátis') { onOpenAuth(); return; }
+    if (value === 'Ver planos') { onNavigate('planos'); return; }
+    if (value === 'Comprar créditos') { onNavigate('creditos'); return; }
     send(value);
   };
 
@@ -276,6 +411,11 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
       <div className="froc-aurora" />
       <div className="froc-grid-bg" />
       <PublicTopBar user={user} wallet={wallet} current="home" onNavigate={onNavigate} onOpenAuth={onOpenAuth} />
+      <ConversationsPanel
+        open={historyOpen} loading={historyLoading} items={conversations} currentId={conversationId}
+        onClose={() => setHistoryOpen(false)} onOpenConversation={(id) => void openConversation(id)} onNew={reset}
+        onCloseConversation={(id) => void closeConversationById(id)} onDelete={(id) => void deleteConversationById(id)}
+      />
 
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto pb-44 pt-[calc(80px+env(safe-area-inset-top))]">
         {empty ? (
@@ -284,6 +424,9 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               <img src="/brand/logo-froc-512.webp" alt="Froc.IA — inteligência artificial de marketing" width={176} height={176} className="relative z-10 h-32 w-32 rounded-full sm:h-44 sm:w-44" fetchPriority="high" />
             </div>
             <p className="mb-3 text-lg font-black text-white sm:text-xl">{now.greeting}{name ? `, ${name}` : ''}! 👋</p>
+            {user && (
+              <button onClick={openHistory} className="mb-4 inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-[11px] text-neutral-300 hover:border-[#FFD400] hover:text-[#FFD400]"><History size={12} /> Minhas conversas</button>
+            )}
             <p className="mb-5 text-xs capitalize text-neutral-400">{now.longDate} · {now.time}</p>
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#00E676]/30 bg-[#00E676]/[0.07] px-4 py-1.5 text-[11px] font-bold text-[#00E676]">
               <span className="froc-pulse-dot h-2 w-2 rounded-full bg-[#00E676] text-[#00E676]" />
@@ -330,7 +473,12 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
           <section className="mx-auto max-w-3xl space-y-5 px-4">
             <div className="flex items-center justify-between">
               <p className="text-[11px] font-bold uppercase tracking-widest text-neutral-500">Conversa com o Froc.IA</p>
-              <button onClick={reset} className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-neutral-400 hover:text-white"><RotateCcw size={11} /> Nova conversa</button>
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                {user && <button onClick={openHistory} className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-neutral-400 hover:text-white"><History size={11} /> Conversas</button>}
+                {user && conversationId && !conversationClosed && <button onClick={() => void closeConversationById(conversationId)} className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-neutral-400 hover:text-white"><Lock size={11} /> Fechar</button>}
+                {user && conversationId && <button onClick={() => void deleteConversationById(conversationId)} className="inline-flex items-center gap-1 rounded-full border border-[#FF2D87]/30 px-3 py-1 text-[11px] text-[#ff7ab3] hover:bg-[#FF2D87]/10"><Trash2 size={11} /> Excluir</button>}
+                <button onClick={reset} className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-neutral-400 hover:text-white"><RotateCcw size={11} /> Nova conversa</button>
+              </div>
             </div>
 
             {messages.map((message) => message.role === 'user' ? (
@@ -366,12 +514,12 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
                               {action.type === 'generate_image' ? <ImageIcon size={14} className="text-[#FF2D87]" /> : action.type === 'generate_video_script' ? <Video size={14} className="text-[#FF2D87]" /> : <Check size={14} className="text-[#00E676]" />}
                               {action.label}
                             </span>
-                            <span className="shrink-0 font-bold text-neutral-400">{action.credits ? `${action.credits} cr` : 'incluso'}</span>
+                            <span className="shrink-0 font-bold text-neutral-400">{action.type === 'publish_vitrine' ? `${action.credits} cr/dia` : action.credits ? `${action.credits} cr` : 'incluso'}</span>
                           </li>
                         ))}
                       </ul>
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                        <p className="flex items-center gap-1.5 text-xs text-neutral-300"><Coins size={14} className="text-[#FFD400]" /> Total estimado: <strong className="text-white">{message.plan.estimatedCredits} créditos</strong>{balance !== null && <span className="text-neutral-500">· saldo {balance}</span>}</p>
+                        <p className="flex items-center gap-1.5 text-xs text-neutral-300"><Coins size={14} className="text-[#FFD400]" /> Hoje: <strong className="text-white">{message.plan.estimatedCredits} créditos</strong>{balance !== null && <span className="text-neutral-500">· saldo {balance}</span>}</p>
                         <button
                           onClick={() => execute(message)}
                           disabled={Boolean(executing)}
@@ -421,6 +569,12 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
 
       <div className="fixed inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/95 to-transparent px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-10">
         <div className="mx-auto max-w-3xl">
+          {conversationClosed && (
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-neutral-300">
+              <span className="flex items-center gap-1.5"><Lock size={12} /> Esta conversa foi fechada (só leitura).</span>
+              <button onClick={reset} className="rounded-full bg-[#FFD400] px-3 py-1 text-[11px] font-black text-black">Nova conversa</button>
+            </div>
+          )}
           {error && <p className="mb-2 rounded-xl border border-[#FF2D87]/30 bg-[#FF2D87]/10 px-3 py-2 text-xs text-[#ff7ab3]">{error}</p>}
           {voice.error && <p className="mb-2 rounded-xl border border-[#FFD400]/30 bg-[#FFD400]/10 px-3 py-2 text-xs text-[#ffe14d]">{voice.error}</p>}
           {voice.enabled && <VoiceStatusBar phase={voice.phase} neural={Boolean(user)} onStop={voice.disable} />}
@@ -434,7 +588,8 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               rows={1}
               onChange={(event) => { setInput(event.target.value); autosize(); }}
               onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(input); } }}
-              placeholder={voice.enabled ? 'Pode falar, estou ouvindo…' : empty ? 'Ex.: Tenho uma pizzaria no bairro Centro em Campinas e quero mais pedidos…' : 'Responda para o Froc.IA…'}
+              disabled={conversationClosed}
+              placeholder={conversationClosed ? 'Conversa fechada — comece uma nova conversa' : voice.enabled ? 'Pode falar, estou ouvindo…' : empty ? 'Ex.: Tenho uma pizzaria no bairro Centro em Campinas e quero mais pedidos…' : 'Responda para o Froc.IA…'}
               className="max-h-[180px] min-h-[44px] flex-1 resize-none bg-transparent py-3 text-sm text-white outline-none placeholder:text-neutral-500"
               aria-label="Mensagem para o Froc.IA"
               maxLength={2000}
@@ -456,7 +611,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               {thinking ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={20} strokeWidth={3} />}
             </button>
           </form>
-          <p className="mt-2 text-center text-[10px] text-neutral-500">Digite ou toque no microfone e fale. O Froc.IA confirma tudo antes de executar; conversar é grátis e créditos só são usados nas criações confirmadas.</p>
+          <p className="mt-2 text-center text-[10px] text-neutral-500">Digite ou toque no microfone e fale. Cada resposta do Froc.IA usa {CHAT_REPLY_COST} créditos{user ? '' : ' (crie a conta e ganhe 25 créditos grátis)'}; posts, imagens e artigos já estão incluídos.</p>
         </div>
       </div>
     </div>

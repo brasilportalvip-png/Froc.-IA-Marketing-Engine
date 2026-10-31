@@ -32,8 +32,8 @@ test('Vitrine diária: normalização aceita formatos alternativos da IA', () =>
 test('Vitrine diária: cria 1 post por empresa pública por dia (idempotente)', async () => {
   resetMemoryDb();
   const db = firestore();
-  await db.collection(COLLECTIONS.companies).doc('c1').set({ id: 'c1', userId: 'u1', name: 'Loja Um', slug: 'loja-um', isPublicInVitrine: true });
-  await db.collection(COLLECTIONS.companies).doc('c2').set({ id: 'c2', userId: 'u2', name: 'Loja Dois', slug: 'loja-dois', isPublicInVitrine: 'true' });
+  await db.collection(COLLECTIONS.companies).doc('c1').set({ id: 'c1', userId: 'u1', name: 'Loja Um', slug: 'loja-um', isPublicInVitrine: true, vitrineBillingExempt: true });
+  await db.collection(COLLECTIONS.companies).doc('c2').set({ id: 'c2', userId: 'u2', name: 'Loja Dois', slug: 'loja-dois', isPublicInVitrine: 'true', vitrineBillingExempt: true });
   await db.collection(COLLECTIONS.companies).doc('c3').set({ id: 'c3', userId: 'u3', name: 'Oculta', slug: 'oculta', isPublicInVitrine: false });
 
   const first = await processVitrineDailyPosts({ force: true, limit: 1 });
@@ -91,6 +91,7 @@ test('Concierge: execução cria a marca com segmentação, publica na vitrine e
   resetMemoryDb();
   const outcome = await executeConciergePlan({
     userId: 'u_exec',
+    isAdmin: true,
     collected: { businessName: 'Barbearia Coroa', offer: 'Cortes masculinos', targeting: { country: 'Brasil', state: 'SP', city: 'Santos', neighborhoods: ['Gonzaga'], streets: ['Rua Azevedo Sodré'], radiusKm: 3 } },
     actions: ['publish_vitrine']
   });

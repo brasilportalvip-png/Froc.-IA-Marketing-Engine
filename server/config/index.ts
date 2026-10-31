@@ -114,6 +114,13 @@ export const config = {
     enabled: env('POST_IMAGES_ENABLED', 'true').toLowerCase() === 'true',
     perTick: Math.min(Math.max(Number(env('POST_IMAGES_PER_TICK', '2')) || 2, 0), 20)
   },
+  // Regras comerciais: chat cobra por resposta; criações pedidas ao Froc.IA não cobram à parte.
+  billing: {
+    chatReplyCost: Math.max(Number(env('CHAT_REPLY_COST', '3')) || 0, 0),
+    guestFreeReplies: Math.max(Number(env('CHAT_GUEST_FREE_REPLIES', '3')) || 0, 0),
+    creationsFree: env('CREATIONS_FREE', isTest ? 'false' : 'true').toLowerCase() === 'true',
+    vitrineDailyCost: Math.max(Number(env('VITRINE_DAILY_COST', '10')) || 0, 0)
+  },
   vitrineDaily: {
     enabled: env('VITRINE_DAILY_POSTS_ENABLED', 'true').toLowerCase() === 'true',
     perTick: Math.min(Math.max(Number(env('VITRINE_DAILY_POSTS_PER_TICK', '2')) || 2, 1), 25)
@@ -150,22 +157,22 @@ export const config = {
     {
       id: 'plan_start', name: 'START', price: 49.0, period: 'mês', credits: 100,
       bonusCredits: 10, totalCredits: 110, popular: false,
-      features: ['110 créditos mensais incluídos', 'Até 2 marcas', 'Froc.IA por texto e voz', 'Posts, legendas e CTAs com gatilhos', 'Vitrine com 1 post estratégico por dia', 'SEO local por cidade e bairro']
+      features: ['110 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Acesso à Vitrine Froc.IA', 'Post diário personalizado com imagem do nicho', 'Vitrine: 10 créditos por dia por projeto ligado', 'Chat com o Froc.IA: 3 créditos por resposta']
     },
     {
       id: 'plan_pro', name: 'PRO', price: 99.9, period: 'mês', credits: 210,
       bonusCredits: 20, totalCredits: 230, popular: true,
-      features: ['230 créditos mensais incluídos', 'Até 5 marcas', 'Froc.IA com voz neural', 'Imagens e roteiros de vídeo com IA', 'Artigos SEO para o Google', 'Vitrine com post diário + IndexNow', 'Suporte prioritário']
+      features: ['230 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Acesso à Vitrine Froc.IA', 'Post diário personalizado com imagem do nicho', 'SEO local por país, cidade, bairro e rua', 'Liga e desliga a Vitrine quando quiser', 'Suporte prioritário']
     },
     {
       id: 'plan_business', name: 'BUSINESS', price: 199.9, period: 'mês', credits: 450,
       bonusCredits: 30, totalCredits: 480, popular: false,
-      features: ['480 créditos mensais incluídos', 'Até 15 marcas', 'Tudo do PRO', 'Estratégias completas de 30 dias', 'SEO técnico e dados estruturados', 'Segmentação por país, cidade, bairro e rua', 'Prioridade na Vitrine']
+      features: ['480 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Vitrine com post diário para vários projetos', 'Imagens exclusivas do nicho em todo post', 'Sitemaps e aviso aos buscadores a cada post', 'Segmentação por país, cidade, bairro e rua', 'Suporte prioritário']
     },
     {
       id: 'plan_agency', name: 'AGENCY', price: 399.9, period: 'mês', credits: 900,
       bonusCredits: 100, totalCredits: 1000, popular: false,
-      features: ['1.000 créditos mensais incluídos', 'Marcas ilimitadas', 'Tudo do BUSINESS', 'Ideal para agências e multi-marcas', 'Prioridade de processamento', 'Gerente de conta dedicado']
+      features: ['1.000 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Ideal para agências e multi-marcas', 'Vitrine com post diário para todos os clientes', 'Imagens exclusivas do nicho em todo post', 'Gerente de conta dedicado']
     }
   ],
   creditCosts: CREDIT_COSTS

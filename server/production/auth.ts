@@ -26,7 +26,7 @@ export interface AuthenticatedRequest extends Request {
   user?: FrocUser;
 }
 
-export const CURRENT_TERMS_VERSION = '2026.1';
+export const CURRENT_TERMS_VERSION = '2026.2'; // 31/10/2026: novas regras de créditos e Vitrine paga
 export const CURRENT_PRIVACY_VERSION = '2026.1';
 
 const VALID_ROLES = new Set<FrocRole>(['user', 'admin', 'support', 'editor']);

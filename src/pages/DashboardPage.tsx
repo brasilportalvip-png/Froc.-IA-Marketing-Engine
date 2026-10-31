@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowRight, Building2, Coins, Crown, FileText, FolderOpen, Image as ImageIcon, Mic, PenTool, Store, Video } from 'lucide-react';
 import { BrandLogo } from '../components/BrandLogo';
 import { DashboardBoost } from '../components/DashboardBoost';
+import { VitrineAccessCard } from '../components/VitrineAccessCard';
 import type { Company, ContentItem, User, Wallet } from '../types';
 import { brazilNow, firstName as getFirstName } from '../../shared/brazilTime';
 
@@ -11,6 +12,7 @@ interface DashboardPageProps {
   selectedCompany: Company | null;
   contentItems: ContentItem[];
   onNavigate: (tab: string) => void;
+  onRefresh?: () => void;
 }
 
 const PLAN_LABEL: Record<string, string> = { plan_free: 'Grátis', free: 'Grátis', plan_start: 'START', plan_pro: 'PRO', plan_business: 'BUSINESS', plan_agency: 'AGENCY' };
@@ -23,7 +25,7 @@ function contentIcon(type: ContentItem['type']) {
 }
 
 /** Meu Painel: só o que está ativo — IA, créditos, marca, vitrine/post diário e criações. */
-export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, selectedCompany, contentItems, onNavigate }) => {
+export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, selectedCompany, contentItems, onNavigate, onRefresh }) => {
   const balance = wallet ? wallet.balance : 0;
   const plan = PLAN_LABEL[wallet?.planId || 'plan_free'] || wallet?.planId || 'Grátis';
   const recent = contentItems.filter((item) => !selectedCompany || item.companyId === selectedCompany.id).slice(0, 4);
@@ -67,10 +69,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, sele
           <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-neutral-500">Minha marca</p>
           <p className="mt-1 truncate text-xl font-black text-white">{selectedCompany?.name || 'Cadastrar marca'}</p>
           <p className="mt-1 flex items-center gap-1 text-[11px] text-neutral-500">
-            <Store size={11} /> {selectedCompany ? (selectedCompany.isPublicInVitrine ? 'Na Vitrine · post diário ativo' : 'Fora da Vitrine') : 'O Froc.IA cadastra para você'}
+            <Store size={11} /> {selectedCompany ? (selectedCompany.isPublicInVitrine ? 'Na Vitrine · post diário' : 'Fora da Vitrine') : 'O Froc.IA cadastra para você'}
           </p>
         </button>
       </div>
+
+      <VitrineAccessCard company={selectedCompany} wallet={wallet} isAdmin={user?.role === 'admin'} onNavigate={onNavigate} onChanged={() => onRefresh?.()} />
 
       <DashboardBoost selectedCompany={selectedCompany} onNavigate={onNavigate} />
 

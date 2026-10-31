@@ -344,6 +344,12 @@ export async function generateRaw(data: {
   maxTokens?: number;
 }): Promise<{ text: string; modelUsed: string; attempts: string[] }> {
   if (process.env.NODE_ENV === 'test') {
+    if (data.jsonOutput && data.prompt.includes('TAREFA: escrever o post diário')) {
+      return { text: JSON.stringify(testDailyPost(data.prompt)), modelUsed: 'test-model', attempts: ['test-model'] };
+    }
+    if (data.jsonOutput && testChatReply && data.prompt.includes('CONVERSA ATÉ AGORA:')) {
+      return { text: JSON.stringify({ reply: testChatReply, quickReplies: ['Centro'], collected: {}, readyToConfirm: false, actions: [] }), modelUsed: 'test-model', attempts: ['test-model'] };
+    }
     const text = data.jsonOutput
       ? JSON.stringify({
           headline: 'Headline de Teste Autopilot',
@@ -393,6 +399,33 @@ export async function generateRaw(data: {
   throw new Error(`Todos os modelos de IA falharam na cascata de resiliência. Último erro: ${lastError}`);
 }
 
+let testChatReply: string | null = null;
+/** Somente testes: simula a IA do chat respondendo (null = IA indisponível). */
+export function setTestChatReply(reply: string | null): void {
+  if (process.env.NODE_ENV === 'test') testChatReply = reply;
+}
+
+/** Somente testes: post diário com texto único por prompt (simula a IA sem repetir conteúdo). */
+function testDailyPost(prompt: string) {
+  const vocab = 'cliente bairro qualidade atendimento entrega rapido confianca preco justo garantia experiencia equipe cuidado resultado agenda horario contato whatsapp site produto servico local cidade escolha melhor dica pratica guia passo detalhe valor beneficio segurança conforto economia tempo familia amigos sabor estilo moderno tradicional pronto novo diferente especial verdade honesto claro simples facil completo'.split(' ');
+  let seed = parseInt(crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 8), 16) || 1;
+  const next = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed; };
+  const words = Array.from({ length: 160 }, () => vocab[next() % vocab.length]);
+  const code = (next() % 100000).toString(36);
+  return {
+    title: `Guia ${code}: ${words.slice(0, 4).join(' ')}`,
+    metaDescription: `Descubra ${words.slice(4, 14).join(' ')} e fale com a empresa hoje mesmo.`,
+    hook: words.slice(14, 26).join(' '),
+    content: `## ${words.slice(0, 5).join(' ')}\n\n${words.join(' ')}\n\n## Fale com a empresa\n\nChame agora pelos canais oficiais.`,
+    cta: 'Fale agora pelos canais oficiais.',
+    faq: [{ question: 'Como funciona?', answer: words.slice(30, 45).join(' ') }],
+    primaryKeyword: words.slice(0, 2).join(' '),
+    keywords: words.slice(2, 6),
+    hashtags: ['#teste', `#${code}`],
+    suggestedSlug: `guia-${code}`
+  };
+}
+
 export async function executeAi<T = string>(data: {
   userId: string;
   company?: any;
@@ -404,13 +437,11 @@ export async function executeAi<T = string>(data: {
   maxTokens?: number;
   parse?: (text: string) => T;
 }): Promise<{ result: T; creditsUsed: number; executionId: string; modelUsed: string }> {
-  const cost = Number(config.creditCosts[data.operation]);
-  const reservation = await reserveCredits({
-    userId: data.userId,
-    amount: cost,
-    operation: data.operation,
-    companyId: data.company?.id
-  });
+  // Regra comercial: as criações pedidas ao Froc.IA já estão incluídas (o chat cobra por resposta).
+  const cost = config.billing.creationsFree ? 0 : Number(config.creditCosts[data.operation]);
+  const reservation = cost > 0
+    ? await reserveCredits({ userId: data.userId, amount: cost, operation: data.operation, companyId: data.company?.id })
+    : { reservationId: '' };
   const executionId = newId('exec');
   const started = Date.now();
 
@@ -423,12 +454,14 @@ export async function executeAi<T = string>(data: {
       maxTokens: data.maxTokens
     });
     const result = data.parse ? data.parse(generated.text) : (generated.text as T);
-    await commitReservation({
-      userId: data.userId,
-      reservationId: reservation.reservationId,
-      source: `Froc AI: ${data.operation}`,
-      metadata: { executionId, modelUsed: generated.modelUsed }
-    });
+    if (reservation.reservationId) {
+      await commitReservation({
+        userId: data.userId,
+        reservationId: reservation.reservationId,
+        source: `Froc AI: ${data.operation}`,
+        metadata: { executionId, modelUsed: generated.modelUsed }
+      });
+    }
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
       companyId: data.company?.id || null,
@@ -446,7 +479,7 @@ export async function executeAi<T = string>(data: {
     return { result, creditsUsed: cost, executionId, modelUsed: generated.modelUsed };
   } catch (error) {
     const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
-    await rollbackReservation(data.userId, reservation.reservationId, message);
+    if (reservation.reservationId) await rollbackReservation(data.userId, reservation.reservationId, message);
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
       companyId: data.company?.id || null,
@@ -654,9 +687,11 @@ export async function generateMarketingImage(data: {
 }): Promise<{ imageUrl: string; storagePath: string; mimeType: string; creditsUsed: number; executionId: string; modelUsed: string; resolution: string }> {
   const resolution = data.resolution === '4K' ? '4K' : data.resolution === '2K' ? '2K' : '1K';
   const opKey = resolution === '4K' ? 'image_ai_4k' : resolution === '2K' ? 'image_ai_2k' : 'image_ai_1k';
-  const cost = Number(config.creditCosts[opKey] || config.creditCosts.image_ai || 15);
-  
-  const reservation = await reserveCredits({ userId: data.userId, amount: cost, operation: opKey, companyId: data.company?.id });
+  const cost = config.billing.creationsFree ? 0 : Number(config.creditCosts[opKey] || config.creditCosts.image_ai || 15);
+
+  const reservation = cost > 0
+    ? await reserveCredits({ userId: data.userId, amount: cost, operation: opKey, companyId: data.company?.id })
+    : { reservationId: '' };
   const executionId = newId('exec');
   const started = Date.now();
   const aspectRatio = normalizeAspectRatio(data.aspectRatio);
@@ -724,7 +759,7 @@ export async function generateMarketingImage(data: {
       }
     }
 
-    await commitReservation({
+    if (reservation.reservationId) await commitReservation({
       userId: data.userId,
       reservationId: reservation.reservationId,
       source: `Froc AI: ${opKey}`,
@@ -747,7 +782,7 @@ export async function generateMarketingImage(data: {
     return { imageUrl, storagePath, mimeType, creditsUsed: cost, executionId, modelUsed: model, resolution };
   } catch (error) {
     const message = formatAiErrorMessage(error instanceof Error ? error.message : String(error));
-    await rollbackReservation(data.userId, reservation.reservationId, message);
+    if (reservation.reservationId) await rollbackReservation(data.userId, reservation.reservationId, message);
     await firestore().collection(COLLECTIONS.aiExecutions).doc(executionId).set({
       userId: data.userId,
       companyId: data.company?.id || null,
@@ -1780,13 +1815,14 @@ export async function listUserVideoJobs(userId: string, companyId?: string): Pro
  * o post diário é um serviço do Froc.IA. Sempre grava no Storage e devolve
  * uma URL pública (nunca data: URL, que seria ruim para SEO e para o HTML).
  */
-export async function generateEditorialImage(data: { prompt: string; aspectRatio?: string; folder: string }): Promise<{ imageUrl: string; storagePath: string; modelUsed: string }> {
+export async function generateEditorialImage(data: { prompt: string; aspectRatio?: string; folder: string }): Promise<{ imageUrl: string; storagePath: string; modelUsed: string; sha256: string }> {
   const aspectRatio = normalizeAspectRatio(data.aspectRatio || '16:9');
   const model = config.geminiModels.image || 'gemini-3.1-flash-image';
   const executionId = newId('img');
   const folder = String(data.folder || 'editorial').replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120) || 'editorial';
   if (process.env.NODE_ENV === 'test') {
-    return { imageUrl: `https://storage.test/${folder}/${executionId}.jpg`, storagePath: `${folder}/${executionId}.jpg`, modelUsed: 'test-image-model' };
+    const imageUrl = `https://storage.test/${folder}/${executionId}.jpg`;
+    return { imageUrl, storagePath: `${folder}/${executionId}.jpg`, modelUsed: 'test-image-model', sha256: crypto.createHash('sha256').update(imageUrl).digest('hex') };
   }
   let response: any;
   if (model.startsWith('imagen-')) {
@@ -1813,6 +1849,7 @@ export async function generateEditorialImage(data: { prompt: string; aspectRatio
   return {
     imageUrl: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`,
     storagePath,
-    modelUsed: model
+    modelUsed: model,
+    sha256: crypto.createHash('sha256').update(buffer).digest('hex')
   };
 }

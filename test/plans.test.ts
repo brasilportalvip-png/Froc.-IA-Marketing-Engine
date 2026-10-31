@@ -10,42 +10,42 @@ test('Plans: Entitlements por nível de plano são rigorosos e determinísticos'
   // Plan Free
   const free = getPlanEntitlements('plan_free');
   assert.equal(free.planId, 'plan_free');
-  assert.equal(free.maxCompanies, 1);
+  assert.equal(free.maxCompanies, Number.POSITIVE_INFINITY); // projetos ilimitados (limite = créditos)
   assert.equal(free.autopilotManual, false);
   assert.equal(free.autopilotAutomatic, false);
 
   // Plan Start
   const start = getPlanEntitlements('plan_start');
   assert.equal(start.planId, 'plan_start');
-  assert.equal(start.maxCompanies, 2);
+  assert.equal(start.maxCompanies, Number.POSITIVE_INFINITY); // projetos ilimitados (limite = créditos)
   assert.equal(start.autopilotManual, false);
   assert.equal(start.autopilotAutomatic, false);
 
   // Plan Pro
   const pro = getPlanEntitlements('plan_pro');
   assert.equal(pro.planId, 'plan_pro');
-  assert.equal(pro.maxCompanies, 5);
+  assert.equal(pro.maxCompanies, Number.POSITIVE_INFINITY); // projetos ilimitados (limite = créditos)
   assert.equal(pro.autopilotManual, true);
   assert.equal(pro.autopilotAutomatic, false);
 
   // Plan Business
   const business = getPlanEntitlements('plan_business');
   assert.equal(business.planId, 'plan_business');
-  assert.equal(business.maxCompanies, 15);
+  assert.equal(business.maxCompanies, Number.POSITIVE_INFINITY); // projetos ilimitados (limite = créditos)
   assert.equal(business.autopilotManual, true);
   assert.equal(business.autopilotAutomatic, true);
 
   // Plan Agency
   const agency = getPlanEntitlements('plan_agency');
   assert.equal(agency.planId, 'plan_agency');
-  assert.equal(agency.maxCompanies, Number.POSITIVE_INFINITY);
+  assert.equal(agency.maxCompanies, Number.POSITIVE_INFINITY); // projetos ilimitados (limite = créditos)
   assert.equal(agency.autopilotManual, true);
   assert.equal(agency.autopilotAutomatic, true);
 
   // Default / Unknown fallback
   const unknown = getPlanEntitlements('unknown_plan');
   assert.equal(unknown.planId, 'plan_free');
-  assert.equal(unknown.maxCompanies, 1);
+  assert.equal(unknown.maxCompanies, Number.POSITIVE_INFINITY);
 });
 
 test('Plans: RecalculateUserPlan preserva plano ativo e cancel_at_period_end até o término do ciclo', async () => {

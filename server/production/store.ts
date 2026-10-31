@@ -412,7 +412,11 @@ export const COLLECTIONS = {
   vitrinePosts: 'vitrinePosts',
   conciergeSessions: 'conciergeSessions',
   seoPings: 'seoPings',
-  linkClicks: 'linkClicks'
+  linkClicks: 'linkClicks',
+  vitrineCharges: 'vitrineCharges',
+  siteSettings: 'siteSettings',
+  conversations: 'conversations',
+  guestChatUsage: 'guestChatUsage'
 } as const;
 
 export type DatabaseHealth = {

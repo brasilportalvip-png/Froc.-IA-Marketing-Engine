@@ -337,7 +337,7 @@ test('Auth: Login não promove consentimento legado; exigência de consentimento
     privacyVersion: CURRENT_PRIVACY_VERSION
   });
 
-  assert.equal(profileAfterConsent.termsVersion, '2026.1');
+  assert.equal(profileAfterConsent.termsVersion, '2026.2');
   assert.equal(profileAfterConsent.privacyVersion, '2026.1');
   assert.equal(hasAcceptedLatestTerms(profileAfterConsent), true);
 });
