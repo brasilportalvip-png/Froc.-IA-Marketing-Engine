@@ -62,6 +62,9 @@ export const config = {
   geminiMediaApiKey: env('GEMINI_MEDIA_API_KEY') || env('GEMINI_API_KEY'),
   geminiModels: {
     text: env('GEMINI_MODEL_TEXT', 'gemini-2.5-flash'),
+    // Chat/voz: mesmos modelos rápidos do Froc IA (frocia2), em cascata.
+    chat: env('GEMINI_MODEL_CHAT', 'gemini-3.8-flash'),
+    chatFallbacks: env('GEMINI_MODEL_CHAT_FALLBACKS', 'gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-2.5-flash'),
     pro: env('GEMINI_MODEL_PRO', 'gemini-3.1-pro-preview'),
     fallback: env('GEMINI_MODEL_FALLBACK', 'gemini-3.1-flash-lite'),
     image: env('GEMINI_MODEL_IMAGE', 'gemini-3.1-flash-image'),
@@ -157,22 +160,22 @@ export const config = {
     {
       id: 'plan_start', name: 'START', price: 49.0, period: 'mês', credits: 100,
       bonusCredits: 10, totalCredits: 110, popular: false,
-      features: ['110 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Acesso à Vitrine Froc.IA', 'Post diário personalizado com imagem do nicho', 'Vitrine: 10 créditos por dia por projeto ligado', 'Chat com o Froc.IA: 3 créditos por resposta']
+      features: ['110 créditos']
     },
     {
       id: 'plan_pro', name: 'PRO', price: 99.9, period: 'mês', credits: 210,
       bonusCredits: 20, totalCredits: 230, popular: true,
-      features: ['230 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Acesso à Vitrine Froc.IA', 'Post diário personalizado com imagem do nicho', 'SEO local por país, cidade, bairro e rua', 'Liga e desliga a Vitrine quando quiser', 'Suporte prioritário']
+      features: ['230 créditos']
     },
     {
       id: 'plan_business', name: 'BUSINESS', price: 199.9, period: 'mês', credits: 450,
       bonusCredits: 30, totalCredits: 480, popular: false,
-      features: ['480 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Vitrine com post diário para vários projetos', 'Imagens exclusivas do nicho em todo post', 'Sitemaps e aviso aos buscadores a cada post', 'Segmentação por país, cidade, bairro e rua', 'Suporte prioritário']
+      features: ['480 créditos']
     },
     {
       id: 'plan_agency', name: 'AGENCY', price: 399.9, period: 'mês', credits: 900,
       bonusCredits: 100, totalCredits: 1000, popular: false,
-      features: ['1.000 créditos por mês', 'Projetos ilimitados (enquanto houver créditos)', 'Ideal para agências e multi-marcas', 'Vitrine com post diário para todos os clientes', 'Imagens exclusivas do nicho em todo post', 'Gerente de conta dedicado']
+      features: ['1.000 créditos']
     }
   ],
   creditCosts: CREDIT_COSTS
