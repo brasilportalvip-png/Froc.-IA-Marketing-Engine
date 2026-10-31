@@ -26,8 +26,11 @@ export interface AuthenticatedRequest extends Request {
   user?: FrocUser;
 }
 
-export const CURRENT_TERMS_VERSION = '2026.2'; // 31/10/2026: novas regras de créditos e Vitrine paga
+export const CURRENT_TERMS_VERSION = '2026.1';
+// Versões que continuam valendo (quem aceitou a 2026.2 em 31/10/2026 não é bloqueado de novo).
+const ACCEPTED_TERMS_VERSIONS = new Set([CURRENT_TERMS_VERSION, '2026.2']);
 export const CURRENT_PRIVACY_VERSION = '2026.1';
+const ACCEPTED_PRIVACY_VERSIONS = new Set([CURRENT_PRIVACY_VERSION, '2026.2']);
 
 const VALID_ROLES = new Set<FrocRole>(['user', 'admin', 'support', 'editor']);
 const CONSENT_FLOW_PATHS = new Set([
@@ -44,8 +47,8 @@ export function hasAcceptedLatestTerms(user?: FrocUser | null): boolean {
   return Boolean(
     user.termsAcceptedAt &&
     user.privacyAcceptedAt &&
-    user.termsVersion === CURRENT_TERMS_VERSION &&
-    user.privacyVersion === CURRENT_PRIVACY_VERSION
+    ACCEPTED_TERMS_VERSIONS.has(String(user.termsVersion)) &&
+    ACCEPTED_PRIVACY_VERSIONS.has(String(user.privacyVersion))
   );
 }
 

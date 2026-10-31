@@ -337,8 +337,17 @@ test('Auth: Login não promove consentimento legado; exigência de consentimento
     privacyVersion: CURRENT_PRIVACY_VERSION
   });
 
-  assert.equal(profileAfterConsent.termsVersion, '2026.2');
+  assert.equal(profileAfterConsent.termsVersion, '2026.1');
   assert.equal(profileAfterConsent.privacyVersion, '2026.1');
   assert.equal(hasAcceptedLatestTerms(profileAfterConsent), true);
 });
 
+
+test('Consentimento: quem aceitou a 2026.1 ou a 2026.2 não é bloqueado', async () => {
+  const { hasAcceptedLatestTerms } = await import('../server/production/auth.js');
+  const base = { id: 'u', email: 'u@x.com', role: 'user', termsAcceptedAt: '2026-10-01', privacyAcceptedAt: '2026-10-01' } as any;
+  assert.equal(hasAcceptedLatestTerms({ ...base, termsVersion: '2026.1', privacyVersion: '2026.1' }), true);
+  assert.equal(hasAcceptedLatestTerms({ ...base, termsVersion: '2026.2', privacyVersion: '2026.1' }), true);
+  assert.equal(hasAcceptedLatestTerms({ ...base, termsVersion: '2025.9', privacyVersion: '2026.1' }), false);
+  assert.equal(hasAcceptedLatestTerms({ ...base, termsVersion: '2026.1', privacyVersion: '2026.1', termsAcceptedAt: '' }), false);
+});

@@ -451,8 +451,8 @@ export default function App() {
     user && (
       !user.termsAcceptedAt ||
       !user.privacyAcceptedAt ||
-      user.termsVersion !== '2026.1' ||
-      user.privacyVersion !== '2026.1'
+      !['2026.1', '2026.2'].includes(String(user.termsVersion)) ||
+      !['2026.1', '2026.2'].includes(String(user.privacyVersion))
     )
   );
 
