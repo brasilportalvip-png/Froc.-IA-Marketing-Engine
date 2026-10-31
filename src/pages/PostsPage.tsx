@@ -102,7 +102,7 @@ export const PostsPage: React.FC<{ onStart: () => void }> = ({ onStart }) => {
             <Newspaper size={13} /> Posts
           </p>
           <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight sm:text-6xl">
-            Tudo o que a Froc.IA<br /><span className="froc-text-gradient">publica, num só lugar.</span>
+            Tudo o que o Froc.IA<br /><span className="froc-text-gradient">publica, num só lugar.</span>
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-neutral-300 sm:text-base">
             Artigos de marketing, SEO e IA do Froc Magazine e os posts estratégicos que a IA publica todos os dias para as marcas da Vitrine.
@@ -138,7 +138,7 @@ export const PostsPage: React.FC<{ onStart: () => void }> = ({ onStart }) => {
           <div className="rounded-3xl border border-dashed border-white/15 p-12 text-center">
             <Crown className="mx-auto text-[#FFD400]" size={34} />
             <p className="mt-3 text-lg font-black">{debounced ? 'Nenhum post encontrado para essa busca.' : 'Os primeiros posts estão chegando.'}</p>
-            <p className="mt-1 text-sm text-neutral-400">A Froc.IA publica conteúdo novo todos os dias.</p>
+            <p className="mt-1 text-sm text-neutral-400">O Froc.IA publica conteúdo novo todos os dias.</p>
           </div>
         ) : (
           <>
@@ -200,9 +200,9 @@ export const PostsPage: React.FC<{ onStart: () => void }> = ({ onStart }) => {
         <section className="froc-glow-card mt-16 p-8 text-center sm:p-12">
           <Crown className="mx-auto text-[#FFD400]" size={36} />
           <h2 className="mt-3 text-2xl font-black sm:text-4xl">Quer a sua marca <span className="froc-text-gradient">aqui todo dia?</span></h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-neutral-300">Fale com a Froc.IA: ela coloca sua marca na Vitrine e publica um post estratégico por dia, pronto para o Google.</p>
+          <p className="mx-auto mt-3 max-w-xl text-sm text-neutral-300">Fale com o Froc.IA: ele coloca sua marca na Vitrine e publica um post estratégico por dia, pronto para o Google.</p>
           <button onClick={onStart} className="froc-shimmer mt-6 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#FFD400] via-[#FF2D87] to-[#00E676] px-7 py-3.5 text-sm font-black text-black">
-            <Sparkles size={16} /> Falar com a Froc.IA
+            <Sparkles size={16} /> Falar com o Froc.IA
           </button>
         </section>
       </div>

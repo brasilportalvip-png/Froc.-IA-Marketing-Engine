@@ -3,6 +3,7 @@ import { ArrowRight, Building2, Coins, Crown, FileText, FolderOpen, Image as Ima
 import { BrandLogo } from '../components/BrandLogo';
 import { DashboardBoost } from '../components/DashboardBoost';
 import type { Company, ContentItem, User, Wallet } from '../types';
+import { brazilNow, firstName as getFirstName } from '../../shared/brazilTime';
 
 interface DashboardPageProps {
   user: User | null;
@@ -26,7 +27,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, sele
   const balance = wallet ? wallet.balance : 0;
   const plan = PLAN_LABEL[wallet?.planId || 'plan_free'] || wallet?.planId || 'Grátis';
   const recent = contentItems.filter((item) => !selectedCompany || item.companyId === selectedCompany.id).slice(0, 4);
-  const firstName = (user?.name || '').split(' ')[0];
+  const firstName = getFirstName(user?.name);
+  const now = brazilNow();
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -36,12 +38,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, sele
           <div className="flex items-center gap-4">
             <BrandLogo size="lg" showText={false} />
             <div>
-              <h1 className="text-2xl font-black text-white md:text-3xl">Olá{firstName ? `, ${firstName}` : ''}! 👑</h1>
-              <p className="mt-1 text-sm text-neutral-400">Fale com a Froc.IA por texto ou voz. Ela cria, publica e coloca sua marca no Google.</p>
+              <h1 className="text-2xl font-black text-white md:text-3xl">{now.greeting}{firstName ? `, ${firstName}` : ''}! 👑</h1>
+              <p className="text-xs capitalize text-neutral-500">{now.longDate} · {now.time}</p>
+              <p className="mt-1 text-sm text-neutral-400">Fale com o Froc.IA por texto ou voz. Ele cria, publica e coloca sua marca no Google.</p>
             </div>
           </div>
           <button onClick={() => onNavigate('home')} className="froc-shimmer inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#FFD400] via-[#FF2D87] to-[#00E676] px-6 py-3 text-sm font-black text-black">
-            <Mic size={16} /> Falar com a Froc.IA
+            <Mic size={16} /> Falar com o Froc.IA
           </button>
         </div>
       </section>
@@ -64,7 +67,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, sele
           <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-neutral-500">Minha marca</p>
           <p className="mt-1 truncate text-xl font-black text-white">{selectedCompany?.name || 'Cadastrar marca'}</p>
           <p className="mt-1 flex items-center gap-1 text-[11px] text-neutral-500">
-            <Store size={11} /> {selectedCompany ? (selectedCompany.isPublicInVitrine ? 'Na Vitrine · post diário ativo' : 'Fora da Vitrine') : 'A IA cadastra para você'}
+            <Store size={11} /> {selectedCompany ? (selectedCompany.isPublicInVitrine ? 'Na Vitrine · post diário ativo' : 'Fora da Vitrine') : 'O Froc.IA cadastra para você'}
           </p>
         </button>
       </div>
@@ -77,7 +80,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, wallet, sele
           <button onClick={() => onNavigate('conteudos')} className="inline-flex items-center gap-1 text-xs font-bold text-[#FFD400]">Ver todas <ArrowRight size={12} /></button>
         </div>
         {recent.length === 0 ? (
-          <p className="text-sm text-neutral-500">Nada criado ainda. Peça para a Froc.IA: “crie um anúncio com foto para o meu Instagram”.</p>
+          <p className="text-sm text-neutral-500">Nada criado ainda. Peça para o Froc.IA: “crie um anúncio com foto para o meu Instagram”.</p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {recent.map((item) => (

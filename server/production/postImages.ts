@@ -1,6 +1,6 @@
 /**
  * Imagens dos posts: cada post da Vitrine e do Froc Magazine ganha uma imagem
- * criada pela IA a partir do que ela sabe do PROJETO (nicho, produtos, serviços,
+ * criada pela IA a partir do que ele sabe do PROJETO (nicho, produtos, serviços,
  * descrição, cidade/bairro) e da PUBLICAÇÃO (título, palavra-chave, ângulo do dia).
  */
 import { config } from '../config/index.js';

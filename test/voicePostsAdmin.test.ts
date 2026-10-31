@@ -10,11 +10,11 @@ import { classifyFrocVoiceTranscript, classifyFrocMobileVoiceTranscript, hasFroc
 import { normalizeTextForSpeech, splitTextForSpeech } from '../src/lib/voice/voiceText.js';
 import { config } from '../server/config/index.js';
 
-test('Voz: texto é saneado e o prompt mantém a persona calorosa da Froc IA', () => {
+test('Voz: texto é saneado e o prompt mantém a persona calorosa do Froc IA', () => {
   assert.equal(cleanSpeechText('  Olá\u0000 <fala>mundo</fala>  '), 'Olá mundo');
-  const prompt = buildHumanizedSpeechPrompt('Bem-vindo à Froc.IA');
+  const prompt = buildHumanizedSpeechPrompt('Bem-vindo ao Froc.IA');
   assert.match(prompt, /voz masculina adulta, natural, calorosa/);
-  assert.match(prompt, /<fala>Bem-vindo à Froc\.IA<\/fala>/);
+  assert.match(prompt, /<fala>Bem-vindo ao Froc\.IA<\/fala>/);
   assert.throws(() => buildHumanizedSpeechPrompt('   '), /speech_text_empty/);
   assert.equal(cleanSpeechText('x'.repeat(6000)).length, 5000);
 });
@@ -42,7 +42,7 @@ test('Voz: síntese, streaming e token Live funcionam sem chamar o provedor em t
   assert.ok(token.token.startsWith('auth_tokens/'));
 });
 
-test('Voz: comandos "Ok, Froc" e "pare" como na Froc IA', () => {
+test('Voz: comandos "Ok, Froc" e "pare" como no Froc IA', () => {
   assert.equal(hasFrocWakePhrase('ok froc crie um anúncio'), true);
   assert.deepEqual(classifyFrocVoiceTranscript('Ok Froc, quero mais clientes', true, false), { type: 'command', command: 'quero mais clientes' });
   assert.deepEqual(classifyFrocVoiceTranscript('quero mais clientes', true, true), { type: 'command', command: 'quero mais clientes' });

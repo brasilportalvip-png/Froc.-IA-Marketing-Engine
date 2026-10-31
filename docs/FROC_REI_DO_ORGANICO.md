@@ -3,7 +3,7 @@
 ## O que mudou
 
 ### Tela 1 — IA conversacional (`/`)
-- A tela inicial agora é uma conversa estilo ChatGPT com a Froc.IA.
+- A tela inicial agora é uma conversa estilo ChatGPT com o Froc.IA.
 - A IA entende o pedido, coleta os dados (negócio, oferta, objetivo, público, formato foto/vídeo/texto, canais e **segmentação geográfica: país, estado, cidade, bairros, ruas e raio em km**), mostra um resumo e só executa depois da confirmação.
 - As ferramentas antigas continuam existindo, mas ficam **escondidas do menu**: quem executa é a IA (`POST /api/concierge/execute`).
 - Conversar é grátis (com limite anti-abuso por IP). Créditos só são usados nas criações confirmadas (post, imagem, roteiro, artigo, estratégia).
@@ -38,7 +38,7 @@
 
 Regras: só URLs indexáveis (públicas e publicadas), 1.000 URLs por arquivo, `lastmod` em W3C, XML escapado, imagens no namespace do Google.
 
-**Pings:** a cada publicação (post diário, entrada na vitrine, artigo publicado) a Froc.IA avisa o **IndexNow** (Bing, Yandex, Seznam, Naver, Yep). O Google desativou o "ping de sitemap" em 2023; ele descobre os sitemaps pelo `robots.txt` e pelo Search Console.
+**Pings:** a cada publicação (post diário, entrada na vitrine, artigo publicado) o Froc.IA avisa o **IndexNow** (Bing, Yandex, Seznam, Naver, Yep). O Google desativou o "ping de sitemap" em 2023; ele descobre os sitemaps pelo `robots.txt` e pelo Search Console.
 
 **Páginas públicas:** canonical, hreflang, robots `max-image-preview:large`, Open Graph com datas de artigo, JSON-LD (`WebSite`, `BreadcrumbList`, `BlogPosting`, `FAQPage`, `LocalBusiness` com `areaServed` por bairro/cidade, `ItemList` na vitrine) e conteúdo pré-renderizado visível sem JavaScript.
 
@@ -49,7 +49,7 @@ Regras: só URLs indexáveis (públicas e publicadas), 1.000 URLs por arquivo, `
 ### Identidade visual
 Preto `#050505`, branco, amarelo `#FFD400`, pink `#FF2D87` e verde `#00E676`. As cores antigas são remapeadas no `@theme` do Tailwind, então todas as telas herdam a nova paleta.
 
-### Voz (microfone) — mesmo sistema da Froc IA
+### Voz (microfone) — mesmo sistema do Froc IA
 - Botão de microfone na tela da IA: liga a **conversa por voz** (ouvir → pensar → falar → voltar a ouvir, sem novo clique).
 - **Escuta:** Gemini Live (`gemini-3.5-transcribe-live`) com token efêmero emitido pelo servidor (`POST /api/ai/speech/live-token`); se falhar, usa o reconhecimento do navegador.
 - **Fala:** voz neural Gemini (padrão `Charon`, masculina, natural e calorosa) em streaming PCM 24 kHz (`POST /api/ai/speech/stream`), com fallback WAV (`POST /api/ai/speech`) e, por último, voz do navegador.
@@ -101,7 +101,7 @@ Abas: Visão geral (usuários, assinantes, receita, projetos, posts, créditos, 
 
 Tarefas automáticas (cron `/api/cron/process`): post diário de cada marca da Vitrine, 1 artigo por dia no Froc Magazine, pings IndexNow, publicação de posts que já estavam agendados e limpeza de reservas de créditos.
 
-### Removido nesta versão (substituído pela Froc.IA na conversa)
+### Removido nesta versão (substituído pelo Froc.IA na conversa)
 Telas antigas de ferramentas separadas: Froc IA (antiga), Autopilot, Criar Conteúdo, Criar Imagem, Criar Vídeo, Criar Artigo, SEO Inteligente, Campanhas, Calendário, Redes Sociais e Analytics, e as rotas de API que só elas usavam, além do auditor de SEO de URL. Os endereços antigos redirecionam (301) para a IA ou para o painel. O Autopilot antigo fica desligado no agendador (`LEGACY_AUTOPILOT_ENABLED=false`) para não gastar créditos sem uma tela para controlá-lo. O código de conexão com redes sociais (OAuth Meta/TikTok/YouTube/Pinterest) foi mantido no servidor, sem tela, para uma integração futura.
 
 ## Depois do merge (5 minutos)

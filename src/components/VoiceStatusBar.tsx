@@ -20,7 +20,7 @@ const COLOR: Record<FrocVoicePhase, string> = {
   error: '#FF2D87'
 };
 
-/** Faixa de status da conversa por voz, com ondas animadas como na Froc IA. */
+/** Faixa de status da conversa por voz, com ondas animadas como no Froc IA. */
 export const VoiceStatusBar: React.FC<{ phase: FrocVoicePhase; neural: boolean; onStop: () => void }> = ({ phase, neural, onStop }) => {
   const color = COLOR[phase];
   const active = phase === 'listening' || phase === 'speaking';
@@ -31,7 +31,7 @@ export const VoiceStatusBar: React.FC<{ phase: FrocVoicePhase; neural: boolean; 
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-bold text-white">{LABEL[phase]}</p>
-        <p className="truncate text-[10px] text-neutral-500">{neural ? 'Voz neural Froc.IA ativa' : 'Entre na conta para ativar a voz neural da Froc.IA'} · diga “pare” para desligar</p>
+        <p className="truncate text-[10px] text-neutral-500">{neural ? 'Voz neural Froc.IA ativa' : 'Entre na conta para ativar a voz neural do Froc.IA'} · diga “pare” para desligar</p>
       </div>
       <div className="flex h-6 items-end gap-[3px]" aria-hidden="true">
         {[0, 1, 2, 3, 4].map((bar) => (

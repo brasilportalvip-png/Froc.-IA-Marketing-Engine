@@ -40,7 +40,7 @@ const TAB_PATH: Record<string, string> = {
   admin: '/admin'
 };
 
-// Endereços antigos (ferramentas que agora a Froc.IA executa pela conversa) levam à IA.
+// Endereços antigos (ferramentas que agora o Froc.IA executa pela conversa) levam à IA.
 const TAB_ALIASES: Record<string, string> = {
   estrategia: 'home',
   'froc-ia': 'home',

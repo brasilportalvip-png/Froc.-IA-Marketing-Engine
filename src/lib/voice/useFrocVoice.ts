@@ -1,5 +1,5 @@
 /**
- * Conversa por voz da Froc.IA — o mesmo ciclo da Froc IA (frocia2):
+ * Conversa por voz do Froc.IA — o mesmo ciclo do Froc IA (frocia2):
  * ouvir → entender o comando → pensar → falar com voz neural → voltar a ouvir.
  *
  * Escuta: Gemini Live (logado) com fallback para o reconhecimento do navegador.

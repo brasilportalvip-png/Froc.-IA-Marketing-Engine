@@ -1,5 +1,5 @@
 /**
- * Voz neural da Froc.IA no navegador (mesmo sistema da Froc IA / frocia2).
+ * Voz neural do Froc.IA no navegador (mesmo sistema do Froc IA / frocia2).
  * 1º streaming PCM 24 kHz (começa a tocar enquanto chega) → 2º WAV completo → 3º voz do navegador.
  */
 import { auth } from '../firebase';

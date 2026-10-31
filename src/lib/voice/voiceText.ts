@@ -219,7 +219,7 @@ export function voiceErrorMessage(code: string): string {
       return 'Nenhum microfone foi encontrado. Conecte um microfone (ou feche outro app que esteja usando) e tente de novo.';
     case 'network':
       return brave
-        ? 'O navegador Brave bloqueia o reconhecimento de voz. Use o Google Chrome, Edge ou Safari para falar com a Froc.IA.'
+        ? 'O navegador Brave bloqueia o reconhecimento de voz. Use o Google Chrome, Edge ou Safari para falar com o Froc.IA.'
         : 'O reconhecimento de voz do navegador não conseguiu se conectar. Verifique a internet ou use o Google Chrome, Edge ou Safari.';
     case 'language-not-supported':
       return 'Este navegador não reconhece voz em português. Use o Google Chrome, Edge ou Safari.';

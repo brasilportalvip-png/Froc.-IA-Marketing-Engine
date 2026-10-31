@@ -36,7 +36,7 @@ export const DashboardBoost: React.FC<{ selectedCompany: Company | null; onNavig
         <div className="relative">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FFD400]/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[#FFD400]"><Sparkles size={11} /> Froc.IA</span>
           <h3 className="mt-3 text-xl font-black text-white">O que vamos criar hoje?</h3>
-          <p className="mt-1 text-xs leading-5 text-neutral-400">Fale com a IA: ela cria anúncios, imagens, vídeos e artigos, segmenta por cidade, bairro e rua e publica para você.</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-400">Fale com o Froc.IA: ele cria anúncios, imagens, vídeos e artigos, segmenta por cidade, bairro e rua e publica para você.</p>
           <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-black text-[#FF2D87] transition group-hover:gap-2.5">Abrir conversa <ArrowRight size={13} /></span>
         </div>
       </button>
@@ -61,7 +61,7 @@ export const DashboardBoost: React.FC<{ selectedCompany: Company | null; onNavig
         {!inVitrine ? (
           <div className="mt-4 flex flex-col items-start gap-3 rounded-2xl border border-dashed border-white/15 p-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="flex items-center gap-2 text-sm text-neutral-300"><Crown size={16} className="text-[#FFD400]" /> Sua marca ainda não está na Vitrine. Lá ela ganha 1 post estratégico por dia.</p>
-            <button onClick={() => onNavigate('home')} className="shrink-0 rounded-full bg-[#FFD400] px-4 py-2 text-xs font-black text-black">Pedir para a IA</button>
+            <button onClick={() => onNavigate('home')} className="shrink-0 rounded-full bg-[#FFD400] px-4 py-2 text-xs font-black text-black">Pedir ao Froc.IA</button>
           </div>
         ) : posts.length === 0 ? (
           <p className="mt-4 flex items-center gap-2 text-sm text-neutral-400"><Store size={15} /> O primeiro post diário será publicado no próximo ciclo da IA.</p>

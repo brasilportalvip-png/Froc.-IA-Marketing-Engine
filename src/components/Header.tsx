@@ -154,9 +154,9 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <div className="py-2 text-xs text-slate-300 space-y-2">
                 <div className="p-2 rounded-xl bg-[#0d0d0d] border border-slate-800">
-                  <p className="font-semibold text-cyan-300 text-xs">Froc.IA pronta para trabalhar 👑</p>
+                  <p className="font-semibold text-cyan-300 text-xs">Froc.IA pronto para trabalhar 👑</p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Fale com a IA (por texto ou voz) para criar anúncios, imagens, vídeos e artigos. Sua marca na Vitrine ganha 1 post por dia.
+                    Fale com o Froc.IA (por texto ou voz) para criar anúncios, imagens, vídeos e artigos. Sua marca na Vitrine ganha 1 post por dia.
                   </p>
                 </div>
               </div>

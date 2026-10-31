@@ -1,5 +1,5 @@
 /**
- * Froc.IA — Voz neural e transcrição ao vivo (mesmo sistema da Froc IA / frocia2).
+ * Froc.IA — Voz neural e transcrição ao vivo (mesmo sistema do Froc IA / frocia2).
  *
  * - Voz: Gemini TTS com voz masculina, natural e calorosa (padrão "Charon"),
  *   em dois modos: streaming PCM 16-bit 24 kHz (baixa latência) e WAV completo (fallback).
@@ -176,7 +176,7 @@ export async function diagnoseVoice(): Promise<{
     liveToken.detail = String(error?.providerMessage || error?.message || error).slice(0, 400);
   }
   try {
-    const result = await synthesizeSpeech('Olá! Esta é a voz da Froc.IA.');
+    const result = await synthesizeSpeech('Olá! Esta é a voz do Froc.IA.');
     tts.ok = Boolean(result.audioBase64);
     tts.detail = tts.ok ? `Áudio gerado (${result.mimeType}).` : 'O provedor não devolveu áudio.';
   } catch (error: any) {

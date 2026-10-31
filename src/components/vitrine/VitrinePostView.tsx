@@ -150,7 +150,7 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
 
         <div className="mt-10 rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-center">
           <p className="text-sm text-neutral-300">Quer um post como este para a sua marca, todos os dias?</p>
-          <button onClick={onStart} className="mt-3 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#FFD400] to-[#FF2D87] px-5 py-2.5 text-sm font-black text-black"><Sparkles size={15} /> Falar com a Froc.IA</button>
+          <button onClick={onStart} className="mt-3 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#FFD400] to-[#FF2D87] px-5 py-2.5 text-sm font-black text-black"><Sparkles size={15} /> Falar com o Froc.IA</button>
         </div>
       </article>
     </div>

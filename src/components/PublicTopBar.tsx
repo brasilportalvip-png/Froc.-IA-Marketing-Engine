@@ -34,7 +34,7 @@ export const PublicTopBar: React.FC<Props> = ({ user, wallet, current, onNavigat
           <span className="hidden sm:block"><BrandLogo size="md" showText subtitle="Rei do Orgânico" /></span>
         </button>
         <nav className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] p-1">
-          {link('home', 'Falar com a IA', Sparkles)}
+          {link('home', 'Falar com o Froc.IA', Sparkles)}
           {link('vitrine', 'Vitrine', Store)}
           {link('posts', 'Posts', Newspaper)}
           <button onClick={() => onNavigate('planos')} className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-bold text-neutral-300 hover:bg-white/10 hover:text-white">

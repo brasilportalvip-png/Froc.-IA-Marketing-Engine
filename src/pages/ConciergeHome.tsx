@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowUp, Bot, Mic, MicOff, Square, Volume2, Check, CheckCircle2, ChevronDown, Coins, Crown, ExternalLink, Image as ImageIcon,
+  ArrowUp, Mic, MicOff, Square, Volume2, Check, CheckCircle2, ChevronDown, Coins, Crown, ExternalLink, Image as ImageIcon,
   Loader2, MapPin, Megaphone, RotateCcw, Search, Sparkles, Store, Target, Users, Video, XCircle, Zap
 } from 'lucide-react';
 import type { Company, User, Wallet } from '../types';
 import { apiRequest } from '../lib/api';
 import { PublicTopBar } from '../components/PublicTopBar';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents';
+import { brazilNow, firstName } from '../../shared/brazilTime';
 import { isVoiceSupported, useFrocVoice } from '../lib/voice/useFrocVoice';
 import { VoiceStatusBar } from '../components/VoiceStatusBar';
 
@@ -129,7 +130,7 @@ function ResultCard({ result }: { result: ActionResult }) {
               {Array.isArray(data.hashtags) && data.hashtags.length > 0 && <p className="mt-1 text-[11px] text-[#00E676]">{data.hashtags.join(' ')}</p>}
             </div>
           )}
-          {data.imageUrl && <img src={data.imageUrl} alt="Imagem criada pela Froc.IA" className="mt-2 max-h-72 rounded-xl border border-white/10 object-cover" />}
+          {data.imageUrl && <img src={data.imageUrl} alt="Imagem criada pelo Froc.IA" className="mt-2 max-h-72 rounded-xl border border-white/10 object-cover" />}
           {Array.isArray(data.scenes) && data.scenes.length > 0 && (
             <ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-neutral-300">
               {data.scenes.map((scene: any, index: number) => <li key={index}>{scene?.narration || scene?.description || scene?.visual || JSON.stringify(scene).slice(0, 160)}</li>)}
@@ -156,6 +157,12 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
   const [executing, setExecuting] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [liveAgents, setLiveAgents] = useState(173);
+  const [now, setNow] = useState(() => brazilNow());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(brazilNow()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const name = firstName(user?.name);
   const voiceSupported = useMemo(isVoiceSupported, []);
   const voice = useFrocVoice({
     neural: Boolean(user),
@@ -204,10 +211,10 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
       setCollected(data.collected);
       const replyId = uid();
       setMessages((current) => [...current, { id: replyId, role: 'assistant', content: data.reply, agents: data.agents, plan: data.plan, quickReplies: data.quickReplies }]);
-      // Conversa por voz ligada: a Froc.IA responde falando e volta a ouvir sozinha.
+      // Conversa por voz ligada: o Froc.IA responde falando e volta a ouvir sozinha.
       if (fromVoice || voice.enabled) void voice.speak(data.reply, replyId);
     } catch (err: any) {
-      setError(err?.message || 'A Froc.IA está muito requisitada agora. Tente de novo em instantes.');
+      setError(err?.message || 'O Froc.IA está muito requisitada agora. Tente de novo em instantes.');
       if (fromVoice || voice.enabled) voice.cancelThinking();
     } finally {
       setThinking(false);
@@ -276,16 +283,18 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
             <div className="froc-logo-hero froc-float mb-6">
               <img src="/brand/logo-froc-512.webp" alt="Froc.IA — inteligência artificial de marketing" width={176} height={176} className="relative z-10 h-32 w-32 rounded-full sm:h-44 sm:w-44" fetchPriority="high" />
             </div>
+            <p className="mb-3 text-lg font-black text-white sm:text-xl">{now.greeting}{name ? `, ${name}` : ''}! 👋</p>
+            <p className="mb-5 text-xs capitalize text-neutral-400">{now.longDate} · {now.time}</p>
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#00E676]/30 bg-[#00E676]/[0.07] px-4 py-1.5 text-[11px] font-bold text-[#00E676]">
               <span className="froc-pulse-dot h-2 w-2 rounded-full bg-[#00E676] text-[#00E676]" />
               {liveAgents} de {FROC_AGENTS.length} agentes trabalhando agora
             </div>
             <h1 className="text-4xl font-black leading-[1.05] tracking-tight sm:text-6xl">
               Fale o que você quer.<br />
-              <span className="froc-text-gradient">A IA faz o resto.</span>
+              <span className="froc-text-gradient">O Froc.IA faz o resto.</span>
             </h1>
             <p className="mt-5 max-w-2xl text-sm leading-7 text-neutral-300 sm:text-base">
-              Sem formulários, sem painéis complicados. Converse com a Froc.IA: ela entende seu negócio, define a região (país, cidade, bairro e até a rua), cria o anúncio e coloca sua marca para ser encontrada no Google — todos os dias.
+              Sem formulários, sem painéis complicados. Converse com o Froc.IA: ele entende seu negócio, define a região (país, cidade, bairro e até a rua), cria o anúncio e coloca sua marca para ser encontrada no Google — todos os dias.
             </p>
 
             <div className="mt-10 grid w-full gap-3 sm:grid-cols-2">
@@ -320,7 +329,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
         ) : (
           <section className="mx-auto max-w-3xl space-y-5 px-4">
             <div className="flex items-center justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-widest text-neutral-500">Conversa com a Froc.IA</p>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-neutral-500">Conversa com o Froc.IA</p>
               <button onClick={reset} className="inline-flex items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-[11px] text-neutral-400 hover:text-white"><RotateCcw size={11} /> Nova conversa</button>
             </div>
 
@@ -330,7 +339,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               </div>
             ) : (
               <div key={message.id} className="flex gap-3 animate-fadeIn">
-                <div className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-[#FFD400] via-[#FF2D87] to-[#00E676] text-black"><Bot size={18} /></div>
+                <img src="/brand/logo-froc.webp" alt="Froc.IA" width={36} height={36} className="mt-1 h-9 w-9 shrink-0 rounded-full shadow-[0_0_16px_rgba(45,107,255,.55)] ring-1 ring-white/20" />
                 <div className="min-w-0 flex-1">
                   <div className="whitespace-pre-line text-sm leading-7 text-neutral-100" dangerouslySetInnerHTML={{ __html: escapeAndBold(message.content) }} />
                   <div className="mt-2 flex items-center gap-2">
@@ -394,9 +403,9 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
 
             {thinking && (
               <div className="flex items-center gap-3 animate-fadeIn">
-                <div className="grid h-9 w-9 place-items-center rounded-2xl bg-gradient-to-br from-[#FFD400] via-[#FF2D87] to-[#00E676] text-black"><Bot size={18} /></div>
+                <img src="/brand/logo-froc.webp" alt="Froc.IA" width={36} height={36} className="h-9 w-9 shrink-0 animate-pulse rounded-full shadow-[0_0_16px_rgba(45,107,255,.55)] ring-1 ring-white/20" />
                 <div className="froc-typing rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"><span /><span /><span /></div>
-                <span className="text-[11px] text-neutral-500">Os especialistas estão analisando…</span>
+                <span className="text-[11px] text-neutral-500">Digitando…</span>
               </div>
             )}
 
@@ -425,18 +434,18 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               rows={1}
               onChange={(event) => { setInput(event.target.value); autosize(); }}
               onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(input); } }}
-              placeholder={voice.enabled ? 'Pode falar, estou ouvindo…' : empty ? 'Ex.: Tenho uma pizzaria no bairro Centro em Campinas e quero mais pedidos…' : 'Responda para a Froc.IA…'}
+              placeholder={voice.enabled ? 'Pode falar, estou ouvindo…' : empty ? 'Ex.: Tenho uma pizzaria no bairro Centro em Campinas e quero mais pedidos…' : 'Responda para o Froc.IA…'}
               className="max-h-[180px] min-h-[44px] flex-1 resize-none bg-transparent py-3 text-sm text-white outline-none placeholder:text-neutral-500"
-              aria-label="Mensagem para a Froc.IA"
+              aria-label="Mensagem para o Froc.IA"
               maxLength={2000}
             />
             {voiceSupported && (
               <button
                 type="button"
                 onClick={voice.toggle}
-                aria-label={voice.enabled ? 'Desligar conversa por voz' : 'Falar com a Froc.IA'}
+                aria-label={voice.enabled ? 'Desligar conversa por voz' : 'Falar com o Froc.IA'}
                 aria-pressed={voice.enabled}
-                title={voice.enabled ? 'Desligar microfone' : 'Falar com a Froc.IA (diga "pare" para desligar)'}
+                title={voice.enabled ? 'Desligar microfone' : 'Falar com o Froc.IA (diga "pare" para desligar)'}
                 className={`relative grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition ${voice.enabled ? 'bg-[#FF2D87] text-white shadow-[0_0_24px_rgba(255,45,135,.6)]' : 'border border-white/15 bg-white/[0.04] text-white hover:border-[#FFD400] hover:text-[#FFD400]'}`}
               >
                 {voice.enabled && voice.phase === 'listening' && <span className="absolute inset-0 animate-ping rounded-2xl bg-[#FF2D87]/40" />}
@@ -447,7 +456,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
               {thinking ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={20} strokeWidth={3} />}
             </button>
           </form>
-          <p className="mt-2 text-center text-[10px] text-neutral-500">Digite ou toque no microfone e fale. A Froc.IA confirma tudo antes de executar; conversar é grátis e créditos só são usados nas criações confirmadas.</p>
+          <p className="mt-2 text-center text-[10px] text-neutral-500">Digite ou toque no microfone e fale. O Froc.IA confirma tudo antes de executar; conversar é grátis e créditos só são usados nas criações confirmadas.</p>
         </div>
       </div>
     </div>

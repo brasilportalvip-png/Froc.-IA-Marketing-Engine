@@ -930,7 +930,7 @@ export async function processSchedulerTick() {
       console.error('[Scheduler] Erro em processPendingVideoJobs:', err);
     }
 
-    // Step 5: Autopilot antigo (desligado por padrão: a Froc.IA conversacional substituiu esta função)
+    // Step 5: Autopilot antigo (desligado por padrão: o Froc.IA conversacional substituiu esta função)
     try {
       autopilot = config.legacyAutopilotEnabled ? await processAutopilot() : 0;
     } catch (err: any) {

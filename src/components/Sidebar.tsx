@@ -52,9 +52,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const plan = wallet?.planId || 'free';
   const isFree = plan === 'free' || plan === 'plan_free' || !wallet?.planId;
-  // Ferramentas ficam escondidas: a Froc.IA executa tudo pela conversa.
+  // Ferramentas ficam escondidas: o Froc.IA executa tudo pela conversa.
   const menuItems = [
-    { id: 'home', label: 'Falar com a Froc.IA', icon: Sparkles, badge: 'IA' },
+    { id: 'home', label: 'Falar com o Froc.IA', icon: Sparkles, badge: 'IA' },
     { id: 'vitrine', label: 'Vitrine', icon: Store },
     { id: 'posts', label: 'Posts', icon: FileText },
     { id: 'dashboard', label: 'Meu Painel', icon: LayoutDashboard },
