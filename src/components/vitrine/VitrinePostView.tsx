@@ -4,7 +4,7 @@ import { apiRequest } from '../../lib/api';
 
 interface FullPost {
   id: string; companySlug: string; companyName: string; title: string; slug: string; summary: string; hook: string;
-  content: string; cta: string; faq: Array<{ question: string; answer: string }>; keywords: string[]; angleLabel: string;
+  content: string; cta: string; faq: Array<{ question: string; answer: string }>; keywords: string[]; hashtags?: string[]; angleLabel: string;
   imageUrl: string | null; imageAlt?: string; location: string | null; publishedAt: string;
 }
 
@@ -106,6 +106,11 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
         {post.imageUrl && <img src={post.imageUrl} alt={post.imageAlt || post.title} width={1280} height={720} className="mt-8 aspect-video w-full rounded-3xl object-cover" />}
         <div className="froc-prose mt-8" dangerouslySetInnerHTML={{ __html: markdownToHtml(post.content) }} />
 
+        {Array.isArray(post.hashtags) && post.hashtags.length > 0 && (
+          <p className="mt-6 flex flex-wrap gap-2" aria-label="Hashtags">
+            {post.hashtags.map((tag) => <span key={tag} className="rounded-full border border-[#00E676]/30 bg-[#00E676]/[0.06] px-3 py-1 text-xs font-bold text-[#00E676]">{tag}</span>)}
+          </p>
+        )}
         {post.faq.length > 0 && (
           <section className="mt-12">
             <h2 className="text-2xl font-black">Perguntas frequentes</h2>

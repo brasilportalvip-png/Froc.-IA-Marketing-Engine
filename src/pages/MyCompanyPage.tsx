@@ -67,7 +67,7 @@ const blank = (): Form => ({
   services: [],
   keywords: [],
   competitors: [],
-  isPublicInVitrine: true,
+  isPublicInVitrine: false,
   socialLinks: {}
 });
 
@@ -790,27 +790,15 @@ export const MyCompanyPage: React.FC<Props> = ({
           </div>
         </section>
 
-        {/* VITRINE PÚBLICA */}
-        <section className="froc-panel flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-bold text-white">
-              <Store size={17} className="text-cyan-400" />
-              Vitrine pública e SEO
-            </div>
-            <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-400">
-              Quando ativado, os dados públicos desta empresa (nome, links, produtos e serviços) podem aparecer na Vitrine Froc e no sitemap dinâmico. Dados financeiros, credenciais e configurações privadas nunca são expostos.
-            </p>
+        {/* VITRINE PÚBLICA (paga: entra pelo Meu Painel ou pelo chat) */}
+        <section className="froc-panel flex flex-col gap-2">
+          <div className="flex items-center gap-2 text-sm font-bold text-white">
+            <Store size={17} className="text-cyan-400" />
+            Vitrine Froc.IA {form.isPublicInVitrine ? '· publicada' : '· fora da vitrine'}
           </div>
-          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-4 hover:border-cyan-500/40">
-            <input
-              type="checkbox"
-              checked={Boolean(form.isPublicInVitrine)}
-              onChange={(e) => update('isPublicInVitrine', e.target.checked)}
-            />
-            <span className="text-xs font-bold text-white">
-              {form.isPublicInVitrine ? 'Publicada na Vitrine' : 'Privada'}
-            </span>
-          </label>
+          <p className="max-w-2xl text-[11px] leading-relaxed text-slate-400">
+            A Vitrine é exclusiva para assinantes: cada projeto usa 10 créditos por dia e ganha 1 post personalizado com imagem do nicho. Para entrar, use o botão “Colocar na Vitrine” no Meu Painel ou peça ao Froc.IA no chat. Dados financeiros, credenciais e configurações privadas nunca são expostos.
+          </p>
         </section>
 
         {/* BOTÕES DE AÇÃO */}

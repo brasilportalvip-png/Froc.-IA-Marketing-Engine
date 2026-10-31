@@ -22,7 +22,7 @@ test('Routes & Entitlements: Restrição de limite de empresas por plano', async
 
   const walletFree = await getEffectiveWallet(userId);
   const entFree = getPlanEntitlements(walletFree.planId);
-  assert.equal(entFree.maxCompanies, 1);
+  assert.equal(entFree.maxCompanies, Number.POSITIVE_INFINITY); // projetos ilimitados
 
   // Cria a primeira empresa
   await db.collection(COLLECTIONS.companies).doc('comp_1').set({
@@ -34,7 +34,7 @@ test('Routes & Entitlements: Restrição de limite de empresas por plano', async
   const snap1 = await db.collection(COLLECTIONS.companies).where('userId', '==', userId).get();
   const count1 = snap1.docs.length;
   assert.equal(count1, 1);
-  assert.equal(count1 >= entFree.maxCompanies, true); // Não pode criar mais
+  assert.equal(count1 < entFree.maxCompanies, true); // Pode criar mais (limite = créditos)
 
   // 2. Upgrade para Start (max 2 empresas)
   const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -50,7 +50,7 @@ test('Routes & Entitlements: Restrição de limite de empresas por plano', async
 
   const walletStart = await getEffectiveWallet(userId);
   const entStart = getPlanEntitlements(walletStart.planId);
-  assert.equal(entStart.maxCompanies, 2);
+  assert.equal(entStart.maxCompanies, Number.POSITIVE_INFINITY);
   assert.equal(count1 < entStart.maxCompanies, true); // Pode criar a 2ª
 
   // Cria a segunda empresa
@@ -63,7 +63,7 @@ test('Routes & Entitlements: Restrição de limite de empresas por plano', async
   const snap2 = await db.collection(COLLECTIONS.companies).where('userId', '==', userId).get();
   const count2 = snap2.docs.length;
   assert.equal(count2, 2);
-  assert.equal(count2 >= entStart.maxCompanies, true); // Atingiu o limite de 2 empresas do Start
+  assert.equal(count2 < entStart.maxCompanies, true); // Sem teto de projetos
 });
 
 test('Routes & Entitlements: Validação fail-closed de rotas restritas a planos pagos (Campanhas e Redes)', async () => {

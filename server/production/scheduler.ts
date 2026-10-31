@@ -2,7 +2,8 @@ import { config } from '../config/index.js';
 import { generateAutopilotPost, generatePlatformArticle, generatePost, processPendingVideoJobs } from './ai.js';
 import { cleanupStaleReservations, getEffectiveWallet, getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
-import { COLLECTIONS, createNotification, firestore, newId, nowIso } from './store.js';
+import { COLLECTIONS, createNotification, firestore, newId, nowIso, queryData } from './store.js';
+import { avoidRepeatBlock, isDuplicatePost } from './uniqueness.js';
 import { processVitrineDailyPosts } from './vitrineDaily.js';
 import { backfillPostImages, createPostImage } from './postImages.js';
 import { baseUrl, pingIndexNow } from './seoEngine.js';
@@ -672,8 +673,21 @@ async function processAutoBlog(): Promise<number> {
   ];
   const index = Math.floor(Date.now() / 86_400_000) % topics.length;
   try {
-    const generated = await generatePlatformArticle(topics[index]);
-    const article = generated.article || {};
+    // Conteúdo inédito: a IA recebe o que já foi publicado e o texto novo é comparado com os anteriores.
+    const previous = queryData<any>(await db.collection(COLLECTIONS.blogPosts).get())
+      .sort((a, b) => String(b.publishedAt || b.createdAt || '').localeCompare(String(a.publishedAt || a.createdAt || '')));
+    let generated: any = null;
+    let article: any = {};
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const candidate = await generatePlatformArticle(`${topics[index]}${avoidRepeatBlock(previous)}${attempt ? '\nEscolha um recorte totalmente diferente dos já publicados.' : ''}`);
+      const candidateArticle = candidate.article || {};
+      if (!isDuplicatePost({ title: String(candidateArticle.title || ''), content: String(candidateArticle.content || '') }, previous)) {
+        generated = candidate;
+        article = candidateArticle;
+        break;
+      }
+    }
+    if (!generated) throw new Error('Artigo repetido descartado: nada publicado hoje para não duplicar conteúdo.');
     const id = newId('blog');
     const image = await createPostImage({ title: String(article.title || topics[index]), summary: String(article.summary || article.metaDescription || ''), keyword: Array.isArray(article.tags) ? String(article.tags[0] || '') : '', category: String(article.category || 'Marketing & IA'), folder: 'posts/magazine' });
     const slugBase = String(article.suggestedSlug || article.title || topics[index]);
@@ -681,16 +695,17 @@ async function processAutoBlog(): Promise<number> {
     const post = {
       id, title: String(article.title || 'Froc Magazine').slice(0, 180), slug,
       summary: String(article.summary || article.metaDescription || '').slice(0, 500),
-      content: String(article.content || '').slice(0, 120_000), featuredImageUrl: image?.imageUrl || `${baseUrl()}/og-froc.jpg`, imageAlt: image?.imageAlt || String(article.title || ''), author: config.blog.author,
+      content: String(article.content || '').slice(0, 120_000), featuredImageUrl: image?.imageUrl || null, imageSha256: image?.sha256 || null, imageAlt: image?.imageAlt || String(article.title || ''), author: config.blog.author,
       category: String(article.category || 'Marketing & IA').slice(0, 100),
       tags: Array.isArray(article.tags) ? article.tags.slice(0, 12).map((x:any)=>String(x).slice(0,80)) : ['Marketing','IA'],
       seoTitle: String(article.title || '').slice(0, 70), seoDescription: String(article.metaDescription || article.summary || '').slice(0, 180),
-      status: 'published', publishedAt: nowIso(), createdAt: nowIso(), updatedAt: nowIso(), generatedBy: 'froc_auto_blog', modelUsed: generated.modelUsed
+      // Sem imagem própria o artigo aguarda o próximo ciclo para ser publicado.
+      status: image ? 'published' : 'awaiting_image', publishedAt: image ? nowIso() : null, createdAt: nowIso(), updatedAt: nowIso(), generatedBy: 'froc_auto_blog', modelUsed: generated.modelUsed
     };
     if (!post.title || !post.content) throw new Error('A IA não retornou artigo completo.');
     await db.collection(COLLECTIONS.blogPosts).doc(id).set(post);
     await settingsRef.set({ lastPublishedDate: today, lastPublishedPostId: id, completedAt: nowIso(), lastError: null }, { merge: true });
-    await pingIndexNow([`${baseUrl()}/blog/${encodeURIComponent(slug)}`, `${baseUrl()}/blog`], 'auto_blog');
+    if (image) await pingIndexNow([`${baseUrl()}/blog/${encodeURIComponent(slug)}`, `${baseUrl()}/blog`], 'auto_blog');
     return 1;
   } catch (error) {
     await settingsRef.set({ lastError: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500), failedAt: nowIso() }, { merge: true });

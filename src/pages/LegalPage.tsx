@@ -20,7 +20,7 @@ export const LegalPage: React.FC = () => {
           </div>
         </div>
         <p className="mt-3 text-xs text-slate-400">
-          Versão operacional de produção. Última atualização: 20/08/2026.
+          Versão operacional de produção. Última atualização: 31/10/2026.
         </p>
       </header>
 
@@ -97,7 +97,7 @@ export const LegalPage: React.FC = () => {
           <section>
             <h2 className="froc-section-title mb-2 text-white font-bold text-base">8. Vitrine Pública Froc.IA</h2>
             <p>
-              A Vitrine Froc.IA é um diretório público opcional. Os dados de uma empresa (como nome fantasia, descrição pública, links e canais de contato) só são expostos publicamente na internet e incluídos em indexadores (como <code className="text-cyan-300 text-xs">sitemap.xml</code>) se o usuário ativar <em>explicitamente</em> a opção correspondente em seu painel. Empresas com configuração privada não têm suas informações ou páginas públicas expostas a terceiros ou motores de busca.
+              A Vitrine Froc.IA é um diretório público opcional, exclusivo para assinantes. Os dados de uma empresa (como nome fantasia, descrição pública, links e canais de contato) e os posts diários só são expostos publicamente na internet e incluídos em indexadores (como <code className="text-cyan-300 text-xs">sitemap.xml</code>) depois que o usuário coloca <em>explicitamente</em> o projeto na Vitrine. Quando o projeto sai da Vitrine (por decisão do usuário, falta de créditos ou de plano ativo), a página pública deixa de ser exibida. Empresas fora da Vitrine não têm suas informações expostas a terceiros ou motores de busca.
             </p>
           </section>
 
@@ -187,7 +187,7 @@ export const LegalPage: React.FC = () => {
           <section>
             <h2 className="froc-section-title mb-2 text-white font-bold text-base">1. Serviço</h2>
             <p>
-              O Froc.IA é uma plataforma de automação de marketing com recursos de inteligência artificial, criação de conteúdo, SEO, campanhas, calendário, integrações sociais, créditos e ferramentas relacionadas. Recursos podem depender de provedores externos e das permissões concedidas pelo usuário.
+              O Froc.IA é uma plataforma de marketing com inteligência artificial conversacional (chat por texto e voz), criação de conteúdo, SEO local, Vitrine pública com post diário e sistema de créditos. Recursos podem depender de provedores externos (como Google Gemini, Firebase e Mercado Pago). O Froc.IA trabalha com alcance orgânico (buscadores e conteúdo); ele não compra mídia paga em redes de anúncios de terceiros e não garante posições em buscadores.
             </p>
           </section>
           <section>
@@ -205,19 +205,19 @@ export const LegalPage: React.FC = () => {
           <section>
             <h2 className="froc-section-title mb-2 text-white font-bold text-base">4. Créditos, planos e pagamentos</h2>
             <p>
-              Operações de IA consomem créditos conforme o catálogo exibido no produto. Em modo de assinatura, a renovação e cobrança são processadas pelo Mercado Pago; cancelamentos interrompem renovações futuras conforme o status confirmado pelo provedor. Estornos ou chargebacks podem gerar reversão dos créditos concedidos naquela cobrança.
+              Regras vigentes: (a) ao criar a conta, o usuário recebe 25 créditos de bônus, uma única vez por pessoa, aparelho e rede, com verificação antifraude; contas duplicadas não recebem bônus; (b) cada resposta do Froc.IA no chat consome 3 créditos (respostas de contingência, quando a IA está indisponível, não são cobradas); (c) as criações pedidas no chat (posts, imagens, roteiros, estratégias e artigos) já estão incluídas; (d) a Vitrine é exclusiva para planos pagos e consome 10 créditos por dia por projeto, cobrados no máximo uma vez por dia, com 1 post personalizado com imagem do nicho; (e) sem créditos ou sem plano ativo, o projeto sai automaticamente da Vitrine e o usuário é avisado; (f) não há limite de projetos, desde que haja créditos. O liga/desliga do post diário é de controle exclusivo da administração do site; quando desligado, não há post nem cobrança. Em modo de assinatura, a renovação e cobrança são processadas pelo Mercado Pago; cancelamentos interrompem renovações futuras conforme o status confirmado pelo provedor. Estornos ou chargebacks podem gerar reversão dos créditos concedidos naquela cobrança.
             </p>
           </section>
           <section>
-            <h2 className="froc-section-title mb-2 text-white font-bold text-base">5. Redes sociais e Autopilot</h2>
+            <h2 className="froc-section-title mb-2 text-white font-bold text-base">5. Conteúdo original e posts diários</h2>
             <p>
-              Publicações automáticas só são executadas em contas conectadas por OAuth e quando a API oficial da rede permitir o formato solicitado. O Froc.IA não considera uma publicação concluída quando o provedor retorna erro ou quando uma integração necessária não está configurada.
+              Os posts da Vitrine e do Froc Magazine são escritos para pessoas, com texto e imagem exclusivos: o sistema bloqueia posts repetidos e imagens duplicadas, e um post só é publicado quando tem imagem própria ligada ao nicho do projeto. É proibido usar o serviço para gerar páginas enganosas, conteúdo copiado ou práticas de spam contrárias às diretrizes dos buscadores.
             </p>
           </section>
           <section>
             <h2 className="froc-section-title mb-2 text-white font-bold text-base">6. Uso aceitável</h2>
             <p>
-              Não é permitido usar o serviço para fraude, spam abusivo, violação de direitos autorais, falsificação de avaliações, conteúdo ilegal ou tentativa de contornar limites, segurança ou regras das plataformas integradas.
+              Não é permitido usar o serviço para fraude, spam, criação de contas duplicadas para obter bônus, abuso de créditos, automação de requisições, violação de direitos autorais, falsificação de avaliações, conteúdo ilegal, de ódio ou que incite violência ou terrorismo, ou tentativa de contornar limites, segurança ou regras das plataformas integradas. Contas envolvidas nessas práticas podem ser bloqueadas e ter créditos revertidos.
             </p>
           </section>
           <section>

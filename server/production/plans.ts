@@ -23,7 +23,7 @@ export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
       return {
         planId: 'plan_agency',
         planName: 'AGENCY',
-        maxCompanies: Number.POSITIVE_INFINITY, // Empresas ilimitadas conforme especificação comercial oficial
+        maxCompanies: Number.POSITIVE_INFINITY, // projetos ilimitados: o limite é o saldo de créditos
         autopilotManual: true,
         autopilotAutomatic: true,
         advancedSeo: true,
@@ -34,7 +34,7 @@ export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
       return {
         planId: 'plan_business',
         planName: 'BUSINESS',
-        maxCompanies: 15,
+        maxCompanies: Number.POSITIVE_INFINITY, // projetos ilimitados: o limite é o saldo de créditos
         autopilotManual: true,
         autopilotAutomatic: true,
         advancedSeo: true,
@@ -45,7 +45,7 @@ export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
       return {
         planId: 'plan_pro',
         planName: 'PRO',
-        maxCompanies: 5,
+        maxCompanies: Number.POSITIVE_INFINITY, // projetos ilimitados: o limite é o saldo de créditos
         autopilotManual: true,
         autopilotAutomatic: false,
         advancedSeo: true,
@@ -56,7 +56,7 @@ export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
       return {
         planId: 'plan_start',
         planName: 'START',
-        maxCompanies: 2,
+        maxCompanies: Number.POSITIVE_INFINITY, // projetos ilimitados: o limite é o saldo de créditos
         autopilotManual: false,
         autopilotAutomatic: false,
         advancedSeo: false,
@@ -68,7 +68,7 @@ export function getPlanEntitlements(planId?: string | null): PlanEntitlements {
       return {
         planId: 'plan_free',
         planName: 'FREE',
-        maxCompanies: 1,
+        maxCompanies: Number.POSITIVE_INFINITY, // projetos ilimitados: o limite é o saldo de créditos
         autopilotManual: false,
         autopilotAutomatic: false,
         advancedSeo: false,

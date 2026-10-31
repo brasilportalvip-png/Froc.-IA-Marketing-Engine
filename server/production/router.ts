@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { getAdminAuth, getAdminStorage } from '../providers/firebaseAdmin.js';
 import { config } from '../config/index.js';
 import { AuthenticatedRequest, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION, ensureUserProfile, hasAcceptedLatestTerms, requireAdmin, requireAuth } from './auth.js';
-import { addCredits, getWallet, listCreditTransactions, removeCreditsAdmin } from './credits.js';
+import { addCredits, commitReservation, getWallet, listCreditTransactions, removeCreditsAdmin, reserveCredits, rollbackReservation } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { evaluateSignupBonusEligibility } from './antiAbuse.js';
 import { generatePlatformArticle } from './ai.js';
@@ -13,13 +13,15 @@ import { getSchedulerHealth, processSchedulerTick } from './scheduler.js';
 import multer from 'multer';
 import { allIndexableUrls, buildRobotsTxt, buildSitemapIndexXml, getSeoEngineStatus, pingIndexNow } from './seoEngine.js';
 import { conciergeChat, executeConciergePlan, sanitizeMessages } from './concierge.js';
+import { getSiteSettings, isPaidPlan, setSiteDailyPosts, vitrineBlockMessage, vitrineDailyCost, vitrineEligibility } from './vitrineBilling.js';
+import { closeConversation, deleteConversation, getConversation, listConversations, saveConversationTurn } from './conversations.js';
 import { cleanSpeechText, createLiveTranscriptionToken, diagnoseVoice, NEURAL_SPEECH_CHANNELS, NEURAL_SPEECH_SAMPLE_RATE, synthesizeSpeech, synthesizeSpeechStream } from './speech.js';
-import { processVitrineDailyPosts, sanitizePublicVitrinePost } from './vitrineDaily.js';
+import { enterVitrine, processVitrineDailyPosts, sanitizePublicVitrinePost } from './vitrineDaily.js';
 import { listAllPublicPosts } from './posts.js';
 import { appLinksOf } from './appLinks.js';
 import { backfillPostImages, createPostImage, resetFailedPostImages } from './postImages.js';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents.js';
-import { COLLECTIONS, cleanObject, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
+import { COLLECTIONS, cleanObject, consumeRateLimit, createNotification, firestore, newId, nowIso, probeDatabaseHealth, queryData, slugify, writeAdminLog } from './store.js';
 
 const router = Router();
 
@@ -97,7 +99,7 @@ function normalizeCompanyField(key: string, value: any): any {
   if (key === 'onlineChannels') return stringArray(value);
   if (key === 'socialLinks') return sanitizedSocialLinks(value);
   if (['products','services','competitors','keywords'].includes(key)) return stringArray(value);
-  if (key === 'isPublicInVitrine') {
+  if (key === 'isPublicInVitrine' || key === 'dailyPostsEnabled' || key === 'vitrineBillingExempt') {
     return parseStrictBoolean(value);
   }
   if (key === 'marketingProfile') return value && typeof value === 'object' ? cleanObject(value) : undefined;
@@ -229,7 +231,7 @@ router.post('/auth/sync-profile', requireAuth, asyncRoute(async (req: Authentica
     avatarUrl: safeString(req.body?.avatarUrl, 1000) || req.user?.avatarUrl
   });
 
-  const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const clientIp = trustedClientIp(req);
   const userAgent = safeString(req.headers['user-agent'], 300);
 
   // Avaliação rigorosa anti-abuso e anti-multicontas para concessão de bônus (apenas na criação)
@@ -392,7 +394,8 @@ router.post('/companies', requireAuth, asyncRoute(async (req: AuthenticatedReque
     competitors: stringArray(req.body?.competitors),
     keywords: stringArray(req.body?.keywords),
     socialLinks: sanitizedSocialLinks(req.body?.socialLinks),
-    isPublicInVitrine: normalizeCompanyField('isPublicInVitrine', req.body?.isPublicInVitrine),
+    // Vitrine é paga: entra só pelo botão "Colocar na Vitrine" (POST /companies/:id/vitrine).
+    isPublicInVitrine: false,
     marketingProfile: req.body?.marketingProfile && typeof req.body.marketingProfile === 'object' ? req.body.marketingProfile : undefined,
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -407,7 +410,7 @@ router.get('/companies/:id', requireAuth, asyncRoute(async (req: AuthenticatedRe
 
 router.patch('/companies/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const current = await requireOwnedCompany(req.user!.id, req.params.id);
-  const allowed = ['name','businessType','onlineChannels','logoUrl','description','website','androidApp','iosApp','phone','whatsapp','email','address','city','state','country','category','segment','products','services','targetAudience','coverageRegion','differentials','brandTone','goals','competitors','keywords','socialLinks','isPublicInVitrine','marketingProfile'];
+  const allowed = ['name','businessType','onlineChannels','logoUrl','description','website','androidApp','iosApp','phone','whatsapp','email','address','city','state','country','category','segment','products','services','targetAudience','coverageRegion','differentials','brandTone','goals','competitors','keywords','socialLinks','marketingProfile'];
   const patch: Record<string, any> = {};
   for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
   if (patch.name && patch.name !== current.name) patch.slug = `${slugify(safeString(patch.name, 120))}-${req.params.id.slice(-6)}`;
@@ -415,6 +418,21 @@ router.patch('/companies/:id', requireAuth, asyncRoute(async (req: Authenticated
   await firestore().collection(COLLECTIONS.companies).doc(req.params.id).set(cleanObject(patch), { merge: true });
   const snap = await firestore().collection(COLLECTIONS.companies).doc(req.params.id).get();
   res.json({ message: 'Empresa atualizada com sucesso.', company: { id: snap.id, ...snap.data() } });
+}));
+
+// Vitrine paga: plano ativo + 10 créditos/dia por projeto. Ligar/desligar o post diário é só do admin.
+router.post('/companies/:id/vitrine', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const company = await requireOwnedCompany(req.user!.id, req.params.id);
+  if (parseStrictBoolean(company.isPublicInVitrine)) return res.json({ ok: true, message: 'Este projeto já está na Vitrine.', company });
+  const outcome = await enterVitrine({ company, isAdmin: req.user!.role === 'admin' });
+  if (!outcome.ok) return res.status(402).json({ error: outcome.message, reason: outcome.reason });
+  const snap = await firestore().collection(COLLECTIONS.companies).doc(company.id).get();
+  res.json({ ok: true, message: outcome.message, url: outcome.url, company: { id: snap.id, ...snap.data() }, wallet: await getWallet(req.user!.id) });
+}));
+
+router.get('/vitrine-billing', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const eligibility = await vitrineEligibility(req.user!.id, req.user!.role === 'admin');
+  res.json({ dailyCost: vitrineDailyCost(), chatReplyCost: config.billing.chatReplyCost, canEnter: eligibility.ok, reason: eligibility.reason || null, message: vitrineBlockMessage(eligibility.reason) });
 }));
 
 router.post('/companies/:id/logo', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -928,12 +946,85 @@ router.get('/agents', (_req, res) => {
   res.json({ total: FROC_AGENTS.length, squads: FROC_SQUADS.map(({ id, name, color, mission, roles }) => ({ id, name, color, mission, agents: roles.length })), agents: FROC_AGENTS });
 });
 
+/** IP real do visitante: no Vercel o cabeçalho próprio da plataforma não pode ser forjado pelo cliente. */
+export function trustedClientIp(req: AuthenticatedRequest): string {
+  const header = (name: string) => String(req.headers[name] || '').split(',')[0].trim();
+  return (header('x-vercel-forwarded-for') || header('x-real-ip') || String(req.ip || req.socket?.remoteAddress || '') || 'unknown').slice(0, 200);
+}
+
+function chatNeedsMessage(reason: 'login' | 'credits', name?: string): string {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  const who = first && !first.includes('@') ? `${first.charAt(0).toUpperCase()}${first.slice(1)}, ` : '';
+  if (reason === 'login') return `Adorei conversar com você! 😊 Pra gente continuar, crie sua conta grátis: você ganha ${config.freeSignupBonusCredits} créditos de presente e eu já começo a montar o marketing do seu negócio. 🚀`;
+  return `${who}seus créditos acabaram por agora. Cada resposta minha usa ${config.billing.chatReplyCost} créditos. Escolha um plano ou recarregue e a gente continua de onde parou! 💛`;
+}
+
+// Chat: cada resposta da IA usa `billing.chatReplyCost` créditos (admin não paga).
+// Visitante tem `billing.guestFreeReplies` respostas grátis por dia (por rede), depois cria a conta.
 router.post('/concierge/chat', optionalAuth as any, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const messages = sanitizeMessages(req.body?.messages);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return res.status(400).json({ error: 'Envie uma mensagem para o Froc.IA.' });
+  const isAdmin = req.user?.role === 'admin';
+  const cost = Number(config.billing.chatReplyCost) || 0;
+  const conversationId = safeString(req.body?.conversationId, 200) || undefined;
+  if (req.user && conversationId) await getConversation(req.user.id, conversationId).then((c) => { if (c.status === 'closed') { const e: any = new Error('Esta conversa foi fechada. Comece uma nova conversa.'); e.statusCode = 409; throw e; } });
+
+  if (!req.user) {
+    const limit = Number(config.billing.guestFreeReplies) || 0;
+    const quota = limit > 0
+      ? await consumeRateLimit({ key: `guest-chat:${trustedClientIp(req)}`, limit, windowMs: 86_400_000 })
+      : { allowed: false };
+    if (!quota.allowed) return res.json({ reply: chatNeedsMessage('login'), quickReplies: ['Criar conta grátis'], collected: req.body?.collected || {}, readyToConfirm: false, plan: null, agents: [], activeAgentsTotal: 0, needsAuth: true, needsLogin: true });
+  }
+
+  let account: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean } | undefined;
+  let reservationId = '';
+  if (req.user) {
+    const wallet = await getWallet(req.user.id);
+    const available = Math.max(Number(wallet.balance || 0) - Number(wallet.reservedCredits || 0), 0);
+    account = { paidPlan: isPaidPlan(wallet), planName: String(wallet.planId || '').replace('plan_', '').toUpperCase(), balance: available, isAdmin };
+    if (!isAdmin && cost > 0) {
+      try {
+        reservationId = (await reserveCredits({ userId: req.user.id, amount: cost, operation: 'chat_reply' })).reservationId;
+      } catch {
+        return res.json({ reply: chatNeedsMessage('credits', req.user.name), quickReplies: ['Ver planos', 'Comprar créditos'], collected: req.body?.collected || {}, readyToConfirm: false, plan: null, agents: [], activeAgentsTotal: 0, needsAuth: false, needsCredits: true, wallet });
+      }
+    }
+  }
+
   const company = req.user ? await ownedCompany(req.user.id, safeString(req.body?.companyId, 200)) : undefined;
-  const turn = await conciergeChat({ messages, collected: req.body?.collected, company, authenticated: Boolean(req.user), userName: req.user?.name });
-  res.json({ ...turn, needsAuth: !req.user });
+  let turn;
+  try {
+    turn = await conciergeChat({ messages, collected: req.body?.collected, company, authenticated: Boolean(req.user), userName: req.user?.name, account });
+  } catch (error) {
+    if (reservationId) await rollbackReservation(req.user!.id, reservationId, 'Falha no chat');
+    throw error;
+  }
+  // Só cobra quando a IA respondeu de verdade (resposta de contingência é grátis).
+  if (reservationId) {
+    if (turn.aiAnswered) await commitReservation({ userId: req.user!.id, reservationId, source: 'Chat Froc.IA: resposta', metadata: { conversationId: conversationId || null } });
+    else await rollbackReservation(req.user!.id, reservationId, 'IA indisponível: resposta sem cobrança');
+  }
+  let savedConversationId: string | undefined;
+  if (req.user) {
+    savedConversationId = await saveConversationTurn({ userId: req.user.id, conversationId, messages, reply: turn.reply, collected: turn.collected }).catch(() => conversationId);
+  }
+  res.json({ ...turn, needsAuth: !req.user, conversationId: savedConversationId, creditsUsed: reservationId && turn.aiAnswered ? cost : 0, wallet: req.user ? await getWallet(req.user.id) : undefined });
+}));
+
+router.get('/concierge/conversations', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  res.json({ conversations: await listConversations(req.user!.id) });
+}));
+router.get('/concierge/conversations/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  res.json({ conversation: await getConversation(req.user!.id, safeString(req.params.id, 200)) });
+}));
+router.post('/concierge/conversations/:id/close', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  await closeConversation(req.user!.id, safeString(req.params.id, 200));
+  res.json({ message: 'Conversa fechada.' });
+}));
+router.delete('/concierge/conversations/:id', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  await deleteConversation(req.user!.id, safeString(req.params.id, 200));
+  res.json({ message: 'Conversa excluída.' });
 }));
 
 router.post('/concierge/execute', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -1231,7 +1322,7 @@ router.delete('/admin/users/:id', requireAdmin, asyncRoute(async (req: Authentic
     await db.collection(COLLECTIONS.companies).doc(company.id).delete();
   }
   const removed: Record<string, number> = { companies: companies.length };
-  for (const collection of [COLLECTIONS.contentItems, COLLECTIONS.scheduledPosts, COLLECTIONS.campaigns, COLLECTIONS.notifications, COLLECTIONS.conciergeSessions, COLLECTIONS.mediaGenerationJobs, COLLECTIONS.creditReservations]) {
+  for (const collection of [COLLECTIONS.contentItems, COLLECTIONS.scheduledPosts, COLLECTIONS.campaigns, COLLECTIONS.notifications, COLLECTIONS.conciergeSessions, COLLECTIONS.conversations, COLLECTIONS.mediaGenerationJobs, COLLECTIONS.creditReservations]) {
     removed[collection] = await deleteWhere(collection, 'userId', user.id);
   }
   await db.collection(COLLECTIONS.wallets).doc(user.id).delete();
@@ -1296,9 +1387,20 @@ router.get('/admin/companies', requireAdmin, asyncRoute(async (_req: Authenticat
     category: c.category || '', city: c.city || '', state: c.state || '', website: c.website || '', whatsapp: c.whatsapp || '', description: c.description || '',
     androidApp: c.androidApp || '', iosApp: c.iosApp || '',
     clicks: { total: Number(clicks.get(c.id)?.total || 0), site: Number(clicks.get(c.id)?.site || 0), app: Number(clicks.get(c.id)?.android || 0) + Number(clicks.get(c.id)?.ios || 0), whatsapp: Number(clicks.get(c.id)?.whatsapp || 0) },
-    isPublicInVitrine: parseStrictBoolean(c.isPublicInVitrine), vitrinePosts: postCount.get(c.id) || 0, createdAt: c.createdAt || '', updatedAt: c.updatedAt || ''
+    isPublicInVitrine: parseStrictBoolean(c.isPublicInVitrine), dailyPostsEnabled: c.dailyPostsEnabled !== false, vitrineBillingExempt: c.vitrineBillingExempt === true || users.get(c.userId)?.role === 'admin',
+    vitrineRemovedReason: c.vitrineRemovedReason || null, vitrinePosts: postCount.get(c.id) || 0, createdAt: c.createdAt || '', updatedAt: c.updatedAt || ''
   })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   res.json({ companies });
+}));
+
+// Chave geral do post diário (somente admin): desligada = nenhum post e nenhuma cobrança no site inteiro.
+router.get('/admin/settings/daily-posts', requireAdmin, asyncRoute(async (_req: AuthenticatedRequest, res) => {
+  res.json({ ...(await getSiteSettings()), dailyCost: vitrineDailyCost(), chatReplyCost: config.billing.chatReplyCost, guestFreeReplies: config.billing.guestFreeReplies });
+}));
+router.patch('/admin/settings/daily-posts', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const result = await setSiteDailyPosts(parseStrictBoolean(req.body?.dailyPostsEnabled), req.user!.id);
+  await writeAdminLog({ operatorId: req.user!.id, operatorEmail: req.user!.email, action: 'site_daily_posts', details: result });
+  res.json({ message: result.dailyPostsEnabled ? 'Post diário ligado no site.' : 'Post diário desligado no site (sem posts e sem cobrança).', ...result });
 }));
 
 router.post('/admin/companies', requireAdmin, asyncRoute(async (req: AuthenticatedRequest, res) => {
@@ -1314,7 +1416,11 @@ router.post('/admin/companies', requireAdmin, asyncRoute(async (req: Authenticat
     androidApp: safeHttpUrl(req.body?.androidApp, 1000), iosApp: safeHttpUrl(req.body?.iosApp, 1000),
     city: safeString(req.body?.city, 150), state: safeString(req.body?.state, 100), country: safeString(req.body?.country, 100) || 'Brasil',
     category: safeString(req.body?.category, 150) || 'Comércio & Serviços', businessType: normalizeCompanyField('businessType', req.body?.businessType || 'online'),
-    products: [], services: [], keywords: [], isPublicInVitrine: parseStrictBoolean(req.body?.isPublicInVitrine), createdBy: req.user!.id, createdAt: nowIso(), updatedAt: nowIso()
+    products: [], services: [], keywords: [], isPublicInVitrine: parseStrictBoolean(req.body?.isPublicInVitrine),
+    // Projeto colocado pelo admin: não paga diária (o admin pode mudar isso depois).
+    vitrineBillingExempt: req.body?.vitrineBillingExempt === undefined ? true : parseStrictBoolean(req.body.vitrineBillingExempt),
+    dailyPostsEnabled: req.body?.dailyPostsEnabled === undefined ? true : parseStrictBoolean(req.body.dailyPostsEnabled),
+    createdBy: req.user!.id, createdAt: nowIso(), updatedAt: nowIso()
   });
   await firestore().collection(COLLECTIONS.companies).doc(id).set(company);
   if (company.isPublicInVitrine) await pingIndexNow([`${config.appUrl.replace(/\/$/, '')}/vitrine/${encodeURIComponent(company.slug)}`], 'admin_company_create');
@@ -1327,7 +1433,7 @@ router.patch('/admin/companies/:id', requireAdmin, asyncRoute(async (req: Authen
   const snap = await ref.get();
   if (!snap.exists) return res.status(404).json({ error: 'Projeto não encontrado.' });
   const current = { id: snap.id, ...snap.data() } as any;
-  const allowed = ['name', 'description', 'website', 'whatsapp', 'androidApp', 'iosApp', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine'];
+  const allowed = ['name', 'description', 'website', 'whatsapp', 'androidApp', 'iosApp', 'city', 'state', 'country', 'category', 'businessType', 'isPublicInVitrine', 'dailyPostsEnabled', 'vitrineBillingExempt'];
   const patch: Record<string, any> = {};
   for (const key of allowed) if (req.body?.[key] !== undefined) patch[key] = normalizeCompanyField(key, req.body[key]);
   if (req.body?.userId !== undefined) {

@@ -114,3 +114,31 @@ Telas antigas de ferramentas separadas: Froc IA (antiga), Autopilot, Criar Conte
 - Nenhuma ferramenta pode garantir 1º lugar no Google; o motor aplica todas as boas práticas técnicas e de conteúdo para maximizar as chances.
 - A segmentação por bairro/rua é **orgânica** (SEO local, conteúdo e Schema `areaServed`) e alimenta as campanhas; não é entrega de mídia paga em redes de terceiros.
 - Posts diários são gerados por IA com regras anti-invenção (sem números, depoimentos ou promoções falsas).
+
+## Regras comerciais (31/10/2026)
+
+| Regra | Como funciona |
+|---|---|
+| Bônus de cadastro | 25 créditos, 1 vez por pessoa (e-mail, aparelho e rede verificados) |
+| Chat | 3 créditos por resposta da IA (`CHAT_REPLY_COST`); resposta de contingência não cobra; admin não paga |
+| Visitante | 3 respostas grátis por dia por rede (`CHAT_GUEST_FREE_REPLIES`), depois cria a conta |
+| Criações | Post, imagem, roteiro, estratégia e artigo incluídos (`CREATIONS_FREE=true`) |
+| Vitrine | Só planos pagos. 10 créditos/dia por projeto (`VITRINE_DAILY_COST`), cobrados 1 vez por dia (`vitrineCharges/{companyId}_{data}`) |
+| Sem crédito ou sem plano | O projeto sai da Vitrine sozinho e o dono recebe aviso |
+| Projetos | Ilimitados em todos os planos (o limite é o saldo) |
+| Liga/desliga do post diário | Só o admin: chave geral (`siteSettings/main.dailyPostsEnabled`) e por projeto (`dailyPostsEnabled`). Desligado = sem post e sem cobrança |
+| Isenção | Projetos do admin (ou marcados `vitrineBillingExempt`) não pagam diária |
+
+### Conteúdo único (Google)
+- O post diário recebe a lista do que já foi publicado e é comparado (título + trechos) com os anteriores; repetido é descartado.
+- Toda imagem tem impressão digital SHA-256 (`postImageHashes`); imagem igual nunca é usada duas vezes.
+- Post sem imagem própria fica `awaiting_image` (fora do site e do sitemap) e só publica quando a imagem fica pronta.
+- O Froc Magazine segue as mesmas regras.
+
+### Conversas
+`GET /api/concierge/conversations`, `GET /:id`, `POST /:id/close` (só leitura) e `DELETE /:id`. Só o dono acessa.
+
+### Endpoints novos
+- `POST /api/companies/:id/vitrine` — usuário coloca o projeto na Vitrine (402 sem plano/crédito)
+- `GET /api/vitrine-billing` — custos e se pode entrar
+- `GET/PATCH /api/admin/settings/daily-posts` — chave geral do admin

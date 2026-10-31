@@ -30,7 +30,7 @@ test('Imagens: o briefing nasce do projeto (nicho, oferta, região) e da publica
 test('Imagens: post diário já nasce com imagem própria e os antigos são completados', async () => {
   resetMemoryDb();
   const db = firestore();
-  const company = { id: 'c1', userId: 'u1', name: 'Barbearia Coroa', slug: 'barbearia-coroa', category: 'Beleza', isPublicInVitrine: true };
+  const company = { id: 'c1', userId: 'u1', name: 'Barbearia Coroa', slug: 'barbearia-coroa', category: 'Beleza', isPublicInVitrine: true, vitrineBillingExempt: true };
   await db.collection(COLLECTIONS.companies).doc('c1').set(company);
   const created = await createDailyPostForCompany(company, '2026-10-30');
   assert.equal(created.created, true);
@@ -88,7 +88,7 @@ test('Direcionamento: conta cliques por canal e por post; marca fora da vitrine 
 test('Posts e páginas: app aparece no texto, nos botões e nos dados estruturados só para quem tem', async () => {
   resetMemoryDb();
   const db = firestore();
-  const withApp = { id: 'a1', userId: 'u1', name: 'Delivery Já', slug: 'delivery-ja', isPublicInVitrine: true, website: 'https://deliveryja.com', androidApp: 'https://play.google.com/store/apps/details?id=com.dj' };
+  const withApp = { id: 'a1', userId: 'u1', name: 'Delivery Já', slug: 'delivery-ja', isPublicInVitrine: true, vitrineBillingExempt: true, website: 'https://deliveryja.com', androidApp: 'https://play.google.com/store/apps/details?id=com.dj' };
   const withoutApp = { id: 'a2', userId: 'u2', name: 'Café Sem App', slug: 'cafe-sem-app', isPublicInVitrine: true, website: 'https://cafe.com' };
   assert.match(buildDailyPostPrompt(withApp, '2026-10-30').prompt, /TEM aplicativo \(Google Play\)/);
   assert.doesNotMatch(buildDailyPostPrompt(withoutApp, '2026-10-30').prompt, /TEM aplicativo/);
@@ -112,10 +112,10 @@ test('Admin: cria quantos projetos quiser pela IA, mesmo no plano grátis', asyn
   }
   const companies = queryData<any>(await firestore().collection(COLLECTIONS.companies).where('userId', '==', 'admin1').get());
   assert.equal(companies.length, 4);
-  // Usuário comum no plano grátis continua limitado a 1 marca (a segunda atualiza a existente).
+  // Projetos ilimitados para todos: o limite é o saldo de créditos.
   await executeConciergePlan({ userId: 'user1', collected: { businessName: 'A' }, actions: [] });
   await executeConciergePlan({ userId: 'user1', collected: { businessName: 'B' }, actions: [] });
-  assert.equal(queryData<any>(await firestore().collection(COLLECTIONS.companies).where('userId', '==', 'user1').get()).length, 1);
+  assert.equal(queryData<any>(await firestore().collection(COLLECTIONS.companies).where('userId', '==', 'user1').get()).length, 2);
 });
 
 test('Microfone: mensagens de erro dizem o motivo e como resolver', () => {

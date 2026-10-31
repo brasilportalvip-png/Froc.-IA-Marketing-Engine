@@ -407,7 +407,7 @@ export default function App() {
       case 'home':
         return <ConciergeHome user={user} wallet={wallet} selectedCompany={selectedCompany} onOpenAuth={() => setAuthOpen(true)} onNavigate={navigate} onRefreshWallet={() => { void refreshWallet(); }} onRefreshCompanies={() => { void refreshCompanies(); }}/>;
       case 'dashboard':
-        return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} contentItems={contentItems} onNavigate={navigate}/>;
+        return <DashboardPage user={user} wallet={wallet} selectedCompany={selectedCompany} contentItems={contentItems} onNavigate={navigate} onRefresh={() => { void refreshWallet(); void refreshCompanies(); }}/>;
       case 'empresa':
         return <MyCompanyPage selectedCompany={selectedCompany} companies={companies} onSelectCompany={handleSelectCompany} onRefreshCompanies={refreshCompanies}/>;
       case 'posts':

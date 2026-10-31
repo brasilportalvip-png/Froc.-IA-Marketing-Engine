@@ -13,8 +13,8 @@ import { brazilNow, firstName } from '../../shared/brazilTime.js';
 import { generateArticle, generateMarketingImage, generatePost, generateRaw, generateStrategy, generateVideoScript, parseAiJson } from './ai.js';
 import { getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
-import { createDailyPostForCompany, vitrinePostUrl } from './vitrineDaily.js';
-import { baseUrl, pingIndexNow } from './seoEngine.js';
+import { enterVitrine, vitrinePostUrl } from './vitrineDaily.js';
+import { vitrineDailyCost } from './vitrineBilling.js';
 import { COLLECTIONS, cleanObject, firestore, newId, nowIso, queryData, slugify } from './store.js';
 
 export const CONCIERGE_ACTIONS = [
@@ -31,7 +31,7 @@ export type ConciergeActionType = (typeof CONCIERGE_ACTIONS)[number];
 
 export const ACTION_LABELS: Record<ConciergeActionType, string> = {
   save_company: 'Salvar o perfil da sua marca e a segmentação',
-  publish_vitrine: 'Colocar sua marca na Vitrine Froc.IA',
+  publish_vitrine: 'Colocar sua marca na Vitrine Froc.IA (diária por projeto)',
   first_daily_post: 'Publicar o primeiro post estratégico de hoje',
   generate_post: 'Criar o post/anúncio com gatilhos e CTA',
   generate_image: 'Criar a imagem do anúncio',
@@ -41,6 +41,8 @@ export const ACTION_LABELS: Record<ConciergeActionType, string> = {
 };
 
 export function actionCost(type: ConciergeActionType): number {
+  if (type === 'publish_vitrine') return vitrineDailyCost();
+  if (config.billing.creationsFree) return 0;
   const costs = config.creditCosts;
   switch (type) {
     case 'generate_post': return costs.full_post;
@@ -93,6 +95,8 @@ export interface ConciergeTurn {
   plan: ConciergePlan | null;
   agents: Array<Pick<FrocAgent, 'id' | 'name' | 'role' | 'squadName' | 'color'>>;
   activeAgentsTotal: number;
+  /** false quando a IA não respondeu e saiu a resposta de contingência (não cobra). */
+  aiAnswered: boolean;
 }
 
 const s = (value: any, max = 300) => String(value ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
@@ -144,7 +148,7 @@ export function buildPlan(rawActions: any, summary: string): ConciergePlan | nul
   return { summary: s(summary, 1200), actions, estimatedCredits: actions.reduce((sum, action) => sum + action.credits, 0) };
 }
 
-const SYSTEM_PROMPT = `Você é o Froc.IA, o concierge de marketing mais avançado do Brasil: o rei do tráfego orgânico do Google, da captura de clientes e dos anúncios hiperlocais. Você é homem: fale sempre no masculino sobre si mesmo ("fico feliz", "estou pronto", "sou o Froc.IA"). Você concorre com Google Ads, Meta Ads e Instagram Ads — mas entrega alcance orgânico, SEO local e conteúdo que vende.
+function systemPrompt(): string { return `Você é o Froc.IA, o concierge de marketing mais avançado do Brasil: o rei do tráfego orgânico do Google, da captura de clientes e dos anúncios hiperlocais. Você é homem: fale sempre no masculino sobre si mesmo ("fico feliz", "estou pronto", "sou o Froc.IA"). Você concorre com Google Ads, Meta Ads e Instagram Ads — mas entrega alcance orgânico, SEO local e conteúdo que vende.
 
 JEITO DE CONVERSAR (HUMANIZADO — o mais importante):
 - Converse como DOIS AMIGOS batendo papo: você é aquele amigo que manja muito de marketing e quer de verdade ver o negócio da pessoa bombar. Tom leve, próximo, acolhedor e respeitoso, como numa conversa de WhatsApp entre amigos. Nada de tom de robô, de formulário, de vendedor ou de manual.
@@ -157,6 +161,15 @@ JEITO DE CONVERSAR (HUMANIZADO — o mais importante):
 - Nunca diga "como uma IA", "sou apenas um modelo" ou fale de prompts e sistemas. Você é o Froc.IA.
 - Se não entender, peça para explicar de um jeito leve ("Me conta um pouquinho mais sobre...").
 
+VOCÊ CONHECE O SITE DE PONTA A PONTA (explique e guie com segurança, sem mandar a pessoa "se virar"):
+- Início: este chat. Você atende por texto ou voz (microfone; diga "pare" para desligar). As conversas ficam salvas em "Minhas conversas", onde a pessoa pode abrir, fechar ou excluir cada conversa.
+- Vitrine (/vitrine): vitrine pública e animada com os projetos dos assinantes; cada projeto tem página própria e 1 post por dia com imagem exclusiva do nicho, botões para site, WhatsApp e aplicativo (Google Play/App Store), dados estruturados para o Google e aviso imediato aos buscadores (IndexNow + sitemaps XML/TXT).
+- Posts (/posts): todos os posts publicados — Froc Magazine (1 artigo por dia sobre marketing) e os posts diários da Vitrine.
+- Planos (/planos): START R$49 (110 créditos), PRO R$99,90 (230), BUSINESS R$199,90 (480) e AGENCY R$399,90 (1.000) por mês, pagos pelo Mercado Pago. Créditos: extrato completo de entradas e usos.
+- Meu Painel: saldo, plano, botão "Colocar na Vitrine", cliques recebidos (site, app, WhatsApp) e as últimas criações. Minha Marca: dados do negócio e da região. Conteúdos: tudo que você criou. Suporte e páginas legais (Termos de Uso e Política de Privacidade).
+- Segurança: bônus de boas-vindas só 1 vez por pessoa/aparelho/rede; contas duplicadas não ganham bônus; cobranças nunca se repetem no mesmo dia.
+- Estratégia: domine palavras-chave de cauda longa com intenção de compra + localização (ex.: "pizzaria delivery no Cambuí"), títulos de até 60 caracteres, meta descrição de 120 a 155, FAQ real e hashtags que misturam nicho, cidade/bairro e marca (6 a 10, nada genérico). Use gatilhos éticos (curiosidade, especificidade, autoridade, reciprocidade, prova social real) e sempre um CTA claro.
+
 COMO VOCÊ TRABALHA:
 - Você é o ÚNICO ponto de contato do cliente. Nunca mande o cliente procurar menus ou ferramentas: você faz tudo.
 - Conversa curta, calorosa e confiante, de amigo para amigo. Português do Brasil. No máximo 2 perguntas por mensagem. Emojis com moderação.
@@ -168,12 +181,14 @@ COMO VOCÊ TRABALHA:
 - Pergunte uma vez, de forma leve, se a empresa tem APLICATIVO na Google Play ou App Store (é opcional). Se tiver, peça o link: os posts passam a direcionar para o site e para o app.
 - Assim que tiver o suficiente, apresente um RESUMO claro e pergunte "Posso criar?". Só marque readyToConfirm=true quando o resumo estiver pronto para confirmação.
 - Ações disponíveis para o plano: save_company, publish_vitrine, first_daily_post, generate_post, generate_image, generate_video_script, generate_strategy, generate_article.
-- Recomende sempre publish_vitrine (post diário automático + SEO) e generate_post. Inclua generate_image se o cliente quer foto, generate_video_script se quer vídeo, generate_article para dominar o Google, generate_strategy para planos completos.
+- REGRAS COMERCIAIS (fale delas com naturalidade quando fizer sentido, sem empurrar): cada resposta sua no chat usa ${config.billing.chatReplyCost} créditos; quem cria conta ganha ${config.freeSignupBonusCredits} créditos grátis; as criações (post, imagem, roteiro, estratégia, artigo) já estão incluídas. A Vitrine é EXCLUSIVA para quem tem plano pago (START, PRO, BUSINESS ou AGENCY) e usa ${config.billing.vitrineDailyCost} créditos por dia por projeto; em troca o projeto ganha 1 post personalizado por dia com imagem do nicho. Se os créditos acabarem, o projeto sai da Vitrine. A pessoa pode ter quantos projetos quiser, desde que tenha créditos.
+- Só inclua publish_vitrine se a pessoa tiver plano pago (veja a situação da conta abaixo). Se não tiver, explique com leveza que a Vitrine é para assinantes e sugira ver os planos.
+- Recomende publish_vitrine (post diário automático + SEO) para assinantes e generate_post para todos. Inclua generate_image se o cliente quer foto, generate_video_script se quer vídeo, generate_article para dominar o Google, generate_strategy para planos completos.
 - Ética inegociável: nunca prometa posições garantidas no Google, nunca invente números, avaliações, descontos ou escassez.
 - quickReplies: 2 a 4 respostas curtas que o cliente pode tocar para responder rápido.
 
 Responda SOMENTE JSON válido neste formato:
-{"reply":"","quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
+{"reply":"","quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`; }
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
 
@@ -190,7 +205,7 @@ function companyBrief(company?: any): string {
   return `Empresa já cadastrada: ${company.name} | categoria: ${company.category || '-'} | cidade: ${company.city || '-'} | site: ${company.website || '-'} | WhatsApp: ${company.whatsapp || '-'} | na vitrine: ${company.isPublicInVitrine ? 'sim' : 'não'} | descrição: ${s(company.description, 400)}`;
 }
 
-export async function conciergeChat(data: { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean; userName?: string; now?: Date }): Promise<ConciergeTurn> {
+export async function conciergeChat(data: { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean; userName?: string; now?: Date; account?: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean } }): Promise<ConciergeTurn> {
   const lastUser = [...data.messages].reverse().find((message) => message.role === 'user')?.content || '';
   const agents = selectAgentsForIntent(data.messages.filter((m) => m.role === 'user').map((m) => m.content).join(' '), 24);
   const transcript = data.messages.map((message) => `${message.role === 'user' ? 'CLIENTE' : 'FROC.IA'}: ${message.content}`).join('\n');
@@ -207,6 +222,7 @@ ${agents.map((agent) => `- ${agent.directive}`).join('\n')}
 ${companyBrief(data.company)}
 Dados já coletados: ${JSON.stringify(normalizeCollected({}, data.collected))}
 Cliente ${data.authenticated ? 'está logado' : 'ainda não fez login (a execução pedirá login; não comente isso a menos que ele queira executar)'}.
+SITUAÇÃO DA CONTA: ${data.account?.isAdmin ? 'administrador do site (sem limites e sem cobrança).' : data.account ? `plano ${data.account.paidPlan ? `pago ${data.account.planName || ''}`.trim() : 'gratuito (sem acesso à Vitrine)'}; saldo de ${data.account.balance ?? 0} créditos.` : 'visitante sem conta (ao criar a conta ganha os créditos grátis).'}
 
 CONVERSA ATÉ AGORA:
 ${transcript}
@@ -214,9 +230,11 @@ ${transcript}
 Responda à última mensagem do cliente seguindo as regras.`;
 
   let raw: any = {};
+  let aiAnswered = false;
   try {
-    const generated = await generateRaw({ prompt, systemInstruction: SYSTEM_PROMPT, jsonOutput: true, maxTokens: 2000 });
+    const generated = await generateRaw({ prompt, systemInstruction: systemPrompt(), jsonOutput: true, maxTokens: 2000 });
     raw = parseAiJson<any>(generated.text) || {};
+    aiAnswered = Boolean(s(raw.reply, 4000));
   } catch (error) {
     console.warn('[Froc Concierge] IA indisponível, usando resposta de contingência:', error instanceof Error ? error.message : error);
   }
@@ -240,7 +258,8 @@ Responda à última mensagem do cliente seguindo as regras.`;
     readyToConfirm: Boolean(plan),
     plan,
     agents: agents.map(({ id, name, role, squadName, color }) => ({ id, name, role, squadName, color })),
-    activeAgentsTotal: FROC_AGENTS.length
+    activeAgentsTotal: FROC_AGENTS.length,
+    aiAnswered
   };
 }
 
@@ -337,25 +356,31 @@ export async function executeConciergePlan(data: { userId: string; isAdmin?: boo
 
   const topic = topicFrom(collected, company);
   const platform = collected.platforms[0] || 'Instagram';
+  let vitrinePost: any = null;
 
   for (const type of types) {
     if (type === 'save_company') continue;
     const label = ACTION_LABELS[type];
     try {
       if (type === 'publish_vitrine') {
-        await firestore().collection(COLLECTIONS.companies).doc(company.id).set({ isPublicInVitrine: true, updatedAt: nowIso() }, { merge: true });
+        // Vitrine paga: plano ativo + diária (o admin não paga). Já publica o post de hoje.
+        const entered = await enterVitrine({ company, isAdmin: data.isAdmin });
+        if (!entered.ok) {
+          results.push({ type, label, ok: false, message: entered.message });
+          continue;
+        }
         company = { ...company, isPublicInVitrine: true };
-        const url = `${baseUrl()}/vitrine/${encodeURIComponent(company.slug)}`;
-        await pingIndexNow([url, `${baseUrl()}/vitrine`], 'vitrine_publish');
-        results.push({ type, label, ok: true, message: 'Sua marca já está brilhando na Vitrine. 👑', data: { url } });
+        vitrinePost = entered.post;
+        if (entered.post && !data.isAdmin) creditsUsed += vitrineDailyCost();
+        results.push({ type, label, ok: true, message: `Sua marca já está brilhando na Vitrine. 👑${data.isAdmin ? '' : ` (${vitrineDailyCost()} créditos por dia)`}`, data: { url: entered.url } });
       } else if (type === 'first_daily_post') {
         if (!company.isPublicInVitrine) {
           results.push({ type, label, ok: false, message: 'O post diário começa assim que a marca entrar na vitrine.' });
           continue;
         }
-        const daily = await createDailyPostForCompany(company);
-        results.push({ type, label, ok: true, message: daily.created ? 'Primeiro post diário publicado e enviado aos buscadores.' : 'O post de hoje já estava publicado.', data: daily.post ? { url: vitrinePostUrl(daily.post), title: daily.post.title } : undefined });
-        if (daily.post) await pingIndexNow([vitrinePostUrl(daily.post)], 'vitrine_first_post');
+        const post = vitrinePost;
+        const live = post?.status === 'published';
+        results.push({ type, label, ok: true, message: live ? 'Primeiro post diário publicado com imagem do nicho e enviado aos buscadores.' : post ? 'Post de hoje escrito: ele vai ao ar assim que a imagem exclusiva ficar pronta.' : 'O post de hoje entra no próximo ciclo automático.', data: live ? { url: vitrinePostUrl(post), title: post.title } : undefined });
       } else if (type === 'generate_post') {
         const generated = await generatePost({ userId: data.userId, company, topic, platform, goal: collected.objective, tone: collected.tone });
         const r = generated.result || {};
