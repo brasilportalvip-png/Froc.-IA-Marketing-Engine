@@ -399,7 +399,62 @@ export async function generateRaw(data: {
   throw new Error(`Todos os modelos de IA falharam na cascata de resiliência. Último erro: ${lastError}`);
 }
 
+/** Modelos do chat em ordem (rápidos primeiro). */
+export function chatModels(): string[] {
+  const list = [config.geminiModels.chat, ...String(config.geminiModels.chatFallbacks || '').split(','), config.geminiModels.text, 'gemini-2.5-flash']
+    .map((m) => String(m || '').trim()).filter(Boolean);
+  return Array.from(new Set(list));
+}
+
+/** Sem "pensamento" longo nos modelos 2.5 (é o que mais atrasa a resposta). */
+function fastThinking(model: string): Record<string, any> {
+  if (/^gemini-2\.5-flash/.test(model)) return { thinkingConfig: { thinkingBudget: 0 } };
+  return {};
+}
+
+/**
+ * Texto em streaming para o chat: entrega os pedaços assim que a IA escreve
+ * (igual ao Froc IA). Troca de modelo só se falhar antes do primeiro pedaço.
+ */
+export async function* generateChatStream(data: { prompt: string; systemInstruction?: string; maxTokens?: number }): AsyncGenerator<{ text: string; model: string }> {
+  if (process.env.NODE_ENV === 'test') {
+    if (!testChatReply) throw new Error('IA de teste indisponível');
+    const full = testChatStreamText ?? testChatReply;
+    for (const piece of full.match(/[\s\S]{1,12}/g) || []) yield { text: piece, model: 'test-model' };
+    return;
+  }
+  let lastError = 'Falha desconhecida';
+  for (const model of chatModels()) {
+    let yielded = false;
+    try {
+      const stream = await aiClient().models.generateContentStream({
+        model,
+        contents: data.prompt,
+        config: { systemInstruction: data.systemInstruction, maxOutputTokens: data.maxTokens || 1500, ...fastThinking(model) } as any
+      });
+      for await (const chunk of stream as any) {
+        const text = String(chunk?.text || '');
+        if (!text) continue;
+        yielded = true;
+        yield { text, model };
+      }
+      if (yielded) return;
+      lastError = 'Resposta vazia retornada pelo modelo';
+    } catch (error) {
+      if (yielded) throw error;
+      lastError = error instanceof Error ? error.message : String(error);
+      console.warn(`[Froc Chat] ${model} falhou: ${lastError}. Tentando o próximo modelo...`);
+    }
+  }
+  throw new Error(`Todos os modelos do chat falharam. Último erro: ${lastError}`);
+}
+
 let testChatReply: string | null = null;
+let testChatStreamText: string | null = null;
+/** Somente testes: texto bruto que a IA "transmite" no streaming. */
+export function setTestChatStream(text: string | null): void {
+  if (process.env.NODE_ENV === 'test') testChatStreamText = text;
+}
 /** Somente testes: simula a IA do chat respondendo (null = IA indisponível). */
 export function setTestChatReply(reply: string | null): void {
   if (process.env.NODE_ENV === 'test') testChatReply = reply;

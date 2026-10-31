@@ -232,3 +232,51 @@ test('HTTP: chat cobra 3 por resposta, sem saldo não cobra, visitante tem respo
     server.close();
   }
 });
+
+test('Streaming: a fala chega aos pedaços, o separador e o JSON nunca aparecem e a cobrança é feita uma vez', async () => {
+  resetMemoryDb();
+  const db = firestore();
+  const express = (await import('express')).default as any;
+  const { router } = await import('../server/production/router.js');
+  const firebaseAdminProvider = await import('../server/providers/firebaseAdmin.js');
+  const { CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION } = await import('../server/production/auth.js');
+  const { setTestChatReply, setTestChatStream } = await import('../server/production/ai.js');
+  const { STREAM_DATA_MARK, splitStreamOutput } = await import('../server/production/concierge.js');
+  const now = new Date().toISOString();
+  await db.collection(COLLECTIONS.users).doc('u_s').set({ id: 'u_s', email: 'u_s@example.com', name: 'João Lima', role: 'user', createdAt: now, termsAcceptedAt: now, privacyAcceptedAt: now, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION });
+  await addCredits({ userId: 'u_s', amount: 25, type: 'bonus', source: 'bônus', idempotencyKey: 'welcome:u_s' });
+  firebaseAdminProvider.setAdminAuthForTesting({ verifyIdToken: async (token: string) => { if (token === 't_s') return { uid: 'u_s', email: 'u_s@example.com', role: 'user' } as any; throw new Error('Invalid token'); } } as any);
+
+  const fala = 'Bom dia, João! Que demais ter uma pizzaria no Cambuí. Me conta: vocês fazem delivery?';
+  setTestChatReply('ok');
+  setTestChatStream(`${fala}\n${STREAM_DATA_MARK}\n{"quickReplies":["Sim, fazemos","Só no balcão"],"collected":{"businessName":"Pizzaria do João","targeting":{"city":"Campinas","neighborhoods":["Cambuí"]}},"readyToConfirm":false,"actions":[]}`);
+  assert.equal(splitStreamOutput(`${fala}\n${STREAM_DATA_MARK}\n{"quickReplies":["a"]}`).reply, fala);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api', router);
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${(server.address() as any).port}`;
+  try {
+    const res = await fetch(`${base}/api/concierge/chat/stream`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t_s' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Tenho uma pizzaria' }] }) });
+    assert.equal(res.status, 200);
+    assert.match(String(res.headers.get('content-type')), /text\/event-stream/);
+    const body = await res.text();
+    const events = body.split('\n\n').filter(Boolean).map((block) => ({ event: /event: (\w+)/.exec(block)?.[1], data: JSON.parse(/data: (.*)/.exec(block)?.[1] || '{}') }));
+    const tokens = events.filter((e) => e.event === 'token').map((e) => e.data.text);
+    assert.ok(tokens.length > 3, 'vários pedaços');
+    assert.equal(tokens.join('').trim(), fala);
+    assert.ok(!tokens.join('').includes('FROC_DADOS') && !tokens.join('').includes('{'));
+    const done = events.find((e) => e.event === 'done')!.data;
+    assert.equal(done.reply, fala);
+    assert.deepEqual(done.quickReplies, ['Sim, fazemos', 'Só no balcão']);
+    assert.equal(done.collected.businessName, 'Pizzaria do João');
+    assert.equal(done.creditsUsed, 3);
+    assert.ok(done.conversationId);
+    assert.equal((await getWallet('u_s')).balance, 22);
+  } finally {
+    setTestChatReply(null);
+    setTestChatStream(null);
+    server.close();
+  }
+});

@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startFrocLiveTranscription, type FrocLiveSession } from './liveTranscription';
-import { playNeuralSpeechChunk, streamNeuralSpeech } from './neuralSpeech';
+import { playNeuralSpeechChunk, prepareNeuralSpeech, streamNeuralSpeech, type PreparedNeuralSpeech } from './neuralSpeech';
 import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from './voiceCommands';
 import { normalizeTextForSpeech, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech, splitTextForSpeech, voiceErrorMessage } from './voiceText';
 
@@ -250,6 +250,84 @@ export function useFrocVoice({ neural, onCommand, onPartial }: Options) {
     }
   }, [resumeListening, stopSpeaking]);
 
+  /**
+   * Fala progressiva (igual ao Froc IA): cada trecho entra na fila assim que a IA
+   * escreve; a voz do próximo trecho já começa a ser gerada enquanto o anterior toca.
+   */
+  const partsRef = useRef<{ id: string; items: Array<{ text: string; prepared?: PreparedNeuralSpeech }>; ended: boolean; running: boolean; controller: AbortController; wake: (() => void) | null } | null>(null);
+
+  const playPart = async (item: { text: string; prepared?: PreparedNeuralSpeech }, signal: AbortSignal) => {
+    if (item.prepared) {
+      try { await item.prepared.play(); return; } catch (error) {
+        if (isAbort(error) || signal.aborted) throw error;
+        try {
+          for (const chunk of splitTextForProgressiveSpeech(item.text, 220, 420)) await playNeuralSpeechChunk(chunk, signal);
+          return;
+        } catch (chunkError) {
+          if (isAbort(chunkError) || signal.aborted) throw chunkError;
+        }
+      }
+    }
+    await speakWithBrowser(item.text, signal);
+  };
+
+  const runParts = async (queue: NonNullable<typeof partsRef.current>) => {
+    queue.running = true;
+    try {
+      while (!queue.controller.signal.aborted) {
+        const item = queue.items.shift();
+        if (!item) {
+          if (queue.ended) break;
+          await new Promise<void>((resolve) => { queue.wake = resolve; });
+          continue;
+        }
+        await playPart(item, queue.controller.signal);
+      }
+    } catch (error) {
+      if (!isAbort(error) && !queue.controller.signal.aborted) setError('Não foi possível reproduzir a voz. Verifique se o som da aba está liberado.');
+    } finally {
+      queue.running = false;
+      if (partsRef.current === queue) partsRef.current = null;
+      if (speechAbortRef.current === queue.controller) {
+        speechAbortRef.current = null;
+        setSpeakingId(null);
+        if (enabledRef.current) resumeListening();
+        else { busyRef.current = false; setPhase('idle'); }
+      }
+    }
+  };
+
+  const speakPart = useCallback((text: string, messageId: string) => {
+    const clean = normalizeTextForSpeech(text);
+    let queue = partsRef.current;
+    if (!queue || queue.id !== messageId || queue.controller.signal.aborted) {
+      stopSpeaking();
+      const controller = new AbortController();
+      queue = { id: messageId, items: [], ended: false, running: false, controller, wake: null };
+      partsRef.current = queue;
+      speechAbortRef.current = controller;
+      busyRef.current = true;
+      liveRef.current?.pause();
+      stopBrowserRecognition();
+      setSpeakingId(messageId);
+      setPhase('speaking');
+    }
+    if (clean) queue.items.push({ text: clean, prepared: neuralRef.current ? prepareNeuralSpeech(clean, queue.controller.signal) : undefined });
+    const wake = queue.wake; queue.wake = null; wake?.();
+    if (!queue.running) void runParts(queue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopSpeaking]);
+
+  /** Avisa que a resposta terminou: depois do último trecho, volta a ouvir. */
+  const endParts = useCallback((messageId: string) => {
+    const queue = partsRef.current;
+    if (!queue || queue.id !== messageId) { if (enabledRef.current && !speechAbortRef.current) resumeListening(); return; }
+    queue.ended = true;
+    const wake = queue.wake; queue.wake = null; wake?.();
+    if (!queue.running) void runParts(queue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeListening]);
+
   const disable = useCallback(() => {
     enabledRef.current = false;
     busyRef.current = false;
@@ -300,5 +378,5 @@ export function useFrocVoice({ neural, onCommand, onPartial }: Options) {
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   }, []);
 
-  return { enabled, phase, error, speakingId, toggle, disable, speak, stopSpeaking, cancelThinking, clearError: () => setError('') };
+  return { enabled, phase, error, speakingId, toggle, disable, speak, speakPart, endParts, stopSpeaking, cancelThinking, clearError: () => setError('') };
 }

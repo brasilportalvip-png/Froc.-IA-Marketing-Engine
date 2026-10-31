@@ -1,3 +1,4 @@
+import { SiteFooter } from './components/SiteFooter';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { Sidebar } from './components/Sidebar';
@@ -461,6 +462,7 @@ export default function App() {
       <PwaInstallPrompt/>
       {guardedTab !== 'home' && <PublicTopBar user={user} wallet={wallet} current={guardedTab === 'posts' ? 'posts' : 'vitrine'} onNavigate={navigate} onOpenAuth={() => setAuthOpen(true)}/>}
       {content}
+      {guardedTab !== 'home' && <SiteFooter/>}
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSuccess={authSuccess}/>
       <TermsConsentModal isOpen={needsTermsConsent} onConsentSuccess={authSuccess} onLogout={logout}/>
     </div>;
@@ -482,6 +484,7 @@ export default function App() {
         {loading
           ? <div className="grid min-h-[60vh] place-items-center"><div className="text-center"><div className="froc-logo-hero mx-auto"><img src="/brand/logo-froc.webp" alt="Froc.IA" width={80} height={80} className="relative z-10 h-20 w-20 animate-pulse rounded-full"/></div><p className="mt-5 text-xs text-slate-400">Carregando Froc.IA…</p></div></div>
           : <React.Fragment key={pageIsolationKey}>{content}</React.Fragment>}
+        <SiteFooter className="mt-10"/>
       </main>
     </div>
     <BottomNav currentTab={guardedTab} onNavigate={navigate}/>

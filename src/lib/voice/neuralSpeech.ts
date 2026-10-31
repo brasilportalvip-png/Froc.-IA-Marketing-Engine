@@ -46,45 +46,31 @@ async function openSpeechStream(text: string, signal?: AbortSignal): Promise<Res
   return response;
 }
 
-/** Streaming de baixa latência. Resolve quando o áudio termina de tocar. */
-export async function streamNeuralSpeech(text: string, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) throw abortError();
-  const Ctor = audioContextConstructor();
-  if (!Ctor) throw new Error('web_audio_unavailable');
-  const ctx = new Ctor({ sampleRate: DEFAULT_SAMPLE_RATE });
-  if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+export interface PreparedNeuralSpeech { play(): Promise<void> }
 
-  let response: Response;
-  try {
-    response = await openSpeechStream(text, signal);
-  } catch (error) {
-    await ctx.close().catch(() => undefined);
-    throw error;
-  }
-  const rate = Number(response.headers.get('X-Froc-Audio-Sample-Rate') || DEFAULT_SAMPLE_RATE);
-  const sampleRate = Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_SAMPLE_RATE;
-  const reader = response.body!.getReader();
-  const sources = new Set<AudioBufferSourceNode>();
-  let remainder = new Uint8Array(0);
-  let nextStart: number | null = null;
-  let last: AudioBufferSourceNode | null = null;
-  let aborted = false;
+/**
+ * Começa a baixar a voz AGORA (em paralelo) e só toca quando `play()` for chamado.
+ * Assim a próxima frase já está pronta quando a anterior termina — igual ao Froc IA.
+ */
+export function prepareNeuralSpeech(text: string, signal?: AbortSignal): PreparedNeuralSpeech {
+  const queue: Float32Array[] = [];
+  let sampleRate = DEFAULT_SAMPLE_RATE;
+  let finished = false;
+  let failure: unknown = null;
+  let received = 0;
+  let waiter: (() => void) | null = null;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const wake = () => { const next = waiter; waiter = null; next?.(); };
+  signal?.addEventListener('abort', () => { void reader?.cancel().catch(() => undefined); wake(); }, { once: true });
 
-  const stopAll = () => {
-    aborted = true;
-    for (const source of sources) {
-      try { source.stop(); } catch { /* já terminou */ }
-      try { source.disconnect(); } catch { /* já desconectado */ }
-    }
-    sources.clear();
-    void reader.cancel().catch(() => undefined);
-  };
-  signal?.addEventListener('abort', stopAll, { once: true });
-
-  try {
-    if (ctx.state === 'suspended') await ctx.resume();
+  void (async () => {
+    const response = await openSpeechStream(text, signal);
+    const rate = Number(response.headers.get('X-Froc-Audio-Sample-Rate') || DEFAULT_SAMPLE_RATE);
+    sampleRate = Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_SAMPLE_RATE;
+    reader = response.body!.getReader();
+    let remainder = new Uint8Array(0);
     while (true) {
-      if (aborted || signal?.aborted) throw abortError();
+      if (signal?.aborted) throw abortError();
       const { value, done } = await reader.read();
       if (done) break;
       if (!value?.length) continue;
@@ -101,35 +87,70 @@ export async function streamNeuralSpeech(text: string, signal?: AbortSignal): Pr
         remainder = new Uint8Array(0);
       }
       if (!bytes.length) continue;
-      const samples = pcm16LeToFloat32(bytes);
-      const buffer = ctx.createBuffer(1, samples.length, sampleRate);
-      buffer.getChannelData(0).set(samples);
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(ctx.destination);
-      const at = Math.max(nextStart ?? ctx.currentTime + INITIAL_BUFFER_SECONDS, ctx.currentTime + 0.01);
-      source.start(at);
-      nextStart = at + buffer.duration;
-      sources.add(source);
-      last = source;
-      source.onended = () => { sources.delete(source); try { source.disconnect(); } catch { /* ok */ } };
+      queue.push(pcm16LeToFloat32(bytes));
+      received += 1;
+      wake();
     }
-    if (aborted || signal?.aborted) throw abortError();
-    if (!last || nextStart === null) throw new Error('neural_speech_stream_empty_audio');
-    const remaining = Math.max(0, nextStart - ctx.currentTime);
-    if (remaining > 0) {
-      await new Promise<void>((resolve) => {
-        const timer = window.setTimeout(resolve, Math.ceil(remaining * 1000) + 60);
-        const onAbort = () => { window.clearTimeout(timer); resolve(); };
-        signal?.addEventListener('abort', onAbort, { once: true });
-      });
+  })().catch((error) => { failure = error; }).finally(() => { finished = true; wake(); });
+
+  return {
+    async play() {
+      if (signal?.aborted) throw abortError();
+      const Ctor = audioContextConstructor();
+      if (!Ctor) throw new Error('web_audio_unavailable');
+      const ctx = new Ctor({ sampleRate });
+      const sources = new Set<AudioBufferSourceNode>();
+      const stopAll = () => {
+        for (const source of sources) {
+          try { source.stop(); } catch { /* já terminou */ }
+          try { source.disconnect(); } catch { /* já desconectado */ }
+        }
+        sources.clear();
+      };
+      signal?.addEventListener('abort', stopAll, { once: true });
+      let nextStart: number | null = null;
+      try {
+        if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
+        while (true) {
+          if (signal?.aborted) throw abortError();
+          const samples = queue.shift();
+          if (samples) {
+            const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+            buffer.getChannelData(0).set(samples);
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(ctx.destination);
+            const at = Math.max(nextStart ?? ctx.currentTime + INITIAL_BUFFER_SECONDS, ctx.currentTime + 0.01);
+            source.start(at);
+            nextStart = at + buffer.duration;
+            sources.add(source);
+            source.onended = () => { sources.delete(source); try { source.disconnect(); } catch { /* ok */ } };
+            continue;
+          }
+          if (finished) break;
+          await new Promise<void>((resolve) => { waiter = resolve; });
+        }
+        if (signal?.aborted) throw abortError();
+        if (!received || nextStart === null) throw failure || new Error('neural_speech_stream_empty_audio');
+        const remaining = Math.max(0, nextStart - ctx.currentTime);
+        if (remaining > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, Math.ceil(remaining * 1000) + 60);
+            signal?.addEventListener('abort', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+          });
+        }
+        if (signal?.aborted) throw abortError();
+      } finally {
+        signal?.removeEventListener('abort', stopAll);
+        if (ctx.state !== 'closed') await ctx.close().catch(() => undefined);
+      }
     }
-    if (signal?.aborted) throw abortError();
-  } finally {
-    signal?.removeEventListener('abort', stopAll);
-    sources.clear();
-    if (ctx.state !== 'closed') await ctx.close().catch(() => undefined);
-  }
+  };
+}
+
+/** Streaming de baixa latência. Resolve quando o áudio termina de tocar. */
+export async function streamNeuralSpeech(text: string, signal?: AbortSignal): Promise<void> {
+  await prepareNeuralSpeech(text, signal).play();
 }
 
 /** Fallback: áudio WAV completo para um trecho de texto. */

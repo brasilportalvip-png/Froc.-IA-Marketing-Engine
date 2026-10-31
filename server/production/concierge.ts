@@ -10,7 +10,7 @@
 import { config } from '../config/index.js';
 import { FROC_AGENTS, selectAgentsForIntent, type FrocAgent } from '../../shared/agents.js';
 import { brazilNow, firstName } from '../../shared/brazilTime.js';
-import { generateArticle, generateMarketingImage, generatePost, generateRaw, generateStrategy, generateVideoScript, parseAiJson } from './ai.js';
+import { generateArticle, generateChatStream, generateMarketingImage, generatePost, generateRaw, generateStrategy, generateVideoScript, parseAiJson } from './ai.js';
 import { getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
 import { enterVitrine, vitrinePostUrl } from './vitrineDaily.js';
@@ -205,9 +205,12 @@ function companyBrief(company?: any): string {
   return `Empresa já cadastrada: ${company.name} | categoria: ${company.category || '-'} | cidade: ${company.city || '-'} | site: ${company.website || '-'} | WhatsApp: ${company.whatsapp || '-'} | na vitrine: ${company.isPublicInVitrine ? 'sim' : 'não'} | descrição: ${s(company.description, 400)}`;
 }
 
-export async function conciergeChat(data: { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean; userName?: string; now?: Date; account?: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean } }): Promise<ConciergeTurn> {
+type ChatInput = { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean; userName?: string; now?: Date; account?: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean } };
+
+function chatContext(data: ChatInput) {
   const lastUser = [...data.messages].reverse().find((message) => message.role === 'user')?.content || '';
-  const agents = selectAgentsForIntent(data.messages.filter((m) => m.role === 'user').map((m) => m.content).join(' '), 24);
+  // 10 especialistas por resposta: o suficiente para qualidade, sem pesar na velocidade.
+  const agents = selectAgentsForIntent(data.messages.filter((m) => m.role === 'user').map((m) => m.content).join(' '), 10);
   const transcript = data.messages.map((message) => `${message.role === 'user' ? 'CLIENTE' : 'FROC.IA'}: ${message.content}`).join('\n');
   const now = brazilNow(data.now);
   const knownName = firstName(data.userName) || firstName(normalizeCollected({}, data.collected).customerName);
@@ -228,17 +231,11 @@ CONVERSA ATÉ AGORA:
 ${transcript}
 
 Responda à última mensagem do cliente seguindo as regras.`;
+  return { lastUser, agents, now, knownName, firstTurn, prompt };
+}
 
-  let raw: any = {};
-  let aiAnswered = false;
-  try {
-    const generated = await generateRaw({ prompt, systemInstruction: systemPrompt(), jsonOutput: true, maxTokens: 2000 });
-    raw = parseAiJson<any>(generated.text) || {};
-    aiAnswered = Boolean(s(raw.reply, 4000));
-  } catch (error) {
-    console.warn('[Froc Concierge] IA indisponível, usando resposta de contingência:', error instanceof Error ? error.message : error);
-  }
-
+function finalizeTurn(raw: any, data: ChatInput, ctx: ReturnType<typeof chatContext>, aiAnswered: boolean): ConciergeTurn {
+  const { now, knownName, firstTurn, lastUser, agents } = ctx;
   const collected = normalizeCollected(raw.collected || {}, data.collected);
   if (!collected.customerName && knownName) collected.customerName = knownName;
   const hello = `${now.greeting}${knownName ? `, ${knownName}` : ''}!`;
@@ -250,7 +247,6 @@ Responda à última mensagem do cliente seguindo as regras.`;
   const readyToConfirm = raw.readyToConfirm === true;
   const plan = readyToConfirm ? buildPlan(raw.actions, s(raw.planSummary, 1200)) : null;
   const quickReplies = list(raw.quickReplies, 4, 60);
-
   return {
     reply: s(raw.reply, 4000) || fallbackReply,
     quickReplies: quickReplies.length ? quickReplies : (readyToConfirm ? ['Sim, pode criar! 🚀', 'Quero ajustar algo'] : ['Quero mais clientes', 'Quero aparecer no Google', 'Quero divulgar no meu bairro']),
@@ -261,6 +257,84 @@ Responda à última mensagem do cliente seguindo as regras.`;
     activeAgentsTotal: FROC_AGENTS.length,
     aiAnswered
   };
+}
+
+export async function conciergeChat(data: ChatInput): Promise<ConciergeTurn> {
+  const ctx = chatContext(data);
+  let raw: any = {};
+  let aiAnswered = false;
+  try {
+    const generated = await generateRaw({ prompt: ctx.prompt, systemInstruction: systemPrompt(), jsonOutput: true, maxTokens: 2000 });
+    raw = parseAiJson<any>(generated.text) || {};
+    aiAnswered = Boolean(s(raw.reply, 4000));
+  } catch (error) {
+    console.warn('[Froc Concierge] IA indisponível, usando resposta de contingência:', error instanceof Error ? error.message : error);
+  }
+  return finalizeTurn(raw, data, ctx, aiAnswered);
+}
+
+/** Separador entre a fala (transmitida ao vivo) e os dados estruturados do turno. */
+export const STREAM_DATA_MARK = '<<<FROC_DADOS>>>';
+
+function streamSystemPrompt(): string {
+  const base = systemPrompt();
+  const cut = base.indexOf('Responda SOMENTE JSON válido');
+  const rules = cut >= 0 ? base.slice(0, cut) : base;
+  return `${rules}FORMATO DA RESPOSTA (obrigatório):
+1) Primeiro escreva SOMENTE a sua fala para o cliente, em texto normal (pode usar **negrito**), começando já pela primeira frase — sem título, sem JSON, sem rótulos.
+2) Depois, numa linha sozinha, escreva exatamente ${STREAM_DATA_MARK}
+3) Em seguida, um JSON válido com: {"quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
+}
+
+/** Separa fala e dados de um texto de streaming completo. */
+export function splitStreamOutput(full: string): { reply: string; meta: any } {
+  const index = full.indexOf(STREAM_DATA_MARK);
+  if (index < 0) {
+    // O modelo ignorou o formato e respondeu em JSON: aproveita o JSON.
+    const trimmed = full.trim();
+    if (trimmed.startsWith('{')) {
+      const parsed = parseAiJson<any>(trimmed.replace(/^```(?:json)?|```$/g, '').trim());
+      if (parsed && typeof parsed.reply === 'string') return { reply: parsed.reply.trim(), meta: parsed };
+    }
+    return { reply: trimmed, meta: {} };
+  }
+  const reply = full.slice(0, index).trim();
+  const meta = parseAiJson<any>(full.slice(index + STREAM_DATA_MARK.length).trim().replace(/^```(?:json)?|```$/g, '').trim()) || {};
+  return { reply, meta };
+}
+
+/**
+ * Chat em streaming (igual ao Froc IA): `onText` recebe a fala aos pedaços,
+ * nunca o separador nem o JSON. Ao final devolve o turno completo.
+ */
+export async function conciergeChatStream(data: ChatInput, onText: (text: string) => void): Promise<ConciergeTurn> {
+  const ctx = chatContext(data);
+  let full = '';
+  let emitted = 0;
+  let markSeen = false;
+  const hold = STREAM_DATA_MARK.length;
+  try {
+    for await (const chunk of generateChatStream({ prompt: ctx.prompt, systemInstruction: streamSystemPrompt(), maxTokens: 1500 })) {
+      full += chunk.text;
+      if (markSeen) continue;
+      const index = full.indexOf(STREAM_DATA_MARK);
+      if (index >= 0) {
+        markSeen = true;
+        if (index > emitted) onText(full.slice(emitted, index));
+        emitted = index;
+        continue;
+      }
+      // Segura o fim do texto para nunca mostrar um pedaço do separador.
+      const safe = Math.max(full.length - hold, emitted);
+      if (safe > emitted) { onText(full.slice(emitted, safe)); emitted = safe; }
+    }
+    if (!markSeen && full.length > emitted) onText(full.slice(emitted));
+  } catch (error) {
+    console.warn('[Froc Concierge] Streaming indisponível:', error instanceof Error ? error.message : error);
+    if (!full) return finalizeTurn({}, data, ctx, false);
+  }
+  const { reply, meta } = splitStreamOutput(full);
+  return finalizeTurn({ ...meta, reply }, data, ctx, Boolean(reply));
 }
 
 // ───────────────────────────── Execução ─────────────────────────────

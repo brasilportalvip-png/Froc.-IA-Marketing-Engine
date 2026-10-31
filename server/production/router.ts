@@ -12,7 +12,7 @@ import { createOAuthUrl, createPinterestPin, disconnectSocial, getFacebookPageSe
 import { getSchedulerHealth, processSchedulerTick } from './scheduler.js';
 import multer from 'multer';
 import { allIndexableUrls, buildRobotsTxt, buildSitemapIndexXml, getSeoEngineStatus, pingIndexNow } from './seoEngine.js';
-import { conciergeChat, executeConciergePlan, sanitizeMessages } from './concierge.js';
+import { conciergeChat, conciergeChatStream, executeConciergePlan, sanitizeMessages } from './concierge.js';
 import { getSiteSettings, isPaidPlan, setSiteDailyPosts, vitrineBlockMessage, vitrineDailyCost, vitrineEligibility } from './vitrineBilling.js';
 import { closeConversation, deleteConversation, getConversation, listConversations, saveConversationTurn } from './conversations.js';
 import { cleanSpeechText, createLiveTranscriptionToken, diagnoseVoice, NEURAL_SPEECH_CHANNELS, NEURAL_SPEECH_SAMPLE_RATE, synthesizeSpeech, synthesizeSpeechStream } from './speech.js';
@@ -959,58 +959,108 @@ function chatNeedsMessage(reason: 'login' | 'credits', name?: string): string {
   return `${who}seus créditos acabaram por agora. Cada resposta minha usa ${config.billing.chatReplyCost} créditos. Escolha um plano ou recarregue e a gente continua de onde parou! 💛`;
 }
 
-// Chat: cada resposta da IA usa `billing.chatReplyCost` créditos (admin não paga).
-// Visitante tem `billing.guestFreeReplies` respostas grátis por dia (por rede), depois cria a conta.
-router.post('/concierge/chat', optionalAuth as any, asyncRoute(async (req: AuthenticatedRequest, res) => {
+type ChatReady = { messages: ReturnType<typeof sanitizeMessages>; conversationId?: string; reservationId: string; cost: number; account?: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean }; company?: any };
+type ChatPrepared = { blocked: Record<string, any> } | ChatReady;
+
+/** Valida, confere a cota do visitante e reserva os créditos da resposta (em paralelo para ser rápido). */
+async function prepareChat(req: AuthenticatedRequest): Promise<ChatPrepared> {
   const messages = sanitizeMessages(req.body?.messages);
-  if (!messages.length || messages[messages.length - 1].role !== 'user') return res.status(400).json({ error: 'Envie uma mensagem para o Froc.IA.' });
+  if (!messages.length || messages[messages.length - 1].role !== 'user') { const e: any = new Error('Envie uma mensagem para o Froc.IA.'); e.statusCode = 400; throw e; }
   const isAdmin = req.user?.role === 'admin';
   const cost = Number(config.billing.chatReplyCost) || 0;
   const conversationId = safeString(req.body?.conversationId, 200) || undefined;
-  if (req.user && conversationId) await getConversation(req.user.id, conversationId).then((c) => { if (c.status === 'closed') { const e: any = new Error('Esta conversa foi fechada. Comece uma nova conversa.'); e.statusCode = 409; throw e; } });
+  const base = { collected: req.body?.collected || {}, readyToConfirm: false, plan: null, agents: [], activeAgentsTotal: 0 };
 
   if (!req.user) {
     const limit = Number(config.billing.guestFreeReplies) || 0;
-    const quota = limit > 0
-      ? await consumeRateLimit({ key: `guest-chat:${trustedClientIp(req)}`, limit, windowMs: 86_400_000 })
-      : { allowed: false };
-    if (!quota.allowed) return res.json({ reply: chatNeedsMessage('login'), quickReplies: ['Criar conta grátis'], collected: req.body?.collected || {}, readyToConfirm: false, plan: null, agents: [], activeAgentsTotal: 0, needsAuth: true, needsLogin: true });
+    const quota = limit > 0 ? await consumeRateLimit({ key: `guest-chat:${trustedClientIp(req)}`, limit, windowMs: 86_400_000 }) : { allowed: false };
+    if (!quota.allowed) return { blocked: { ...base, reply: chatNeedsMessage('login'), quickReplies: ['Criar conta grátis'], needsAuth: true, needsLogin: true } };
+    return { messages, cost: 0, reservationId: '' };
   }
 
-  let account: { paidPlan: boolean; planName?: string; balance?: number; isAdmin?: boolean } | undefined;
+  const [wallet, company, conversation] = await Promise.all([
+    getWallet(req.user.id),
+    ownedCompany(req.user.id, safeString(req.body?.companyId, 200)),
+    conversationId ? getConversation(req.user.id, conversationId) : Promise.resolve(null)
+  ]);
+  if (conversation?.status === 'closed') { const e: any = new Error('Esta conversa foi fechada. Comece uma nova conversa.'); e.statusCode = 409; throw e; }
+  const available = Math.max(Number(wallet.balance || 0) - Number(wallet.reservedCredits || 0), 0);
+  const account = { paidPlan: isPaidPlan(wallet), planName: String(wallet.planId || '').replace('plan_', '').toUpperCase(), balance: available, isAdmin };
   let reservationId = '';
-  if (req.user) {
-    const wallet = await getWallet(req.user.id);
-    const available = Math.max(Number(wallet.balance || 0) - Number(wallet.reservedCredits || 0), 0);
-    account = { paidPlan: isPaidPlan(wallet), planName: String(wallet.planId || '').replace('plan_', '').toUpperCase(), balance: available, isAdmin };
-    if (!isAdmin && cost > 0) {
-      try {
-        reservationId = (await reserveCredits({ userId: req.user.id, amount: cost, operation: 'chat_reply' })).reservationId;
-      } catch {
-        return res.json({ reply: chatNeedsMessage('credits', req.user.name), quickReplies: ['Ver planos', 'Comprar créditos'], collected: req.body?.collected || {}, readyToConfirm: false, plan: null, agents: [], activeAgentsTotal: 0, needsAuth: false, needsCredits: true, wallet });
-      }
+  if (!isAdmin && cost > 0) {
+    try {
+      reservationId = (await reserveCredits({ userId: req.user.id, amount: cost, operation: 'chat_reply' })).reservationId;
+    } catch {
+      return { blocked: { ...base, reply: chatNeedsMessage('credits', req.user.name), quickReplies: ['Ver planos', 'Comprar créditos'], needsAuth: false, needsCredits: true, wallet } };
     }
   }
+  return { messages, conversationId, reservationId, cost, account, company };
+}
 
-  const company = req.user ? await ownedCompany(req.user.id, safeString(req.body?.companyId, 200)) : undefined;
+/** Cobra só se a IA respondeu de verdade e salva a conversa. */
+async function settleChat(req: AuthenticatedRequest, prepared: ChatReady, turn: any) {
+  if (prepared.reservationId) {
+    if (turn.aiAnswered) await commitReservation({ userId: req.user!.id, reservationId: prepared.reservationId, source: 'Chat Froc.IA: resposta', metadata: { conversationId: prepared.conversationId || null } });
+    else await rollbackReservation(req.user!.id, prepared.reservationId, 'IA indisponível: resposta sem cobrança');
+  }
+  let conversationId: string | undefined;
+  let wallet: any;
+  if (req.user) {
+    [conversationId, wallet] = await Promise.all([
+      saveConversationTurn({ userId: req.user.id, conversationId: prepared.conversationId, messages: prepared.messages, reply: turn.reply, collected: turn.collected }).catch(() => prepared.conversationId),
+      getWallet(req.user.id)
+    ]);
+  }
+  return { ...turn, needsAuth: !req.user, conversationId, creditsUsed: prepared.reservationId && turn.aiAnswered ? prepared.cost : 0, wallet };
+}
+
+// Chat: cada resposta da IA usa `billing.chatReplyCost` créditos (admin não paga).
+// Visitante tem `billing.guestFreeReplies` respostas grátis por dia (por rede), depois cria a conta.
+router.post('/concierge/chat', optionalAuth as any, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const prepared = await prepareChat(req);
+  if ('blocked' in prepared) return res.json(prepared.blocked);
   let turn;
   try {
-    turn = await conciergeChat({ messages, collected: req.body?.collected, company, authenticated: Boolean(req.user), userName: req.user?.name, account });
+    turn = await conciergeChat({ messages: prepared.messages, collected: req.body?.collected, company: prepared.company, authenticated: Boolean(req.user), userName: req.user?.name, account: prepared.account });
   } catch (error) {
-    if (reservationId) await rollbackReservation(req.user!.id, reservationId, 'Falha no chat');
+    if (prepared.reservationId) await rollbackReservation(req.user!.id, prepared.reservationId, 'Falha no chat');
     throw error;
   }
-  // Só cobra quando a IA respondeu de verdade (resposta de contingência é grátis).
-  if (reservationId) {
-    if (turn.aiAnswered) await commitReservation({ userId: req.user!.id, reservationId, source: 'Chat Froc.IA: resposta', metadata: { conversationId: conversationId || null } });
-    else await rollbackReservation(req.user!.id, reservationId, 'IA indisponível: resposta sem cobrança');
-  }
-  let savedConversationId: string | undefined;
-  if (req.user) {
-    savedConversationId = await saveConversationTurn({ userId: req.user.id, conversationId, messages, reply: turn.reply, collected: turn.collected }).catch(() => conversationId);
-  }
-  res.json({ ...turn, needsAuth: !req.user, conversationId: savedConversationId, creditsUsed: reservationId && turn.aiAnswered ? cost : 0, wallet: req.user ? await getWallet(req.user.id) : undefined });
+  res.json(await settleChat(req, prepared, turn));
 }));
+
+// Mesmo chat, em streaming (SSE): a fala chega aos pedaços e a voz começa na primeira frase.
+router.post('/concierge/chat/stream', optionalAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  let prepared: ChatPrepared;
+  try {
+    prepared = await prepareChat(req);
+  } catch (error: any) {
+    res.status(error?.statusCode || 500).json({ error: error?.message || 'Falha no chat.' });
+    return;
+  }
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof (res as any).flushHeaders === 'function') (res as any).flushHeaders();
+  const send = (event: string, payload: unknown) => {
+    if (res.writableEnded || res.destroyed) return;
+    res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
+  if ('blocked' in prepared) { send('done', prepared.blocked); res.end(); return; }
+  const ready: ChatReady = prepared;
+  try {
+    const turn = await conciergeChatStream(
+      { messages: ready.messages, collected: req.body?.collected, company: ready.company, authenticated: Boolean(req.user), userName: req.user?.name, account: ready.account },
+      (text) => send('token', { text })
+    );
+    send('done', await settleChat(req, ready, turn));
+  } catch (error: any) {
+    if (ready.reservationId) await rollbackReservation(req.user!.id, ready.reservationId, 'Falha no chat').catch(() => undefined);
+    send('error', { error: error?.message || 'Falha no chat.' });
+  }
+  if (!res.writableEnded) res.end();
+});
 
 router.get('/concierge/conversations', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
   res.json({ conversations: await listConversations(req.user!.id) });

@@ -6,7 +6,9 @@ import {
 } from 'lucide-react';
 import type { Company, User, Wallet } from '../types';
 import { apiRequest } from '../lib/api';
+import { ChatStreamUnavailable, streamConciergeChat } from '../lib/chatStream';
 import { PublicTopBar } from '../components/PublicTopBar';
+import { SiteFooter } from '../components/SiteFooter';
 import { FROC_AGENTS, FROC_SQUADS } from '../../shared/agents';
 import { brazilNow, firstName } from '../../shared/brazilTime';
 import { isVoiceSupported, useFrocVoice } from '../lib/voice/useFrocVoice';
@@ -324,27 +326,70 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
     setInput('');
     window.requestAnimationFrame(autosize);
     setThinking(true);
+    type Turn = { reply: string; quickReplies: string[]; collected: Collected; plan: Plan | null; agents: AgentLite[]; conversationId?: string; creditsUsed?: number; needsLogin?: boolean; needsCredits?: boolean };
+    const body = {
+      messages: next.map(({ role, content: msg }) => ({ role, content: msg })).slice(-24),
+      collected,
+      companyId: selectedCompany?.id,
+      conversationId: user ? conversationId : undefined
+    };
+    const replyId = uid();
+    const talk = fromVoice || voice.enabled;
+    let streamed = '';
+    let spokenUpTo = 0;
+    let placed = false;
+    // Fala progressiva: a 1ª frase sai na hora; depois, blocos de frases enquanto a IA escreve.
+    const speakReady = (final: boolean) => {
+      if (!talk) return;
+      const pending = streamed.slice(spokenUpTo);
+      if (final) {
+        if (pending.trim()) voice.speakPart(pending, replyId);
+        spokenUpTo = streamed.length;
+        return;
+      }
+      const minimum = spokenUpTo === 0 ? 12 : 140;
+      const matches = [...pending.matchAll(/[.!?…](?=\s|$)/g)];
+      const end = matches.map((m) => (m.index ?? 0) + 1).filter((i) => i >= minimum).pop();
+      if (end === undefined) return;
+      const piece = pending.slice(0, end);
+      spokenUpTo += end;
+      voice.speakPart(piece, replyId);
+    };
     try {
-      const data = await apiRequest<{ reply: string; quickReplies: string[]; collected: Collected; plan: Plan | null; agents: AgentLite[]; conversationId?: string; creditsUsed?: number; needsLogin?: boolean; needsCredits?: boolean }>('/api/concierge/chat', {
-        method: 'POST',
-        body: {
-          messages: next.map(({ role, content: body }) => ({ role, content: body })).slice(-24),
-          collected,
-          companyId: selectedCompany?.id,
-          conversationId: user ? conversationId : undefined
-        },
-        timeoutMs: 90_000
-      });
+      let data: Turn;
+      try {
+        data = await streamConciergeChat<Turn>(body, {
+          onToken: (piece) => {
+            streamed += piece;
+            if (!placed) {
+              placed = true;
+              setThinking(false);
+              setMessages((current) => [...current, { id: replyId, role: 'assistant', content: streamed }]);
+            } else {
+              const text = streamed;
+              setMessages((current) => current.map((item) => item.id === replyId ? { ...item, content: text } : item));
+            }
+            speakReady(false);
+          }
+        });
+      } catch (streamError) {
+        if (!(streamError instanceof ChatStreamUnavailable)) throw streamError;
+        data = await apiRequest<Turn>('/api/concierge/chat', { method: 'POST', body, timeoutMs: 90_000 });
+      }
       if (data.collected) setCollected(data.collected);
       if (data.conversationId) setConversationId(data.conversationId);
       if (user) onRefreshWallet();
-      const replyId = uid();
-      setMessages((current) => [...current, { id: replyId, role: 'assistant', content: data.reply, agents: data.agents, plan: data.plan, quickReplies: data.quickReplies }]);
-      // Conversa por voz ligada: o Froc.IA responde falando e volta a ouvir sozinha.
-      if (fromVoice || voice.enabled) void voice.speak(data.reply, replyId);
+      const finalMessage: ChatMessage = { id: replyId, role: 'assistant', content: data.reply, agents: data.agents, plan: data.plan, quickReplies: data.quickReplies };
+      setMessages((current) => placed ? current.map((item) => item.id === replyId ? finalMessage : item) : [...current, finalMessage]);
+      if (talk) {
+        // Se o texto final for diferente do transmitido (ou nada foi transmitido), fala a resposta final.
+        if (!streamed || (spokenUpTo === 0 && streamed.trim() !== data.reply.trim())) { streamed = data.reply; spokenUpTo = 0; }
+        speakReady(true);
+        voice.endParts(replyId);
+      }
     } catch (err: any) {
-      setError(err?.message || 'O Froc.IA está muito requisitada agora. Tente de novo em instantes.');
-      if (fromVoice || voice.enabled) voice.cancelThinking();
+      setError(err?.message || 'O Froc.IA está muito requisitado agora. Tente de novo em instantes.');
+      if (talk) voice.cancelThinking();
     } finally {
       setThinking(false);
     }
@@ -468,6 +513,7 @@ export const ConciergeHome: React.FC<Props> = ({ user, wallet, selectedCompany, 
                 </div>
               ))}
             </div>
+            <SiteFooter className="mt-12 w-full" />
           </section>
         ) : (
           <section className="mx-auto max-w-3xl space-y-5 px-4">

@@ -52,7 +52,7 @@ function rateLimitPolicy(req: Request): RateLimitPolicy | null {
   if (path === '/api/payments/checkout' || path === '/api/payments/subscription/cancel') {
     return { group: 'payments-mutation', limit: 20, windowMs: 10 * 60_000 };
   }
-  if (req.method === 'POST' && path === '/api/concierge/chat') {
+  if (req.method === 'POST' && (path === '/api/concierge/chat' || path === '/api/concierge/chat/stream')) {
     return { group: 'concierge-chat', limit: 60, windowMs: 10 * 60_000 };
   }
   if (req.method === 'POST' && path.startsWith('/api/ai/speech')) {
