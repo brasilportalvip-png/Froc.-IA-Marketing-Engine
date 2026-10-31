@@ -3,9 +3,9 @@ import { Building2, Coins, FolderOpen, HelpCircle, LayoutDashboard, Settings, Sh
 import { BrandLogo } from './BrandLogo';
 import type { User } from '../types';
 interface Props { open:boolean; currentTab:string; user:User|null; isAdmin:boolean; onClose:()=>void; onNavigate:(tab:string)=>void; }
-// Ferramentas ficam escondidas: a Froc.IA executa tudo pela conversa.
+// Ferramentas ficam escondidas: o Froc.IA executa tudo pela conversa.
 const items = [
-  ['home','Falar com a Froc.IA',Sparkles],['vitrine','Vitrine',Store],['posts','Posts',Newspaper],['dashboard','Meu Painel',LayoutDashboard],['empresa','Minha Marca',Building2],['conteudos','Minhas Criações',FolderOpen],['creditos','Créditos',Coins],['planos','Planos',Settings],['perfil','Perfil',Settings],['suporte','Suporte',HelpCircle]
+  ['home','Falar com o Froc.IA',Sparkles],['vitrine','Vitrine',Store],['posts','Posts',Newspaper],['dashboard','Meu Painel',LayoutDashboard],['empresa','Minha Marca',Building2],['conteudos','Minhas Criações',FolderOpen],['creditos','Créditos',Coins],['planos','Planos',Settings],['perfil','Perfil',Settings],['suporte','Suporte',HelpCircle]
 ] as const;
 export const MobileDrawer:React.FC<Props>=({open,currentTab,isAdmin,onClose,onNavigate})=>{
   if(!open)return null;

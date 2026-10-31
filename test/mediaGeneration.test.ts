@@ -168,7 +168,7 @@ test('Media Generation: Full Production Hardening Suite (Images, Veo Presets, Co
 
     // =========================================================================
     // 2. GERAÇÃO DE IMAGEM 1K (15 créditos), 2K (25 créditos) e 4K (40 créditos)
-    //    (usada pela Froc.IA na conversa; as rotas avulsas foram removidas)
+    //    (usada pelo Froc.IA na conversa; as rotas avulsas foram removidas)
     // =========================================================================
     const company = { id: companyId, userId, name: 'Loja Exemplo Media', category: 'Varejo', segment: 'Moda' };
     const image1k = await generateMarketingImage({ userId, company, theme: 'Bolsa de couro minimalista', aspectRatio: '1:1', resolution: '1K' });

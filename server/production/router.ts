@@ -930,20 +930,20 @@ router.get('/agents', (_req, res) => {
 
 router.post('/concierge/chat', optionalAuth as any, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const messages = sanitizeMessages(req.body?.messages);
-  if (!messages.length || messages[messages.length - 1].role !== 'user') return res.status(400).json({ error: 'Envie uma mensagem para a Froc.IA.' });
+  if (!messages.length || messages[messages.length - 1].role !== 'user') return res.status(400).json({ error: 'Envie uma mensagem para o Froc.IA.' });
   const company = req.user ? await ownedCompany(req.user.id, safeString(req.body?.companyId, 200)) : undefined;
-  const turn = await conciergeChat({ messages, collected: req.body?.collected, company, authenticated: Boolean(req.user) });
+  const turn = await conciergeChat({ messages, collected: req.body?.collected, company, authenticated: Boolean(req.user), userName: req.user?.name });
   res.json({ ...turn, needsAuth: !req.user });
 }));
 
 router.post('/concierge/execute', requireAuth, asyncRoute(async (req: AuthenticatedRequest, res) => {
-  if (!req.body?.collected || !Array.isArray(req.body?.actions)) return res.status(400).json({ error: 'Plano inválido. Confirme o resumo com a Froc.IA novamente.' });
+  if (!req.body?.collected || !Array.isArray(req.body?.actions)) return res.status(400).json({ error: 'Plano inválido. Confirme o resumo com o Froc.IA novamente.' });
   const outcome = await executeConciergePlan({ userId: req.user!.id, isAdmin: req.user!.role === 'admin', companyId: safeString(req.body?.companyId, 200), collected: req.body.collected, actions: req.body.actions });
   res.json({ ...outcome, wallet: await getWallet(req.user!.id) });
 }));
 
 
-// ───────────── Voz da Froc.IA (microfone + voz neural, mesmo sistema da Froc IA) ─────────────
+// ───────────── Voz do Froc.IA (microfone + voz neural, mesmo sistema do Froc IA) ─────────────
 function speechTextFromBody(body: any): string {
   return cleanSpeechText(safeString(body?.text, 6000));
 }

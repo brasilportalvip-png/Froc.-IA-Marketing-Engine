@@ -74,14 +74,14 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
             Biblioteca de Conteúdos
           </h2>
           <p className="mt-1 text-xs text-slate-400">
-            Tudo o que a Froc.IA criou para você (posts, imagens, roteiros e artigos), pronto para copiar ou baixar.
+            Tudo o que o Froc.IA criou para você (posts, imagens, roteiros e artigos), pronto para copiar ou baixar.
           </p>
         </div>
         <button
           onClick={() => onNavigate('home')}
           className="min-h-11 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-xs font-extrabold text-white"
         >
-          + Pedir para a Froc.IA
+          + Pedir para o Froc.IA
         </button>
       </div>
 

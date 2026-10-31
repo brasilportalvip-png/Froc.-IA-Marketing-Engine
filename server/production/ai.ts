@@ -1054,7 +1054,7 @@ export async function generateVideoDirection(data: {
   cameraMotion?: string;
   lighting?: string;
 }): Promise<{ visualPrompt: string; cameraMotion: string; lighting: string; mood: string }> {
-  const systemInstruction = `Você é um diretor de fotografia e cinematógrafo publicitário de alto nível da Froc.IA.
+  const systemInstruction = `Você é um diretor de fotografia e cinematógrafo publicitário de alto nível do Froc.IA.
 Sua missão é expandir a ideia bruta do usuário em uma especificação visual cinematográfica de alta precisão, realismo fotográfico e apelo comercial para o modelo Veo 3.1.
 
 DIRETRIZES CINEMATOGRÁFICAS E REALISMO:
@@ -1777,7 +1777,7 @@ export async function listUserVideoJobs(userId: string, companyId?: string): Pro
 /**
  * Imagem editorial para os posts automáticos (Vitrine e Froc Magazine).
  * Mesmo modelo de imagem da plataforma, sem cobrar créditos do cliente:
- * o post diário é um serviço da Froc.IA. Sempre grava no Storage e devolve
+ * o post diário é um serviço do Froc.IA. Sempre grava no Storage e devolve
  * uma URL pública (nunca data: URL, que seria ruim para SEO e para o HTML).
  */
 export async function generateEditorialImage(data: { prompt: string; aspectRatio?: string; folder: string }): Promise<{ imageUrl: string; storagePath: string; modelUsed: string }> {

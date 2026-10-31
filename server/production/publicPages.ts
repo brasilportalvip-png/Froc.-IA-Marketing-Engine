@@ -114,11 +114,11 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
   };
   const fallback: PublicMeta = {
     title: 'Froc.IA — A IA que traz clientes pelo Google e redes sociais',
-    description: 'Converse com a Froc.IA e ela cria seus anúncios, posts diários, SEO local por cidade e bairro e coloca sua marca na Vitrine. Tráfego orgânico sem complicação.',
+    description: 'Converse com o Froc.IA e ele cria seus anúncios, posts diários, SEO local por cidade e bairro e coloca sua marca na Vitrine. Tráfego orgânico sem complicação.',
     canonical: `${base}${pathname === '/' ? '/' : pathname}`,
     image: `${base}/og-froc.jpg`, type: 'website', status: 200,
     schema: [website, { '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: 'Froc.IA', applicationCategory: 'BusinessApplication', operatingSystem: 'Web', url: `${base}/`, offers: { '@type': 'AggregateOffer', priceCurrency: 'BRL', lowPrice: '49.00', highPrice: '399.90' } }],
-    prerender: `<h1>Froc.IA — inteligência artificial que traz clientes</h1><p>Converse com a IA, diga o que você vende e onde estão seus clientes (país, cidade, bairro ou rua). A Froc.IA cria o anúncio, publica um post estratégico por dia na Vitrine e otimiza tudo para o Google.</p><p><a href="/vitrine">Ver a Vitrine Froc.IA</a> · <a href="/planos">Planos</a> · <a href="/blog">Froc Magazine</a></p>`
+    prerender: `<h1>Froc.IA — inteligência artificial que traz clientes</h1><p>Converse com a IA, diga o que você vende e onde estão seus clientes (país, cidade, bairro ou rua). O Froc.IA cria o anúncio, publica um post estratégico por dia na Vitrine e otimiza tudo para o Google.</p><p><a href="/vitrine">Ver a Vitrine Froc.IA</a> · <a href="/planos">Planos</a> · <a href="/blog">Froc Magazine</a></p>`
   };
 
   if (pathname === '/vitrine') {
@@ -135,7 +135,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
     };
   }
   if (pathname === '/posts') {
-    let prerender = '<h1>Posts da Froc.IA</h1><p>Todas as postagens: artigos do Froc Magazine e os posts estratégicos diários das marcas da Vitrine.</p>';
+    let prerender = '<h1>Posts do Froc.IA</h1><p>Todas as postagens: artigos do Froc Magazine e os posts estratégicos diários das marcas da Vitrine.</p>';
     let items: Array<{ name: string; url: string }> = [];
     try {
       const posts = (await listAllPublicPosts()).slice(0, 100);
@@ -145,8 +145,8 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
     return {
       ...fallback,
       title: 'Posts — Marketing, SEO e marcas em destaque | Froc.IA',
-      description: 'Todas as postagens da Froc.IA: artigos de marketing, SEO e IA do Froc Magazine e posts diários das marcas da Vitrine.',
-      schema: [website, breadcrumb(base, [{ name: 'Posts', url: `${base}/posts` }]), { '@context': 'https://schema.org', '@type': 'CollectionPage', name: 'Posts da Froc.IA', url: `${base}/posts`, mainEntity: { '@type': 'ItemList', itemListElement: items.slice(0, 50).map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, url: item.url })) } }],
+      description: 'Todas as postagens do Froc.IA: artigos de marketing, SEO e IA do Froc Magazine e posts diários das marcas da Vitrine.',
+      schema: [website, breadcrumb(base, [{ name: 'Posts', url: `${base}/posts` }]), { '@context': 'https://schema.org', '@type': 'CollectionPage', name: 'Posts do Froc.IA', url: `${base}/posts`, mainEntity: { '@type': 'ItemList', itemListElement: items.slice(0, 50).map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, url: item.url })) } }],
       prerender
     };
   }
@@ -155,7 +155,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
   if (pathname === '/termos') return { ...fallback, title: 'Termos de Uso — Froc.IA', description: 'Termos de uso do Froc.IA para conta, inteligência artificial, créditos, assinaturas, integrações e Autopilot.', prerender: '' };
   if (pathname === '/privacidade') return { ...fallback, title: 'Política de Privacidade — Froc.IA', description: 'Política de privacidade do Froc.IA e informações sobre dados de conta, integrações, pagamentos e inteligência artificial.', prerender: '' };
 
-  const notFound = (what: string): PublicMeta => ({ ...fallback, status: 404, title: `${what} não encontrado — Froc.IA`, description: `Este conteúdo não está disponível na Froc.IA.`, schema: [website], prerender: `<h1>${what} não encontrado</h1><p><a href="/vitrine">Voltar para a Vitrine</a></p>` });
+  const notFound = (what: string): PublicMeta => ({ ...fallback, status: 404, title: `${what} não encontrado — Froc.IA`, description: `Este conteúdo não está disponível no Froc.IA.`, schema: [website], prerender: `<h1>${what} não encontrado</h1><p><a href="/vitrine">Voltar para a Vitrine</a></p>` });
 
   const vitrinePostMatch = pathname.match(/^\/vitrine\/([^/]+)\/([^/]+)$/);
   if (vitrinePostMatch) {

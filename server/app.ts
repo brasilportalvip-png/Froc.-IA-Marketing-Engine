@@ -302,7 +302,7 @@ export function createApp() {
     }
   );
 
-  // Ferramentas antigas agora executadas pela Froc.IA na conversa: redirecionamento permanente.
+  // Ferramentas antigas agora executadas pelo Froc.IA na conversa: redirecionamento permanente.
   const legacyToolRedirects: Record<string, string> = {
     '/froc-ia': '/', '/estrategia': '/', '/autopilot': '/', '/criar-conteudo': '/', '/criar-imagem': '/',
     '/criar-video': '/', '/criar-artigo': '/', '/seo': '/', '/campanhas': '/', '/calendario': '/',

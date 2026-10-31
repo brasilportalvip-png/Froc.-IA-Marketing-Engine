@@ -212,7 +212,7 @@ export const VitrineShowcase: React.FC<Props> = ({ companies, onOpenCompany, onO
             <div className="mt-8 rounded-3xl border border-dashed border-white/15 p-10 text-center">
               <Crown className="mx-auto text-[#FFD400]" size={34} />
               <p className="mt-3 text-lg font-black">Este lugar pode ser seu.</p>
-              <p className="mt-1 text-sm text-neutral-400">Converse com a Froc.IA e coloque sua marca em destaque hoje mesmo.</p>
+              <p className="mt-1 text-sm text-neutral-400">Converse com o Froc.IA e coloque sua marca em destaque hoje mesmo.</p>
               <button onClick={onStart} className="mt-5 rounded-full bg-[#FFD400] px-5 py-2.5 text-sm font-black text-black">Começar agora</button>
             </div>
           ) : (
@@ -255,7 +255,7 @@ export const VitrineShowcase: React.FC<Props> = ({ companies, onOpenCompany, onO
                 'Post estratégico publicado todo dia, com gatilhos e chamada para ação',
                 'SEO local: país, estado, cidade, bairro e rua',
                 'Sitemaps XML/TXT, Schema e aviso imediato aos buscadores (IndexNow)',
-                'A IA faz tudo — você só conversa e aprova'
+                'O Froc.IA faz tudo — você só conversa e aprova'
               ].map((item) => (
                 <p key={item} className="flex items-start gap-2 rounded-2xl bg-white/[0.04] p-3 text-sm text-neutral-200"><BadgeCheck size={16} className="mt-0.5 shrink-0 text-[#00E676]" /> {item}</p>
               ))}

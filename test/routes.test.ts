@@ -450,7 +450,7 @@ test('Social Connect & OAuth: Regra de acesso por plano e bypass autorizado para
     assert.ok(cronData.queueStats);
 
     // TESTE 5 (agendamento manual de posts) removido: o Calendário e a rota
-    // /api/content/schedule saíram do produto; a Froc.IA publica pela Vitrine.
+    // /api/content/schedule saíram do produto; o Froc.IA publica pela Vitrine.
 
     // 5.9 Cron Social Endpoint Auth (GET e POST)
     const resCronUnauth = await fetch(`${baseUrl}/api/cron/social`);

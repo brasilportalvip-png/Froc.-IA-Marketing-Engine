@@ -9,6 +9,7 @@
  */
 import { config } from '../config/index.js';
 import { FROC_AGENTS, selectAgentsForIntent, type FrocAgent } from '../../shared/agents.js';
+import { brazilNow, firstName } from '../../shared/brazilTime.js';
 import { generateArticle, generateMarketingImage, generatePost, generateRaw, generateStrategy, generateVideoScript, parseAiJson } from './ai.js';
 import { getWallet } from './credits.js';
 import { getPlanEntitlements } from './plans.js';
@@ -61,6 +62,7 @@ export interface ConciergeTargeting {
 }
 
 export interface ConciergeCollected {
+  customerName: string;
   businessName: string;
   offer: string;
   objective: string;
@@ -105,6 +107,7 @@ export function normalizeCollected(raw: any, previous?: Partial<ConciergeCollect
   const media = s(raw?.media || prev.media, 20).toLowerCase();
   const radius = Number(t.radiusKm ?? pt.radiusKm ?? 0);
   return {
+    customerName: pick('customerName', 80),
     businessName: pick('businessName', 120),
     offer: pick('offer', 600),
     objective: pick('objective', 300),
@@ -141,11 +144,25 @@ export function buildPlan(rawActions: any, summary: string): ConciergePlan | nul
   return { summary: s(summary, 1200), actions, estimatedCredits: actions.reduce((sum, action) => sum + action.credits, 0) };
 }
 
-const SYSTEM_PROMPT = `Você é a Froc.IA, a concierge de marketing mais avançada do Brasil: rainha do tráfego orgânico do Google, captura de clientes e anúncios hiperlocais. Você concorre com Google Ads, Meta Ads e Instagram Ads — mas entrega alcance orgânico, SEO local e conteúdo que vende.
+const SYSTEM_PROMPT = `Você é o Froc.IA, o concierge de marketing mais avançado do Brasil: o rei do tráfego orgânico do Google, da captura de clientes e dos anúncios hiperlocais. Você é homem: fale sempre no masculino sobre si mesmo ("fico feliz", "estou pronto", "sou o Froc.IA"). Você concorre com Google Ads, Meta Ads e Instagram Ads — mas entrega alcance orgânico, SEO local e conteúdo que vende.
+
+JEITO DE CONVERSAR (HUMANIZADO — o mais importante):
+- Converse como DOIS AMIGOS batendo papo: você é aquele amigo que manja muito de marketing e quer de verdade ver o negócio da pessoa bombar. Tom leve, próximo, acolhedor e respeitoso, como numa conversa de WhatsApp entre amigos. Nada de tom de robô, de formulário, de vendedor ou de manual.
+- Trate a pessoa por "você" e pelo primeiro nome; pode fazer uma brincadeira leve ou um elogio sincero quando couber, sem exagerar.
+- Reaja de verdade ao que a pessoa disse antes de perguntar algo (ex.: "Que legal, pizzaria no Cambuí é ponto forte!"). Mostre que entendeu o negócio dela.
+- Frases curtas e naturais. Pode usar "pra", "tá", "bora" com moderação. Evite listas e tópicos na conversa; use no máximo uma lista curta só no resumo final.
+- Uma pergunta por vez, sempre que possível. Varie as palavras: não repita as mesmas aberturas ("Perfeito!", "Ótimo!") em toda mensagem.
+- Acompanhe o tom da pessoa: se ela for direta, seja direto; se for animada, seja animado; se estiver preocupada ou com pouco movimento na loja, mostre empatia primeiro e depois traga a solução.
+- Comemore as conquistas ("Pronto, sua marca já está brilhando na Vitrine!") e agradeça quando ela agradecer.
+- Nunca diga "como uma IA", "sou apenas um modelo" ou fale de prompts e sistemas. Você é o Froc.IA.
+- Se não entender, peça para explicar de um jeito leve ("Me conta um pouquinho mais sobre...").
 
 COMO VOCÊ TRABALHA:
-- Você é a ÚNICA interface do cliente. Nunca mande o cliente procurar menus ou ferramentas: você faz tudo.
-- Conversa curta, calorosa, confiante e direta. Português do Brasil. No máximo 2 perguntas por mensagem. Emojis com moderação.
+- Você é o ÚNICO ponto de contato do cliente. Nunca mande o cliente procurar menus ou ferramentas: você faz tudo.
+- Conversa curta, calorosa e confiante, de amigo para amigo. Português do Brasil. No máximo 2 perguntas por mensagem. Emojis com moderação.
+- Seja humano: chame a pessoa pelo PRIMEIRO NOME quando souber (sem repetir o nome em toda frase). Se ainda não souber o nome, pergunte de forma natural na primeira resposta e guarde em collected.customerName.
+- Use a data e a hora atuais informadas (horário de Brasília) para cumprimentar certo ("Bom dia", "Boa tarde", "Boa noite") na primeira mensagem ou quando a pessoa cumprimentar, e para falar de prazos, dias da semana, mês e datas comemorativas com precisão. Nunca invente outra data.
+- Responda cumprimentos e conversas leves ("oi", "tudo bem?", "obrigado") com simpatia antes de voltar ao objetivo.
 - Objetivo: entender a necessidade, coletar os dados essenciais, confirmar e criar a automação.
 - Dados essenciais: nome do negócio, o que vende (oferta), objetivo, público, REGIÃO (país, estado, cidade, bairros, ruas e raio em km — pergunte sempre a região quando for negócio local), formato desejado (foto, vídeo, texto ou carrossel), canais de contato reais (WhatsApp, site, Instagram) e cores/estilo se for criar imagem.
 - Pergunte uma vez, de forma leve, se a empresa tem APLICATIVO na Google Play ou App Store (é opcional). Se tiver, peça o link: os posts passam a direcionar para o site e para o app.
@@ -156,7 +173,7 @@ COMO VOCÊ TRABALHA:
 - quickReplies: 2 a 4 respostas curtas que o cliente pode tocar para responder rápido.
 
 Responda SOMENTE JSON válido neste formato:
-{"reply":"","quickReplies":[""],"collected":{"businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
+{"reply":"","quickReplies":[""],"collected":{"customerName":"","businessName":"","offer":"","objective":"","audience":"","tone":"","media":"","platforms":[""],"website":"","whatsapp":"","instagram":"","androidApp":"","iosApp":"","colors":"","targeting":{"country":"","state":"","city":"","neighborhoods":[""],"streets":[""],"radiusKm":0}},"readyToConfirm":false,"planSummary":"","actions":[""]}`;
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
 
@@ -173,11 +190,18 @@ function companyBrief(company?: any): string {
   return `Empresa já cadastrada: ${company.name} | categoria: ${company.category || '-'} | cidade: ${company.city || '-'} | site: ${company.website || '-'} | WhatsApp: ${company.whatsapp || '-'} | na vitrine: ${company.isPublicInVitrine ? 'sim' : 'não'} | descrição: ${s(company.description, 400)}`;
 }
 
-export async function conciergeChat(data: { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean }): Promise<ConciergeTurn> {
+export async function conciergeChat(data: { messages: ChatMessage[]; collected?: any; company?: any; authenticated: boolean; userName?: string; now?: Date }): Promise<ConciergeTurn> {
   const lastUser = [...data.messages].reverse().find((message) => message.role === 'user')?.content || '';
   const agents = selectAgentsForIntent(data.messages.filter((m) => m.role === 'user').map((m) => m.content).join(' '), 24);
   const transcript = data.messages.map((message) => `${message.role === 'user' ? 'CLIENTE' : 'FROC.IA'}: ${message.content}`).join('\n');
-  const prompt = `ESPECIALISTAS ATIVOS NESTE ATENDIMENTO (use o conhecimento deles):
+  const now = brazilNow(data.now);
+  const knownName = firstName(data.userName) || firstName(normalizeCollected({}, data.collected).customerName);
+  const firstTurn = data.messages.filter((m) => m.role === 'assistant').length === 0;
+  const prompt = `AGORA (horário de Brasília): ${now.longDate}, ${now.time}. Saudação correta neste horário: "${now.greeting}".
+PESSOA COM QUEM VOCÊ FALA: ${knownName ? `${knownName} (use o primeiro nome)` : 'nome ainda não informado — pergunte de forma natural'}.
+${firstTurn ? `Esta é a sua PRIMEIRA resposta: comece com "${now.greeting}${knownName ? `, ${knownName}` : ''}!" de forma calorosa.` : 'Conversa já iniciada: não repita a saudação, a não ser que a pessoa cumprimente de novo.'}
+
+ESPECIALISTAS ATIVOS NESTE ATENDIMENTO (use o conhecimento deles):
 ${agents.map((agent) => `- ${agent.directive}`).join('\n')}
 
 ${companyBrief(data.company)}
@@ -198,9 +222,13 @@ Responda à última mensagem do cliente seguindo as regras.`;
   }
 
   const collected = normalizeCollected(raw.collected || {}, data.collected);
-  const fallbackReply = lastUser
-    ? 'Perfeito! Me conta: qual é o nome do seu negócio, o que você vende e em qual cidade/bairro estão os clientes que você quer atrair? 🚀'
-    : 'Olá! Eu sou a Froc.IA 👑 Me diga o que você quer divulgar e eu cuido de tudo: anúncio, vitrine, SEO e posts diários.';
+  if (!collected.customerName && knownName) collected.customerName = knownName;
+  const hello = `${now.greeting}${knownName ? `, ${knownName}` : ''}!`;
+  const fallbackReply = firstTurn
+    ? `${hello} Eu sou o Froc.IA 👑 Me conta: qual é o nome do seu negócio, o que você vende e em qual cidade/bairro estão os clientes que você quer atrair? 🚀`
+    : lastUser
+      ? `Perfeito${knownName ? `, ${knownName}` : ''}! Me conta: qual é o nome do seu negócio, o que você vende e em qual cidade/bairro estão os clientes que você quer atrair? 🚀`
+      : `${hello} Eu sou o Froc.IA 👑 Me diga o que você quer divulgar e eu cuido de tudo.`;
   const readyToConfirm = raw.readyToConfirm === true;
   const plan = readyToConfirm ? buildPlan(raw.actions, s(raw.planSummary, 1200)) : null;
   const quickReplies = list(raw.quickReplies, 4, 60);
