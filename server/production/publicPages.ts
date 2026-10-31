@@ -1,7 +1,7 @@
 import { config } from '../config/index.js';
 import { COLLECTIONS, firestore, queryData } from './store.js';
 import { listAllPublicPosts } from './posts.js';
-import { appLinksOf } from './appLinks.js';
+import { appLinksOf, offerOf } from './appLinks.js';
 
 function esc(value: any): string {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -74,18 +74,27 @@ function directionHtml(company: any, postId?: string): string {
   const apps = appLinksOf(company);
   const q = postId ? `?p=${encodeURIComponent(postId)}` : '';
   const slug = encodeURIComponent(company.slug);
+  const offer = offerOf(company);
   const links = [
+    // Link de afiliado/patrocinado: rel="sponsored" é exigência do Google.
+    offer.url ? `<a href="/ir/${slug}/oferta${q}" rel="${offer.affiliate ? 'sponsored nofollow noopener' : 'nofollow noopener'}">Quero agora${offer.platform ? ` (${esc(offer.platform)})` : ''}</a>` : '',
     company.website ? `<a href="/ir/${slug}/site${q}" rel="nofollow noopener">Visitar o site de ${esc(company.name)}</a>` : '',
     apps.android ? `<a href="/ir/${slug}/android${q}" rel="nofollow noopener">Baixar o app na Google Play</a>` : '',
     apps.ios ? `<a href="/ir/${slug}/ios${q}" rel="nofollow noopener">Baixar o app na App Store</a>` : '',
     company.whatsapp ? `<a href="/ir/${slug}/whatsapp${q}" rel="nofollow noopener">Chamar no WhatsApp</a>` : ''
   ].filter(Boolean);
-  return links.length ? `<section><h2>Acesse ${esc(company.name)}</h2><p>${links.join(' · ')}</p></section>` : '';
+  const disclosure = offer.affiliate ? '<p><small>Divulgação: esta página contém link de afiliado. Podemos receber uma comissão se você comprar, sem custo extra para você.</small></p>' : '';
+  return links.length ? `<section><h2>Acesse ${esc(company.name)}</h2><p>${links.join(' · ')}</p>${disclosure}</section>` : '';
 }
 
 function companySchema(company: any, canonical: string) {
   const t = company.targeting || {};
-  const areaServed = [...(t.neighborhoods || []), t.city || company.city, t.state || company.state].filter(Boolean).map((name: string) => ({ '@type': 'Place', name }));
+  const offer = offerOf(company);
+  const national = offer.scope === 'nacional' || offer.scope === 'internacional';
+  // Alcance nacional: área atendida = o país inteiro (não bairros).
+  const areaServed = national
+    ? (offer.scope === 'nacional' ? [{ '@type': 'Country', name: company.country && !/^br/i.test(company.country) ? company.country : 'Brasil' }] : [])
+    : [...(t.neighborhoods || []), t.city || company.city, t.state || company.state].filter(Boolean).map((name: string) => ({ '@type': 'Place', name }));
   return {
     '@context': 'https://schema.org',
     '@type': company.businessType === 'online' ? 'OnlineBusiness' : company.businessType === 'physical' ? 'LocalBusiness' : 'Organization',

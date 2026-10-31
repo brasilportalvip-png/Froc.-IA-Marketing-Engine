@@ -486,7 +486,7 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
                     Atendimento 100% Online
                   </div>
                   <p className="mt-1 text-[11px] text-slate-300">
-                    Cobertura: {company.coverageRegion || 'Nacional / Todo o Brasil'}
+                    Cobertura: {(company as any).reachScope === 'internacional' ? 'Internacional' : (company as any).reachScope === 'nacional' ? 'Todo o Brasil' : company.coverageRegion || 'Nacional / Todo o Brasil'}
                   </p>
                   {(company.city || company.state) && (
                     <p className="mt-1 text-[10px] text-slate-400">
@@ -501,6 +501,20 @@ export const VitrinePage: React.FC<VitrinePageProps> = ({ onNavigate }) => {
                     <span>{[company.address, company.city, company.state, company.country].filter(Boolean).join(', ')}</span>
                   </div>
                 )
+              )}
+
+              {(company as any).hasOffer && (
+                <div>
+                  <a
+                    target="_blank"
+                    rel={(company as any).isAffiliate ? 'sponsored nofollow noopener noreferrer' : 'nofollow noopener noreferrer'}
+                    href={`/ir/${encodeURIComponent(company.slug)}/oferta`}
+                    className="froc-shimmer flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FFD400] via-[#FF2D87] to-[#00E676] px-4 py-3 text-sm font-black text-black"
+                  >
+                    🛍️ Quero agora{(company as any).offerPlatform ? ` · ${(company as any).offerPlatform}` : ''}
+                  </a>
+                  {(company as any).isAffiliate && <p className="mt-1.5 text-center text-[10px] text-slate-500">Link de afiliado: pode gerar comissão ao divulgador, sem custo extra para você.</p>}
+                </div>
               )}
 
               {company.whatsapp && (

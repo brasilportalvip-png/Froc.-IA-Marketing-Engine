@@ -142,3 +142,11 @@ Telas antigas de ferramentas separadas: Froc IA (antiga), Autopilot, Criar Conte
 - `POST /api/companies/:id/vitrine` — usuário coloca o projeto na Vitrine (402 sem plano/crédito)
 - `GET /api/vitrine-billing` — custos e se pode entrar
 - `GET/PATCH /api/admin/settings/daily-posts` — chave geral do admin
+
+## Produto digital, afiliados e alcance nacional
+
+- Campos da marca: `offerType` (local, servico_online, digital, afiliado, ecommerce, app), `reachScope` (local, regional, nacional, internacional), `salesUrl` (link de venda/checkout/afiliado) e `isAffiliate`.
+- Plataformas reconhecidas: Hotmart, Kiwify, Eduzz, Monetizze, Braip, PerfectPay, Ticto, Lastlink, Cakto, Amazon (amzn.to ou `tag=`), Shopee, Mercado Livre, Magalu, AliExpress, Natura e Boticário.
+- O Froc.IA não pede bairro/rua para produto digital: o alcance padrão é o Brasil todo; posts usam palavras-chave nacionais (vale a pena, review, como funciona) e nunca prometem renda.
+- Botão "Quero agora" → `/ir/{marca}/oferta` (clique contado). Link de afiliado sai com `rel="sponsored nofollow"` e aviso ao leitor (Google + CONAR).
+- Dados estruturados: alcance nacional usa `areaServed: Country`.

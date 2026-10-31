@@ -1,3 +1,4 @@
+import { offerOf, offerTypeLabel, scopeLabel } from './appLinks.js';
 import crypto from 'crypto';
 import { GoogleGenAI, GenerateVideosOperation } from '@google/genai';
 import { config } from '../config/index.js';
@@ -230,6 +231,8 @@ DIRETRIZ DE GROUNDING E PROIBIÇÕES:
   if (company.iosApp && typeof company.iosApp === 'string' && company.iosApp.trim()) {
     verifiedDestinations.iosApp = company.iosApp.trim();
   }
+  const offer = offerOf(company);
+  if (offer.url) verifiedDestinations[offer.affiliate ? 'linkDeAfiliado' : 'linkDeVenda'] = offer.url;
 
   const verifiedSocialLinks: Record<string, string> = {};
   if (company.socialLinks && typeof company.socialLinks === 'object') {
@@ -288,7 +291,12 @@ DIRETRIZ DE GROUNDING E PROIBIÇÕES:
   if (company.goals || profile.goals) {
     factualLines.push(`Objetivos Estratégicos: ${company.goals || profile.goals}`);
   }
-  if (company.coverageRegion) {
+  factualLines.push(`Tipo de Oferta: ${offerTypeLabel(offer.type)}${offer.platform ? ` (plataforma ${offer.platform})` : ''}`);
+  factualLines.push(`Alcance da Divulgação: ${scopeLabel(offer.scope, company.country)}`);
+  if (offer.affiliate) {
+    factualLines.push('Divulgação por LINK DE AFILIADO: deixe claro no texto que é uma indicação com link de afiliado; não fale como se fosse o fabricante; review honesto, sem promessas de ganho.');
+  }
+  if (company.coverageRegion && (offer.scope === 'local' || offer.scope === 'regional')) {
     factualLines.push(`Região de Atendimento Declarada: ${company.coverageRegion}`);
   }
   if (!isOnline && (company.address || company.city || company.state)) {

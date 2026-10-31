@@ -8,6 +8,7 @@ import { generateEditorialImage } from './ai.js';
 import { baseUrl, pingIndexNow } from './seoEngine.js';
 import { COLLECTIONS, firestore, nowIso, queryData } from './store.js';
 import { isImageHashUsed, registerImageHash, sceneVariation } from './uniqueness.js';
+import { offerOf, offerTypeLabel } from './appLinks.js';
 
 /** Depois desse número de tentativas o post que está sem imagem para de tentar (o admin pode reabrir). */
 export const MAX_IMAGE_ATTEMPTS = 5;
@@ -21,13 +22,23 @@ export function buildPostImagePrompt(data: { company?: any; title: string; summa
   const t = company.targeting || {};
   const niche = [company.category, company.segment, company.niche, data.category].map((v) => clean(v, 80)).filter(Boolean).join(' / ');
   const offer = [...list(company.products), ...list(company.services)].join(', ');
-  const place = clean(data.location || [...list(t.neighborhoods, 3), t.city || company.city, t.state || company.state].filter(Boolean).join(', '), 160);
+  const offerInfo = offerOf(company);
+  const local = offerInfo.scope === 'local' || offerInfo.scope === 'regional';
+  const place = local ? clean(data.location || [...list(t.neighborhoods, 3), t.city || company.city, t.state || company.state].filter(Boolean).join(', '), 160) : '';
+  const digitalScene = !company.name ? '' : offerInfo.type === 'digital'
+    ? `É um ${offerTypeLabel(offerInfo.type)}: mostre a pessoa do público aprendendo/usando e o RESULTADO na vida real (celular, notebook ou tablet podem aparecer, com a tela desfocada e sem texto legível); nada de capa de produto inventada.`
+    : offerInfo.type === 'afiliado'
+      ? 'É um produto divulgado por afiliado: mostre o produto/benefício em uso no dia a dia de uma pessoa real, de forma genérica, sem logotipo, embalagem ou marca do fabricante.'
+      : offerInfo.type === 'ecommerce' ? 'É uma loja virtual que entrega para o país: mostre o produto em uso ou a experiência de receber em casa, sem marcas de terceiros.'
+      : offerInfo.type === 'app' ? 'É um aplicativo: mostre a pessoa usando o celular no contexto do benefício, com a tela desfocada e sem texto legível.'
+      : offerInfo.type === 'servico_online' ? 'É um serviço feito pela internet: mostre o atendimento remoto e o resultado para o cliente.' : '';
   return [
     'Crie UMA fotografia publicitária realista, premium e original para ilustrar um post de blog/redes sociais.',
     company.name ? `Projeto/marca: ${clean(company.name, 120)}.` : 'Projeto: Froc Magazine (marketing, SEO e inteligência artificial para pequenas e médias empresas).',
     niche ? `Nicho do negócio: ${niche}.` : '',
     offer ? `O que a empresa oferece: ${offer}.` : '',
     company.description ? `Sobre a empresa: ${clean(company.description, 400)}.` : '',
+    digitalScene,
     place ? `Região atendida (use referências visuais coerentes com o Brasil e com esta região, sem placas com nomes): ${place}.` : '',
     `Assunto do post: ${clean(data.title, 200)}.`,
     data.keyword ? `Palavra-chave principal: ${clean(data.keyword, 80)}.` : '',

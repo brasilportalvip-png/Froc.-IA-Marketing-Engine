@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, CalendarDays, ExternalLink, Globe, Loader2, MapPin, MessageCircle, Share2, Smartphone, Sparkles } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ExternalLink, Globe, Loader2, MapPin, MessageCircle, Share2, ShoppingBag, Smartphone, Sparkles } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 
 interface FullPost {
@@ -88,6 +88,10 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
   const website = safeUrl(company?.website) ? go('site') : undefined;
   const androidApp = company?.androidApp ? go('android') : undefined;
   const iosApp = company?.iosApp ? go('ios') : undefined;
+  // Oferta (link de venda / afiliado). Afiliado: rel="sponsored" (regra do Google) e aviso ao leitor.
+  const offer = company?.hasOffer ? go('oferta') : undefined;
+  const affiliate = Boolean(company?.isAffiliate);
+  const offerRel = affiliate ? 'sponsored nofollow noopener noreferrer' : 'nofollow noopener noreferrer';
 
   return (
     <div className="relative px-4 pb-24 pt-[calc(96px+env(safe-area-inset-top))]">
@@ -122,6 +126,15 @@ export const VitrinePostView: React.FC<Props> = ({ companySlug, postSlug, onBack
                 </details>
               ))}
             </div>
+          </section>
+        )}
+
+        {offer && (
+          <section className="froc-glow-card mt-12 overflow-hidden p-6 text-center sm:p-8">
+            <p className="text-[11px] font-black uppercase tracking-widest text-[#FFD400]">{affiliate ? 'Indicação' : 'Oferta oficial'}{company?.offerPlatform ? ` · ${company.offerPlatform}` : ''}</p>
+            {post.cta && <p className="mt-3 text-lg font-black text-white">{post.cta}</p>}
+            <a href={offer} target="_blank" rel={offerRel} className="froc-shimmer mt-5 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#FFD400] via-[#FF2D87] to-[#00E676] px-7 py-3.5 text-base font-black text-black shadow-[0_0_30px_rgba(255,45,135,.45)]"><ShoppingBag size={18} /> Quero agora <ExternalLink size={13} /></a>
+            {affiliate && <p className="mt-3 text-[11px] text-neutral-500">Este post contém link de afiliado: o autor pode receber uma comissão se você comprar, sem custo extra para você.</p>}
           </section>
         )}
 

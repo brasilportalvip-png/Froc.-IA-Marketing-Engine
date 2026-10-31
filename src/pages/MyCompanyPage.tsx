@@ -605,6 +605,47 @@ export const MyCompanyPage: React.FC<Props> = ({
             </label>
           </div>
 
+          {/* PRODUTO DIGITAL, AFILIADO E ALCANCE */}
+          <div className="mt-7 grid gap-4 border-t border-slate-800 pt-6 sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-300">
+              O que você divulga
+              <select value={form.offerType || ''} onChange={(e) => update('offerType', e.target.value || undefined)} className={input}>
+                <option value="">Escolher…</option>
+                <option value="local">Negócio local (loja, restaurante, salão, clínica)</option>
+                <option value="servico_online">Serviço online (consultoria, aulas, freelancer)</option>
+                <option value="digital">Produto digital (curso, e-book, mentoria, assinatura)</option>
+                <option value="afiliado">Produto de afiliado (Hotmart, Kiwify, Amazon, Shopee…)</option>
+                <option value="ecommerce">Loja virtual / e-commerce</option>
+                <option value="app">Aplicativo</option>
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-300">
+              Alcance da divulgação
+              <select value={form.reachScope || ''} onChange={(e) => update('reachScope', e.target.value || undefined)} className={input}>
+                <option value="">Automático</option>
+                <option value="local">Minha cidade e bairros</option>
+                <option value="regional">Meu estado / região</option>
+                <option value="nacional">Brasil todo (país inteiro)</option>
+                <option value="internacional">Vários países</option>
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-300 sm:col-span-2">
+              Link de venda, checkout ou link de afiliado
+              <input
+                type="url"
+                value={form.salesUrl || ''}
+                onChange={(e) => update('salesUrl', e.target.value)}
+                className={input}
+                placeholder="https://go.hotmart.com/... · https://pay.kiwify.com.br/... · https://amzn.to/..."
+              />
+              <span className="mt-1 block text-[10px] font-normal text-slate-500">Vira o botão “Quero agora” nos posts e na Vitrine, com contagem de cliques.</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-300 sm:col-span-2">
+              <input type="checkbox" checked={Boolean(form.isAffiliate)} onChange={(e) => update('isAffiliate', e.target.checked)} />
+              É link de afiliado (o post avisa o leitor e o link leva a marcação exigida pelo Google)
+            </label>
+          </div>
+
           {/* LOCALIZAÇÃO E COBERTURA */}
           <div className="mt-7 border-t border-slate-800 pt-6">
             <div className="mb-4 flex items-center justify-between">
