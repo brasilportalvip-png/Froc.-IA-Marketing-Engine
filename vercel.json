@@ -69,11 +69,11 @@
       "dest": "/api/index.ts"
     },
     {
-      "src": "^/(?:posts|vitrine(?:/.*)?|blog(?:/.*)?|planos|termos|privacidade)/?$",
+      "src": "^/(?:posts|ir/.+|vitrine(?:/.*)?|blog(?:/.*)?|planos|termos|privacidade)/?$",
       "dest": "/api/index.ts"
     },
     {
-      "src": "^/(?:dashboard|empresa|froc-ia|autopilot|criar-conteudo|criar-imagem|criar-video|criar-artigo|seo|campanhas|calendario|redes-sociais|conteudos|analytics|creditos|perfil|configuracoes|suporte|admin)/?$",
+      "src": "^/(?:dashboard|empresa|conteudos|creditos|perfil|configuracoes|suporte|admin|froc-ia|estrategia|autopilot|criar-conteudo|criar-imagem|criar-video|criar-artigo|seo|campanhas|calendario|redes-sociais|analytics)/?$",
       "dest": "/api/index.ts"
     },
     {

@@ -13,6 +13,8 @@ interface PostCard {
   label: string;
   location: string | null;
   publishedAt: string;
+  hasApp?: boolean;
+  imageAlt?: string;
 }
 
 interface PostsResponse {
@@ -144,7 +146,7 @@ export const PostsPage: React.FC<{ onStart: () => void }> = ({ onStart }) => {
               <button onClick={() => openPath(featured.path)} className="froc-glow-card group mb-8 grid w-full overflow-hidden text-left md:grid-cols-5">
                 <div className="relative min-h-[220px] md:col-span-2">
                   {featured.imageUrl
-                    ? <img src={featured.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-80 transition duration-500 group-hover:scale-105" />
+                    ? <img src={featured.imageUrl} alt={featured.imageAlt || featured.title} className="absolute inset-0 h-full w-full object-cover opacity-80 transition duration-500 group-hover:scale-105" />
                     : <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-[#FF2D87]/30 via-black to-[#00E676]/20"><Sparkles size={48} className="text-[#FFD400]" /></div>}
                 </div>
                 <div className="p-6 md:col-span-3 md:p-8">
@@ -166,11 +168,12 @@ export const PostsPage: React.FC<{ onStart: () => void }> = ({ onStart }) => {
                 <button key={`${post.kind}-${post.id}`} onClick={() => openPath(post.path)} className="group flex flex-col overflow-hidden rounded-[24px] border border-white/10 bg-[#0b0b0b] text-left transition hover:-translate-y-1 hover:border-white/25">
                   <div className="relative h-36 overflow-hidden">
                     {post.imageUrl
-                      ? <img src={post.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover opacity-80 transition duration-500 group-hover:scale-105" />
+                      ? <img src={post.imageUrl} alt={post.imageAlt || post.title} loading="lazy" className="h-full w-full object-cover opacity-80 transition duration-500 group-hover:scale-105" />
                       : <div className="h-full w-full bg-gradient-to-br from-[#FFD400]/15 via-black to-[#FF2D87]/20" />}
                     <span className="absolute left-3 top-3 rounded-full bg-black/70 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider backdrop-blur" style={{ color: ACCENT[post.kind] }}>
                       {post.kind === 'magazine' ? 'Magazine' : 'Vitrine'} · {post.label}
                     </span>
+                    {post.hasApp && <span className="absolute right-3 top-3 rounded-full bg-[#00E676] px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-black">📱 Tem app</span>}
                   </div>
                   <div className="flex flex-1 flex-col p-5">
                     <h3 className="line-clamp-2 text-base font-black leading-snug text-white">{post.title}</h3>

@@ -68,6 +68,42 @@ Preto `#050505`, branco, amarelo `#FFD400`, pink `#FF2D87` e verde `#00E676`. As
 ### Painel admin completo
 Abas: Visão geral (usuários, assinantes, receita, projetos, posts, créditos, IA, chamados) · **Usuários** (adicionar/remover créditos, ativar/revogar plano, papel, bloquear, excluir perfil com confirmação por e-mail) · **Projetos** (criar para qualquer usuário, editar, trocar dono, pôr/tirar da vitrine, excluir) · Posts da Vitrine (arquivar, republicar, excluir) · Froc Magazine · Pagamentos · Atividade (ações de admin, execuções de IA, extrato) · Motor SEO · Suporte. Toda ação fica registrada no log de auditoria.
 
+### Imagens dos posts (ligadas ao nicho)
+- Cada post diário da Vitrine e cada artigo do Froc Magazine ganha uma **imagem criada pela IA** a partir do projeto (nicho, produtos, serviços, descrição, cidade/bairro) e da publicação (título, palavra-chave, ângulo do dia). Sem texto, logos ou marcas d'água na arte.
+- Não consome créditos do cliente (serviço da plataforma). Posts antigos sem imagem são completados automaticamente, 2 por ciclo do cron, ou na hora pelo botão **Admin → Posts da Vitrine → Criar imagens que faltam**.
+- A imagem entra na página, no `og:image`, no Schema `BlogPosting` e no sitemap de imagens.
+
+### Site + aplicativo com direcionamento
+- Quem tem app (opcional) cadastra o link da Google Play e/ou da App Store em Minha Marca, pela conversa com a IA ou no admin.
+- Os posts passam a convidar para o site **e** para o app, com o bloco "Baixe o app" e botões de loja.
+- Links inteligentes `/ir/{marca}/{site|app|android|ios|whatsapp}`: o botão de app leva o Android para a Google Play e o iPhone para a App Store. Cada clique é contado por marca e por post (Meu Painel e Admin → Projetos).
+- Páginas públicas ganham Schema `MobileApplication` quando a marca tem app.
+
+### Admin sem limite de projetos
+- O administrador cria quantos projetos quiser (pela IA, em Minha Marca ou em Admin → Projetos, onde o dono padrão é o próprio admin).
+
+### Diagnóstico da voz
+- Admin → Visão geral → **Testar voz agora**: testa de verdade a chave Gemini, a escuta ao vivo e a voz neural e mostra o erro exato do provedor.
+
+## Mapa do site (o que está ativo)
+
+| Área | Endereço | Para quê |
+|---|---|---|
+| Froc.IA (texto + voz) | `/` | Conversar e pedir tudo: anúncios, imagens, roteiros, artigos, estratégia, vitrine |
+| Vitrine | `/vitrine` | Marcas em destaque, página de cada marca e posts diários |
+| Posts | `/posts` | Todas as postagens (Magazine + Vitrine) |
+| Planos | `/planos` | Assinatura e créditos |
+| Meu Painel | `/dashboard` | Créditos, plano, marca, posts diários e últimas criações |
+| Minha Marca | `/empresa` | Dados, logo, contatos e vitrine da marca |
+| Minhas Criações | `/conteudos` | Tudo que a IA criou, para copiar ou baixar |
+| Créditos · Perfil · Suporte | `/creditos` · `/perfil` · `/suporte` | Conta |
+| Admin | `/admin` | Painel completo do dono do site |
+
+Tarefas automáticas (cron `/api/cron/process`): post diário de cada marca da Vitrine, 1 artigo por dia no Froc Magazine, pings IndexNow, publicação de posts que já estavam agendados e limpeza de reservas de créditos.
+
+### Removido nesta versão (substituído pela Froc.IA na conversa)
+Telas antigas de ferramentas separadas: Froc IA (antiga), Autopilot, Criar Conteúdo, Criar Imagem, Criar Vídeo, Criar Artigo, SEO Inteligente, Campanhas, Calendário, Redes Sociais e Analytics, e as rotas de API que só elas usavam, além do auditor de SEO de URL. Os endereços antigos redirecionam (301) para a IA ou para o painel. O Autopilot antigo fica desligado no agendador (`LEGACY_AUTOPILOT_ENABLED=false`) para não gastar créditos sem uma tela para controlá-lo. O código de conexão com redes sociais (OAuth Meta/TikTok/YouTube/Pinterest) foi mantido no servidor, sem tela, para uma integração futura.
+
 ## Depois do merge (5 minutos)
 1. Na Vercel → Settings → Environment Variables, crie `INDEXNOW_KEY` (ex.: um UUID) e faça redeploy.
 2. No Google Search Console → Sitemaps, envie `sitemap_index.xml`.

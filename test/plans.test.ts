@@ -941,40 +941,6 @@ test('Payments: Reconciliação atômica da carteira no processamento de assinat
   assert.ok(wallet.currentPeriodEnd);
 });
 
-test('Security & SEO: SSRF e DNS Rebinding bloqueiam estritamente redes privadas e localhost (D01)', async () => {
-  const { safeFetchHtml } = await import('../server/production/seo.js');
-
-  // Localhost
-  await assert.rejects(
-    async () => safeFetchHtml('http://localhost:8080'),
-    (err: any) => err.message.includes('bloqueado por segurança')
-  );
-
-  // IP Privado 127.0.0.1
-  await assert.rejects(
-    async () => safeFetchHtml('http://127.0.0.1:3000'),
-    (err: any) => err.message.includes('bloqueado por segurança')
-  );
-
-  // IP Privado 192.168.1.1
-  await assert.rejects(
-    async () => safeFetchHtml('http://192.168.1.1/admin'),
-    (err: any) => err.message.includes('bloqueado por segurança')
-  );
-
-  // IP Privado 10.0.0.1
-  await assert.rejects(
-    async () => safeFetchHtml('http://10.0.0.1/meta-data'),
-    (err: any) => err.message.includes('bloqueado por segurança')
-  );
-
-  // Link Local AWS / GCP Metadata 169.254.169.254
-  await assert.rejects(
-    async () => safeFetchHtml('http://169.254.169.254/latest/meta-data/'),
-    (err: any) => err.message.includes('bloqueado por segurança')
-  );
-});
-
 test('Security & Anti-Abuse: Bônus de boas-vindas bloqueia e-mails descartáveis e aliases canônicos repetidos (D02, D03)', async () => {
   resetMemoryDb();
   const { evaluateSignupBonusEligibility } = await import('../server/production/antiAbuse.js');

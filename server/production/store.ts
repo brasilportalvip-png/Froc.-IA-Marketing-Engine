@@ -411,7 +411,8 @@ export const COLLECTIONS = {
   rateLimits: 'rateLimits',
   vitrinePosts: 'vitrinePosts',
   conciergeSessions: 'conciergeSessions',
-  seoPings: 'seoPings'
+  seoPings: 'seoPings',
+  linkClicks: 'linkClicks'
 } as const;
 
 export type DatabaseHealth = {

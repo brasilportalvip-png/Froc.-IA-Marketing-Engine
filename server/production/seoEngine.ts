@@ -29,11 +29,7 @@ export const SITEMAP_GROUPS: SitemapGroup[] = ['page', 'post', 'vitrine', 'vitri
 export interface SitemapImage { loc: string; title?: string }
 export interface SitemapEntry { loc: string; lastmod?: string; images?: SitemapImage[]; title?: string; description?: string }
 
-export const PRIVATE_PATHS = [
-  '/api/', '/admin', '/dashboard', '/empresa', '/froc-ia', '/autopilot', '/criar-conteudo', '/criar-imagem',
-  '/criar-video', '/criar-artigo', '/seo', '/campanhas', '/calendario', '/redes-sociais', '/conteudos',
-  '/analytics', '/creditos', '/perfil', '/configuracoes', '/suporte'
-];
+export const PRIVATE_PATHS = ['/api/', '/ir/', '/admin', '/dashboard', '/empresa', '/conteudos', '/creditos', '/perfil', '/configuracoes', '/suporte'];
 
 export function baseUrl(): string {
   return config.appUrl.replace(/\/$/, '');

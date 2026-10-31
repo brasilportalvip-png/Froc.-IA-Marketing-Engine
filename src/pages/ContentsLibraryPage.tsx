@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Calendar, Check, Copy, Download, FileText, FolderOpen, Image as ImageIcon, PenTool, Play, Search, Trash2, Video } from 'lucide-react';
+import { Check, Copy, Download, Sparkles, FileText, FolderOpen, Image as ImageIcon, PenTool, Play, Search, Trash2, Video } from 'lucide-react';
 import type { Company, ContentItem } from '../types';
 import { apiRequest } from '../lib/api';
 
@@ -74,14 +74,14 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
             Biblioteca de Conteúdos
           </h2>
           <p className="mt-1 text-xs text-slate-400">
-            Tudo que foi gerado e salvo pela IA (Imagens, Vídeos Veo 3.1, Posts e Artigos), organizado por empresa.
+            Tudo o que a Froc.IA criou para você (posts, imagens, roteiros e artigos), pronto para copiar ou baixar.
           </p>
         </div>
         <button
-          onClick={() => onNavigate('criar-conteudo')}
+          onClick={() => onNavigate('home')}
           className="min-h-11 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-xs font-extrabold text-white"
         >
-          + Criar conteúdo
+          + Pedir para a Froc.IA
         </button>
       </div>
 
@@ -211,11 +211,11 @@ export const ContentsLibraryPage: React.FC<ContentsLibraryPageProps> = ({
                     </a>
                   ) : (
                     <button
-                      onClick={() => onNavigate('calendario')}
+                      onClick={() => onNavigate('home')}
                       className="flex min-h-10 items-center justify-center gap-1 rounded-xl border border-blue-500/30 bg-blue-500/10 text-[11px] font-bold text-cyan-300 hover:bg-blue-500/20 transition-all"
                     >
-                      <Calendar size={13} />
-                      Agendar
+                      <Sparkles size={13} />
+                      Nova versão
                     </button>
                   )}
 

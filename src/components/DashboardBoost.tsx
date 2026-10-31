@@ -7,6 +7,16 @@ interface MyPost { id: string; companySlug: string; title: string; slug: string;
 
 export const DashboardBoost: React.FC<{ selectedCompany: Company | null; onNavigate: (tab: string) => void }> = ({ selectedCompany, onNavigate }) => {
   const [posts, setPosts] = useState<MyPost[]>([]);
+  const [clicks, setClicks] = useState<{ total: number; site: number; app: number; whatsapp: number } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedCompany?.id) { setClicks(null); return; }
+    apiRequest<{ clicks: { total: number; site: number; app: number; whatsapp: number } }>(`/api/vitrine-clicks/mine?companyId=${encodeURIComponent(selectedCompany.id)}`)
+      .then((data) => { if (active) setClicks(data.clicks); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [selectedCompany?.id]);
 
   useEffect(() => {
     let active = true;
@@ -38,6 +48,16 @@ export const DashboardBoost: React.FC<{ selectedCompany: Company | null; onNavig
             <a href={`/vitrine/${encodeURIComponent(selectedCompany.slug)}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-[#FFD400]">Ver minha vitrine <ExternalLink size={11} /></a>
           )}
         </div>
+        {inVitrine && clicks && (
+          <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+            {[['Cliques', clicks.total, '#ffffff'], ['Site', clicks.site, '#FFD400'], ['App', clicks.app, '#00E676'], ['WhatsApp', clicks.whatsapp, '#FF2D87']].map(([label, value, color]) => (
+              <div key={String(label)} className="rounded-xl bg-white/[0.04] px-2 py-2">
+                <p className="text-lg font-black" style={{ color: String(color) }}>{Number(value).toLocaleString('pt-BR')}</p>
+                <p className="text-[10px] text-neutral-500">{label}</p>
+              </div>
+            ))}
+          </div>
+        )}
         {!inVitrine ? (
           <div className="mt-4 flex flex-col items-start gap-3 rounded-2xl border border-dashed border-white/15 p-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="flex items-center gap-2 text-sm text-neutral-300"><Crown size={16} className="text-[#FFD400]" /> Sua marca ainda não está na Vitrine. Lá ela ganha 1 post estratégico por dia.</p>

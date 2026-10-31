@@ -239,7 +239,7 @@ export const MyCompanyPage: React.FC<Props> = ({
             {selectedCompany ? selectedCompany.name : 'Cadastrar nova empresa'}
           </h2>
           <p className="mt-1 text-xs text-slate-400">
-            Brand Center completo: estes dados alimentam IA, SEO, Vitrine, campanhas e Autopilot.
+            Estes dados alimentam a Froc.IA, o SEO, a Vitrine e o post diário da sua marca.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

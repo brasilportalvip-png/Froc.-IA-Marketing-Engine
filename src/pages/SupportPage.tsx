@@ -13,8 +13,9 @@ export const SupportPage: React.FC<Props> = () => {
   useEffect(()=>{ apiRequest<{email:string;whatsapp?:string|null}>('/api/support/contact').then(setContact).catch(()=>undefined); },[]);
   const faqs = [
     ['Como funcionam os créditos?', 'Cada operação de IA consome o custo exibido pela plataforma. A carteira e o extrato são gravados no backend com idempotência para evitar cobranças duplicadas.'],
-    ['O Autopilot publica sozinho?', 'No modo automático ele tenta publicar apenas em redes conectadas e compatíveis com o tipo de conteúdo. Uma falha externa nunca é marcada como sucesso.'],
-    ['Quantas empresas posso cadastrar?', 'START: 2, PRO: 5, BUSINESS: 15 e AGENCY: ilimitadas.'],
+    ['Como falo com a Froc.IA?', 'Na tela inicial: digite ou toque no microfone e fale. A IA entende, mostra um resumo e só cria depois que você confirma. Diga “pare” para desligar a escuta.'],
+    ['Como funciona a Vitrine?', 'Sua marca ganha uma página pública e 1 post estratégico por dia, otimizado para o Google e avisado aos buscadores automaticamente. Todos os posts aparecem também na página Posts.'],
+    ['Quantas marcas posso cadastrar?', 'Grátis: 1, START: 2, PRO: 5, BUSINESS: 15 e AGENCY: ilimitadas.'],
     ['Como o pagamento é confirmado?', 'O Mercado Pago confirma o pagamento via webhook assinado; o backend valida a assinatura, o valor e a referência antes de liberar créditos.'],
     ['Como a IA usa minha marca?', 'O perfil da empresa, público, tom de voz, produtos, serviços, diferenciais e palavras-chave entram no contexto de geração.']
   ];

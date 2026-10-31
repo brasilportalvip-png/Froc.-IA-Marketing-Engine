@@ -11,7 +11,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { startFrocLiveTranscription, type FrocLiveSession } from './liveTranscription';
 import { playNeuralSpeechChunk, streamNeuralSpeech } from './neuralSpeech';
 import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from './voiceCommands';
-import { normalizeTextForSpeech, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech, splitTextForSpeech } from './voiceText';
+import { normalizeTextForSpeech, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech, splitTextForSpeech, voiceErrorMessage } from './voiceText';
+
+export { voiceErrorMessage };
 
 export type FrocVoicePhase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'error';
 
@@ -127,7 +129,7 @@ export function useFrocVoice({ neural, onCommand, onPartial }: Options) {
     if (!enabledRef.current || busyRef.current || recognitionRef.current) return;
     const Recognition = recognitionConstructor();
     if (!Recognition) {
-      setError('Reconhecimento de voz indisponível neste navegador. Use Chrome, Edge ou Safari atualizado.');
+      setError(voiceErrorMessage('unsupported'));
       setPhase('error');
       enabledRef.current = false;
       setEnabled(false);
@@ -152,9 +154,7 @@ export function useFrocVoice({ neural, onCommand, onPartial }: Options) {
       enabledRef.current = false;
       setEnabled(false);
       setPhase('error');
-      setError(event?.error === 'not-allowed' || event?.error === 'service-not-allowed'
-        ? 'Permissão de microfone negada. Libere o microfone no cadeado da barra de endereço.'
-        : 'A escuta falhou. Toque no microfone para tentar de novo.');
+      setError(voiceErrorMessage(String(event?.error || 'unknown')));
     };
     recognition.onend = () => {
       if (recognitionRef.current === recognition) recognitionRef.current = null;

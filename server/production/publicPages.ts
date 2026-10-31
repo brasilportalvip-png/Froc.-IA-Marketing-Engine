@@ -1,6 +1,7 @@
 import { config } from '../config/index.js';
 import { COLLECTIONS, firestore, queryData } from './store.js';
 import { listAllPublicPosts } from './posts.js';
+import { appLinksOf } from './appLinks.js';
 
 function esc(value: any): string {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -58,6 +59,28 @@ function breadcrumb(base: string, items: Array<{ name: string; url: string }>) {
     '@context': 'https://schema.org', '@type': 'BreadcrumbList',
     itemListElement: [{ name: 'Início', url: `${base}/` }, ...items].map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, item: item.url }))
   };
+}
+
+function appSchemas(company: any): any[] {
+  const apps = appLinksOf(company);
+  return [
+    apps.android ? { '@context': 'https://schema.org', '@type': 'MobileApplication', name: company.name, operatingSystem: 'ANDROID', applicationCategory: 'BusinessApplication', installUrl: apps.android, url: apps.android, offers: { '@type': 'Offer', price: '0', priceCurrency: 'BRL' }, publisher: { '@type': 'Organization', name: company.name } } : null,
+    apps.ios ? { '@context': 'https://schema.org', '@type': 'MobileApplication', name: company.name, operatingSystem: 'IOS', applicationCategory: 'BusinessApplication', installUrl: apps.ios, url: apps.ios, offers: { '@type': 'Offer', price: '0', priceCurrency: 'BRL' }, publisher: { '@type': 'Organization', name: company.name } } : null
+  ].filter(Boolean);
+}
+
+/** Bloco "site + aplicativo" com direcionamento inteligente (/ir/...), visível também sem JavaScript. */
+function directionHtml(company: any, postId?: string): string {
+  const apps = appLinksOf(company);
+  const q = postId ? `?p=${encodeURIComponent(postId)}` : '';
+  const slug = encodeURIComponent(company.slug);
+  const links = [
+    company.website ? `<a href="/ir/${slug}/site${q}" rel="nofollow noopener">Visitar o site de ${esc(company.name)}</a>` : '',
+    apps.android ? `<a href="/ir/${slug}/android${q}" rel="nofollow noopener">Baixar o app na Google Play</a>` : '',
+    apps.ios ? `<a href="/ir/${slug}/ios${q}" rel="nofollow noopener">Baixar o app na App Store</a>` : '',
+    company.whatsapp ? `<a href="/ir/${slug}/whatsapp${q}" rel="nofollow noopener">Chamar no WhatsApp</a>` : ''
+  ].filter(Boolean);
+  return links.length ? `<section><h2>Acesse ${esc(company.name)}</h2><p>${links.join(' · ')}</p></section>` : '';
 }
 
 function companySchema(company: any, canonical: string) {
@@ -158,11 +181,12 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
         },
         companySchema(company, companyUrl)
       ];
+      schema.push(...appSchemas(company));
       if (faq.length) schema.push({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map((item: any) => ({ '@type': 'Question', name: item.question, acceptedAnswer: { '@type': 'Answer', text: item.answer } })) });
       return {
         title: `${post.title} | ${company.name}`.slice(0, 70), description: description(post.summary, `${company.name} na Vitrine Froc.IA.`), canonical,
         image: absolute(post.imageUrl || company.logoUrl), type: 'article', status: 200, schema, publishedTime: post.publishedAt, modifiedTime: post.updatedAt || post.publishedAt,
-        prerender: `<article><nav><a href="/vitrine">Vitrine</a> › <a href="/vitrine/${encodeURIComponent(company.slug)}">${esc(company.name)}</a></nav><h1>${esc(post.title)}</h1><p>${esc(post.summary)}</p>${markdownToSafeHtml(post.content)}${faq.length ? `<h2>Perguntas frequentes</h2>${faq.map((item: any) => `<h3>${esc(item.question)}</h3><p>${esc(item.answer)}</p>`).join('')}` : ''}</article>`
+        prerender: `<article><nav><a href="/vitrine">Vitrine</a> › <a href="/vitrine/${encodeURIComponent(company.slug)}">${esc(company.name)}</a></nav><h1>${esc(post.title)}</h1>${post.imageUrl ? `<img src="${esc(absolute(post.imageUrl))}" alt="${esc(post.imageAlt || post.title)}" width="1280" height="720" style="max-width:100%;height:auto;border-radius:16px" />` : ''}<p>${esc(post.summary)}</p>${markdownToSafeHtml(post.content)}${directionHtml(company, post.id)}${faq.length ? `<h2>Perguntas frequentes</h2>${faq.map((item: any) => `<h3>${esc(item.question)}</h3><p>${esc(item.answer)}</p>`).join('')}` : ''}</article>`
       };
     } catch {
       return fallback;
@@ -185,8 +209,8 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
         title: `${company.name}${company.city ? ` em ${company.city}` : ''} — Vitrine Froc.IA`.slice(0, 70),
         description: description(company.description, `${company.name} na Vitrine Froc.IA.`),
         canonical, image: absolute(company.logoUrl), type: 'website', status: 200,
-        schema: [website, breadcrumb(base, [{ name: 'Vitrine', url: `${base}/vitrine` }, { name: company.name, url: canonical }]), companySchema(company, canonical)],
-        prerender: `<h1>${esc(company.name)}</h1><p>${esc(company.description || '')}</p>${company.city ? `<p>${esc([company.city, company.state].filter(Boolean).join(' - '))}</p>` : ''}${company.website ? `<p><a href="${esc(company.website)}" rel="noopener">Site oficial</a></p>` : ''}${postsHtml}`
+        schema: [website, breadcrumb(base, [{ name: 'Vitrine', url: `${base}/vitrine` }, { name: company.name, url: canonical }]), companySchema(company, canonical), ...appSchemas(company)],
+        prerender: `<h1>${esc(company.name)}</h1><p>${esc(company.description || '')}</p>${company.city ? `<p>${esc([company.city, company.state].filter(Boolean).join(' - '))}</p>` : ''}${directionHtml(company)}${postsHtml}`
       };
     } catch {
       return fallback;
@@ -213,7 +237,7 @@ async function metaFor(pathname: string): Promise<PublicMeta> {
           publisher: { '@type': 'Organization', name: 'Froc.IA', logo: { '@type': 'ImageObject', url: `${base}/brand/logo-froc-1024.png` } },
           mainEntityOfPage: canonical
         }],
-        prerender: `<article><h1>${esc(post.title)}</h1><p>${esc(post.summary || '')}</p>${markdownToSafeHtml(post.content)}</article>`
+        prerender: `<article><h1>${esc(post.title)}</h1>${post.featuredImageUrl ? `<img src="${esc(absolute(post.featuredImageUrl))}" alt="${esc(post.imageAlt || post.title)}" width="1280" height="720" style="max-width:100%;height:auto;border-radius:16px" />` : ''}<p>${esc(post.summary || '')}</p>${markdownToSafeHtml(post.content)}</article>`
       };
     } catch {
       return fallback;

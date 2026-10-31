@@ -63,7 +63,7 @@ test('Media Generation: Full Production Hardening Suite (Images, Veo Presets, Co
 
   const { default: router } = await import('../server/production/router.js');
   const { addCredits, getWallet } = await import('../server/production/credits.js');
-  const { processPendingVideoJobs, checkAndCompleteVideoJob, startVideoGenerationJob } = await import('../server/production/ai.js');
+  const { processPendingVideoJobs, checkAndCompleteVideoJob, startVideoGenerationJob, generateMarketingImage, generateVideoScript, generateVideoDirection } = await import('../server/production/ai.js');
 
   const userId = 'user-media-tester';
   const otherUserId = 'user-other-tester';
@@ -168,105 +168,56 @@ test('Media Generation: Full Production Hardening Suite (Images, Veo Presets, Co
 
     // =========================================================================
     // 2. GERAÇÃO DE IMAGEM 1K (15 créditos), 2K (25 créditos) e 4K (40 créditos)
+    //    (usada pela Froc.IA na conversa; as rotas avulsas foram removidas)
     // =========================================================================
-    const resImage1k = await fetch(`${baseUrl}/api/ai/generate-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ theme: 'Bolsa de couro minimalista', aspectRatio: '1:1', resolution: '1K', companyId })
-    });
-    assert.equal(resImage1k.status, 200);
-    const dataImage1k = await resImage1k.json();
-    assert.equal(dataImage1k.creditsUsed, 15, 'Imagem 1K deve consumir 15 créditos');
+    const company = { id: companyId, userId, name: 'Loja Exemplo Media', category: 'Varejo', segment: 'Moda' };
+    const image1k = await generateMarketingImage({ userId, company, theme: 'Bolsa de couro minimalista', aspectRatio: '1:1', resolution: '1K' });
+    assert.equal(image1k.creditsUsed, 15, 'Imagem 1K deve consumir 15 créditos');
 
-    const resImage2k = await fetch(`${baseUrl}/api/ai/generate-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ theme: 'Coleção de primavera', style: 'Editorial de moda', aspectRatio: '9:16', resolution: '2K', companyId })
-    });
-    assert.equal(resImage2k.status, 200);
-    const dataImage2k = await resImage2k.json();
-    assert.equal(dataImage2k.creditsUsed, 25, 'Imagem 2K deve consumir 25 créditos');
+    const image2k = await generateMarketingImage({ userId, company, theme: 'Coleção de primavera', style: 'Editorial de moda', aspectRatio: '9:16', resolution: '2K' });
+    assert.equal(image2k.creditsUsed, 25, 'Imagem 2K deve consumir 25 créditos');
 
-    const resImage4k = await fetch(`${baseUrl}/api/ai/generate-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ theme: 'Tênis futurista neon', style: 'Publicidade 4K', aspectRatio: '1:1', resolution: '4K', companyId })
-    });
-    assert.equal(resImage4k.status, 200);
-    const dataImage4k = await resImage4k.json();
-    assert.equal(dataImage4k.creditsUsed, 40, 'Imagem 4K deve consumir 40 créditos');
-    assert.ok(dataImage4k.imageUrl);
-    assert.equal(dataImage4k.contentItem.type, 'image');
-    assert.equal(dataImage4k.contentItem.metadata.resolution, '4K');
+    const image4k = await generateMarketingImage({ userId, company, theme: 'Tênis futurista neon', style: 'Publicidade 4K', aspectRatio: '1:1', resolution: '4K' });
+    assert.equal(image4k.creditsUsed, 40, 'Imagem 4K deve consumir 40 créditos');
+    assert.ok(image4k.imageUrl);
+    assert.equal(image4k.resolution, '4K');
 
     // =========================================================================
-    // 3. ROTEIRO E DIREÇÃO VISUAL DE VÍDEO (10 créditos cada)
+    // 3. ROTEIRO (10 créditos) E DIREÇÃO VISUAL DE VÍDEO
     // =========================================================================
-    const resScript = await fetch(`${baseUrl}/api/ai/generate-video-script`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ topic: 'Lançamento Froc Urban', format: 'Reels / TikTok (60s)', objective: 'Vendas', companyId })
-    });
-    assert.equal(resScript.status, 200);
-    const dataScript = await resScript.json();
-    assert.equal(dataScript.creditsUsed, 10, 'Roteiro de vídeo deve consumir 10 créditos');
-    assert.ok(dataScript.script);
+    const script = await generateVideoScript({ userId, company, topic: 'Lançamento Froc Urban', format: 'Reels / TikTok (60s)' });
+    assert.equal(script.creditsUsed, 10, 'Roteiro de vídeo deve consumir 10 créditos');
+    assert.ok(script.result);
 
-    const resDirection = await fetch(`${baseUrl}/api/ai/generate-video-direction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ prompt: 'Mulher correndo na praia ao pôr do sol', aspectRatio: '9:16', mood: 'Enérgico', companyId })
-    });
-    assert.equal(resDirection.status, 200);
-    const dataDirection = await resDirection.json();
-    assert.ok(dataDirection.direction?.visualPrompt);
+    const direction = await generateVideoDirection({ userId, company, prompt: 'Mulher correndo na praia ao pôr do sol', aspectRatio: '9:16', mood: 'Enérgico' });
+    assert.ok(direction?.visualPrompt);
 
     // =========================================================================
     // 4. PRESETS DE VÍDEO: demo_720p (50), pro_1080p (100), cinema_4k (200) + Auto-Direction
     // =========================================================================
-    // Preset demo_720p
-    const resVideo720 = await fetch(`${baseUrl}/api/ai/generate-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ prompt: 'Demonstração rápida do produto', preset: 'demo_720p', aspectRatio: '9:16', companyId })
-    });
-    assert.equal(resVideo720.status, 202);
-    const dataVideo720 = await resVideo720.json();
-    assert.equal(dataVideo720.creditsReserved, 50, 'Preset demo_720p deve reservar 50 créditos');
-    assert.equal(dataVideo720.job.resolution, '720p');
-    assert.equal(dataVideo720.job.durationSeconds, 4);
+    const video720 = await startVideoGenerationJob({ userId, company, prompt: 'Demonstração rápida do produto', preset: 'demo_720p', aspectRatio: '9:16' });
+    assert.equal(video720.creditsReserved, 50, 'Preset demo_720p deve reservar 50 créditos');
+    assert.equal(video720.resolution, '720p');
+    assert.equal(video720.durationSeconds, 4);
 
-    // Preset cinema_4k com 4K Real
-    const resVideo4k = await fetch(`${baseUrl}/api/ai/generate-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({ prompt: 'Comercial cinematográfico de luxo', preset: 'cinema_4k', aspectRatio: '16:9', companyId })
-    });
-    assert.equal(resVideo4k.status, 202);
-    const dataVideo4k = await resVideo4k.json();
-    assert.equal(dataVideo4k.creditsReserved, 200, 'Preset cinema_4k deve reservar 200 créditos');
-    assert.equal(dataVideo4k.job.resolution, '4k', 'Preset cinema_4k deve manter resolução 4k real');
-    assert.equal(dataVideo4k.job.durationSeconds, 8);
-    assert.ok(dataVideo4k.job.finalPrompt.length > dataVideo4k.job.sourcePrompt.length, 'Auto-direction deve enriquecer o finalPrompt');
+    const video4k = await startVideoGenerationJob({ userId, company, prompt: 'Comercial cinematográfico de luxo', preset: 'cinema_4k', aspectRatio: '16:9' });
+    assert.equal(video4k.creditsReserved, 200, 'Preset cinema_4k deve reservar 200 créditos');
+    assert.equal(video4k.resolution, '4k', 'Preset cinema_4k deve manter resolução 4k real');
+    assert.equal(video4k.durationSeconds, 8);
+    assert.ok(String(video4k.finalPrompt).length > String(video4k.sourcePrompt).length, 'Auto-direction deve enriquecer o finalPrompt');
 
-    // Preset pro_1080p
-    const resStartVideo = await fetch(`${baseUrl}/api/ai/generate-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer token_${userId}` },
-      body: JSON.stringify({
-        prompt: 'Câmera em movimento dinâmico revelando nova coleção',
-        title: 'Comercial Verão 2026',
-        preset: 'pro_1080p',
-        aspectRatio: '9:16',
-        companyId
-      })
+    const startedVideo = await startVideoGenerationJob({
+      userId,
+      company,
+      prompt: 'Câmera em movimento dinâmico revelando nova coleção',
+      title: 'Comercial Verão 2026',
+      preset: 'pro_1080p',
+      aspectRatio: '9:16'
     });
-    assert.equal(resStartVideo.status, 202);
-    const dataStartVideo = await resStartVideo.json();
-    assert.equal(dataStartVideo.creditsReserved, 100, 'Preset pro_1080p deve reservar 100 créditos');
-    assert.equal(dataStartVideo.job.resolution, '1080p');
-    assert.equal(dataStartVideo.job.durationSeconds, 8);
-    const mainJobId = dataStartVideo.jobId;
+    assert.equal(startedVideo.creditsReserved, 100, 'Preset pro_1080p deve reservar 100 créditos');
+    assert.equal(startedVideo.resolution, '1080p');
+    assert.equal(startedVideo.durationSeconds, 8);
+    const mainJobId = startedVideo.id;
 
     // =========================================================================
     // 5. TESTE DE CONCORRÊNCIA E CLAIM ATÔMICO
@@ -362,10 +313,11 @@ test('Media Generation: Full Production Hardening Suite (Images, Veo Presets, Co
     // =========================================================================
     // 8. ISOLAMENTO MULTI-TENANT
     // =========================================================================
-    const resOtherAccess = await fetch(`${baseUrl}/api/ai/video-jobs/${mainJobId}`, {
-      headers: { Authorization: `Bearer token_${otherUserId}` }
-    });
-    assert.equal(resOtherAccess.status, 403, 'Usuário de outro tenant não pode consultar job alheio');
+    await assert.rejects(
+      () => checkAndCompleteVideoJob(otherUserId, mainJobId),
+      (error: any) => error?.statusCode === 403,
+      'Usuário de outro tenant não pode consultar job alheio'
+    );
 
   } finally {
     await new Promise((resolve) => server.close(resolve));

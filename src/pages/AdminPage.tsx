@@ -3,7 +3,7 @@ import { Activity, BarChart3, BookOpen, CheckCircle2, Coins, CreditCard, FileTex
 import { AdminSeoPanel } from '../components/admin/AdminSeoPanel';
 import { AdminUsers } from '../components/admin/AdminUsers';
 import { AdminProjects } from '../components/admin/AdminProjects';
-import { AdminActivity, AdminPayments, AdminVitrinePosts } from '../components/admin/AdminRecords';
+import { AdminActivity, AdminPayments, AdminVitrinePosts, AdminVoiceCheck } from '../components/admin/AdminRecords';
 import type { BlogPost } from '../types';
 import { apiRequest } from '../lib/api';
 
@@ -39,6 +39,7 @@ export const AdminPage:React.FC<AdminPageProps>=()=>{
   [Sparkles,'Execuções de IA',dash.aiExecutions,`${dash.aiFailures||0} falhas`],
   [Ticket,'Chamados abertos',dash.openTickets,'Suporte em andamento']
  ] as const).map(([Icon,label,value,hint]:any)=><div key={label} className="froc-panel"><Icon size={18} className="text-cyan-400"/><div className="mt-3 text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</div><div className="mt-1 text-3xl font-black text-white">{Number(value||0).toLocaleString('pt-BR')}</div><div className="mt-1 text-[11px] text-slate-500">{hint}</div></div>)}</div>}
+ {tab==='overview'&&<AdminVoiceCheck/>}
  {tab==='users'&&<AdminUsers onFeedback={setFeedback}/>}
  {tab==='projects'&&<AdminProjects onFeedback={setFeedback}/>}
  {tab==='posts'&&<AdminVitrinePosts onFeedback={setFeedback}/>}
